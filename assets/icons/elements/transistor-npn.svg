@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- BJT, NPN. The emitter arrow direction is the whole difference.
+
+     Schematic symbol artwork. The convention, which replacements must follow:
+       * viewBox is -60 -60 120 120, and (0,0) is the part's CENTRE.
+       * 10 SVG units = 1 grid square, so a pin at grid (0,-2) is at (0,-20).
+         Pins are drawn by the canvas at the positions in Element.h, so artwork
+         that ignores this will have its terminals land in the wrong place.
+       * stroke-width 1.2 is the schematic's normal line weight. Heavier lines
+         are multiples of it (1.56 = 1.3x, 1.8 = 1.5x); the app re-strokes at
+         that ratio so lines stay visible when zoomed out.
+       * Colour is ignored - everything is recoloured by the app. 
+
+     The base bar sits on the part's centre line (x = 0), not offset to one
+     side of it. A symbol whose spine is off-centre reads as misaligned
+     against every other part on the sheet, all of which are centred on
+     the grid intersection they were placed at. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-60 -60 120 120" width="120" height="120">
+  <path d="M -20 0 L 0 0" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
+  <path d="M 0 -14 L 0 14" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round"/>
+  <path d="M 0 -8 L 20 -20" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
+  <path d="M 0 8 L 20 20" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
+  <path d="M 14.4 16.64 L 7.866 15.868 L 10.644 11.238 Z" fill="#000" stroke="none"/>
+</svg>

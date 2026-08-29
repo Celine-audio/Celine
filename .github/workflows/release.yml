@@ -1,0 +1,93 @@
+name: Release
+
+# Push a tag, get a release. That is the whole of it:
+#
+#     git tag v1.0.0 && git push origin v1.0.0
+#
+# builds all three platforms, and publishes one release holding every archive.
+#
+# The three builds are not written out again here -- they are the same files you
+# can run on their own from the Actions tab, called as reusable workflows. That
+# is what keeps a one-off Linux build and the Linux half of a release from
+# drifting into two different things, which is exactly how LV2 once came to be
+# built everywhere and shipped nowhere.
+#
+# The release job runs once, after all three, rather than each platform
+# publishing its own. Three jobs racing to create the same release is a race
+# that mostly works, and "mostly" is not a property a release should have.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+  # So a release can be rehearsed without inventing a tag. It produces the
+  # archives; the release job below is skipped, since there is no tag to attach
+  # them to.
+  workflow_dispatch:
+
+jobs:
+  linux:
+    uses: ./.github/workflows/linux.yml
+
+  windows:
+    uses: ./.github/workflows/windows.yml
+
+  macos:
+    uses: ./.github/workflows/macos.yml
+
+  release:
+    # Only for a tag. A dispatched run still builds everything and leaves the
+    # archives as artifacts, which is what a rehearsal wants.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    needs: [linux, windows, macos]
+
+    # Creating a release is a write to the repository's contents, and the token
+    # is handed out read-only unless a job asks for more. Without this the job
+    # gets as far as uploading nothing and then fails with a 403 that reads like
+    # a broken credential rather than a missing scope.
+    permissions:
+      contents: write
+
+    steps:
+      - name: Get artifacts
+        uses: actions/download-artifact@v8
+        with:
+          # Somewhere named, rather than straight into the workspace. The action
+          # puts each artifact in a directory named after it, and these are
+          # *named* with a .zip suffix -- so the result is a directory called
+          # X.zip holding a file called X.zip, which is the sort of shape a
+          # hand-written glob gets wrong. One did: `*/*.zip` matched nothing.
+          path: artifacts
+
+      # Listed before it is used, so a glob that matches nothing is something you
+      # can see rather than something you have to guess at from the outside.
+      - name: Show what was downloaded
+        run: ls -RA artifacts
+
+      - name: Publish
+        uses: softprops/action-gh-release@v3
+        with:
+          # Two things every release has to say. Nothing here is code signed, so
+          # say so rather than leaving people to meet Gatekeeper and SmartScreen
+          # cold. And the AGPL requires the corresponding source to accompany
+          # the binaries -- naming the tag these were built from is what does
+          # that, since the repository is public and the tag is immutable.
+          body: |
+            Built from `${{ github.ref_name }}`.
+
+            Available for macOS, Windows, and Linux in Standalone, VST3, LV2, CLAP, AU (macOS) formats.
+            These builds are not code signed. macOS will warn the app is from an unidentified developer. Windows SmartScreen will warn on first run.
+            
+            ---
+
+            Céline is free software under the [AGPLv3](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/COPYING), and comes with no warranty. The corresponding source for these binaries is this repository at tag [`${{ github.ref_name }}`](https://github.com/${{ github.repository }}/tree/${{ github.ref_name }}).
+            
+            If you have any issues with the software, please [file an issue](https://github.com/${{ github.repository }}/issues).
+            
+            Thank you for using our software !
+            Céline Team.
+          # `**` rather than a fixed depth, so a change in how the download
+          # action nests things cannot silently publish an empty release.
+          files: artifacts/**/*.zip

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The knob for the plugin's own gain - input and output - as opposed to
+     knob.svg, which is what a knob drawn on the circuit wears. Smooth where
+     that one is fluted, which is what tells the two apart in a band that holds
+     both.
+
+     Same conventions as knob.svg, which replacements must follow:
+       * viewBox 0 0 29 29, and the cap is centred in it. The app rotates the
+         whole drawable about that centre, so anything off-centre wobbles.
+       * The pointer is drawn straight UP, since rotation is the readout.
+       * It is a HOLE, not a shape: fill-rule evenodd cuts it out of the cap so
+         whatever the knob sits on shows through. That way the pointer never has
+         to be kept in step with the colour of the band behind it.
+       * One path, not a <circle> plus a <path>: two elements would be two
+         drawables and the notch would sit on top of the cap rather than be
+         taken out of it.
+       * No fill colour - the app tints the whole thing once, at load. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 29 29" width="29" height="29">
+  <path fill-rule="evenodd" d="M 4.5 14.5
+                               A 10 10 0 1 1 24.5 14.5
+                               A 10 10 0 1 1 4.5 14.5
+                               Z
+                               M 13.7 4.55
+                               L 15.3 4.55
+                               L 15.3 14.5
+                               L 13.7 14.5
+                               Z"/>
+</svg>

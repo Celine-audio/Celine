@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- PLACEHOLDER: Mirror left to right. Overwrite with the real icon; nothing in the code needs
+     changing, the build picks it up by filename.
+     Toolbar convention: 24x24 viewBox, monochrome. Colour is ignored - the app
+     recolours the whole drawable to match the theme. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <g fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 2.5v19" stroke-dasharray="2.5 2.5"/>
+    <path d="M8.5 6 4 12l4.5 6z"/>
+    <path d="M15.5 6 20 12l-4.5 6z"/>
+  </g>
+</svg>

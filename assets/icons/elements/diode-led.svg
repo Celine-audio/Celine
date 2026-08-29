@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- LED: two arrows leaving the junction.
+
+     Schematic symbol artwork. The convention, which replacements must follow:
+       * viewBox is -60 -60 120 120, and (0,0) is the part's CENTRE.
+       * 10 SVG units = 1 grid square, so a pin at grid (0,-2) is at (0,-20).
+         Pins are drawn by the canvas at the positions in Element.h, so artwork
+         that ignores this will have its terminals land in the wrong place.
+       * stroke-width 1.2 is the schematic's normal line weight. Heavier lines
+         are multiples of it (1.56 = 1.3x, 1.8 = 1.5x); the app re-strokes at
+         that ratio so lines stay visible when zoomed out.
+       * Colour is ignored - everything is recoloured by the app. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-60 -60 120 120" width="120" height="120">
+  <path d="M 0 -20 L 0 -12" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
+  <path d="M 0 20 L 0 12" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
+  <path d="M -10 -6 L 10 -6 L 0 6 Z" fill="#000" stroke="none"/>
+  <path d="M -10 6 L 10 6" fill="none" stroke="#000" stroke-width="1.68" stroke-linecap="round"/>
+  <path d="M 12.5 -2 L 21 -10.5" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
+  <path d="M 21 -10.5 L 19.367 -6.194 L 16.694 -8.867 Z" fill="#000" stroke="none"/>
+  <path d="M 12.5 5 L 21 -3.5" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
+  <path d="M 21 -3.5 L 19.367 0.806 L 16.694 -1.867 Z" fill="#000" stroke="none"/>
+</svg>

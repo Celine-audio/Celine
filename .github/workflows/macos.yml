@@ -1,0 +1,153 @@
+name: macOS
+
+# Builds and tests on macOS and leaves the archive behind as an artifact.
+#
+# Runnable on its own from the Actions tab, and callable by release.yml, which
+# is what makes a tag produce one release holding all three platforms. The two
+# triggers are the whole point: the same file serves a one-off build and a
+# release, so there is no second copy of these steps to keep in step.
+#
+# This is the only platform that produces the AU, since JUCE only builds one
+# here -- so it is the one whose absence from a release would be noticed.
+
+on:
+  workflow_dispatch: # lets you run a build from the UI
+  workflow_call: # release.yml calls this
+
+concurrency:
+  # Named for this platform rather than for `github.workflow`. When a workflow
+  # is *called*, github.workflow is the caller's name -- so all three builds of
+  # a release would land in one group and, with cancel-in-progress, kill each
+  # other, leaving whichever started last.
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUILD_TYPE: Release
+  BUILD_DIR: Builds
+  HOMEBREW_NO_INSTALL_CLEANUP: 1
+  SCCACHE_GHA_ENABLED: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: macOS
+    runs-on: macos-14
+
+    steps:
+      - name: Install deps
+        run: brew install ninja
+
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Cache the build
+        uses: mozilla-actions/sccache-action@v0.0.11
+
+      - name: Configure
+        # Both architectures in one build. An Apple Silicon runner would
+        # otherwise produce an arm64-only plugin, which does not load at all for
+        # anyone still on Intel -- and nothing says so, the host simply does not
+        # list it.
+        run: >
+          cmake -B ${{ env.BUILD_DIR }}
+          -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+          -DCMAKE_C_COMPILER_LAUNCHER=sccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          .
+
+      - name: Build
+        run: cmake --build ${{ env.BUILD_DIR }} --config ${{ env.BUILD_TYPE }}
+
+      # No display wrangling here, unlike Linux: macOS runners have a window
+      # server, so the one test that opens a real window just works.
+      - name: Test & benchmarks
+        working-directory: ${{ env.BUILD_DIR }}
+        run: ctest --verbose --output-on-failure
+
+      - name: Read in .env from CMake # see GitHubENV.cmake
+        run: |
+          cat .env # show us the config
+          cat .env >> $GITHUB_ENV # pull in our PRODUCT_NAME, etc
+
+      - name: Set additional env vars for next steps
+        run: |
+          ARTIFACTS_PATH=${{ env.BUILD_DIR }}/${{ env.PROJECT_NAME }}_artefacts/${{ env.BUILD_TYPE }}
+          echo "ARTIFACTS_PATH=$ARTIFACTS_PATH" >> $GITHUB_ENV
+          echo "VST3_PATH=$ARTIFACTS_PATH/VST3/${{ env.PRODUCT_NAME }}.vst3" >> $GITHUB_ENV
+          echo "ARTIFACT_NAME=${{ env.PRODUCT_NAME }}-${{ env.VERSION }}-macOS" >> $GITHUB_ENV
+
+      - name: Pluginval
+        run: |
+          curl -LO "https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_macOS.zip"
+          7z x pluginval_macOS.zip
+          pluginval.app/Contents/MacOS/pluginval --strictness-level 10 --verbose --validate "${{ env.VST3_PATH }}"
+
+      - name: Ad-hoc sign the bundles
+        working-directory: ${{ env.ARTIFACTS_PATH }}
+        # Free, and not the same thing as the Developer ID signing this project
+        # deliberately does without. `--sign -` gives macOS a stable *code
+        # identity*; it does nothing for Gatekeeper, which will still call the
+        # app unidentified.
+        #
+        # It is needed because a universal build arrives unsigned. The linker
+        # ad-hoc signs arm64 automatically -- Apple Silicon refuses to run
+        # unsigned arm64 code -- but not x86_64, which has no such rule, and
+        # lipoing the two together leaves a binary that `codesign --verify`
+        # calls "not signed at all". An arm64-only build is therefore signed and
+        # the universal one is not, which is why this only ever showed up in CI.
+        #
+        # The symptom is the microphone prompt appearing twice in a row and
+        # again on every launch: TCC records a permission grant against a code
+        # identity, and an unsigned binary does not have one to record it
+        # against. Signing the bundle also moves the identifier from
+        # "Celine <version>" to the bundle id, so a grant now survives a version
+        # bump instead of being asked for again with every release.
+        run: |
+          for bundle in Standalone/*.app VST3/*.vst3 AU/*.component CLAP/*.clap; do
+            [ -e "$bundle" ] || continue
+            codesign --force --deep --sign - "$bundle"
+            codesign --verify --strict "$bundle"
+            echo "signed $bundle"
+          done
+
+          # LV2 is a plain directory rather than a bundle, so its binary is
+          # signed directly.
+          for binary in LV2/*.lv2/*.so LV2/*.lv2/*.dylib; do
+            [ -e "$binary" ] || continue
+            codesign --force --sign - "$binary"
+            echo "signed $binary"
+          done
+
+      - name: Archive the plugins
+        working-directory: ${{ env.ARTIFACTS_PATH }}
+        run: |
+          # `zip -y`, not 7z and not ditto.
+          #
+          # Every format here is a *bundle* -- a directory macOS treats as one
+          # file -- and bundles contain symlinks. 7z follows them, which turns a
+          # bundle into a fatter and subtly wrong copy of itself. `-y` stores
+          # them as links.
+          #
+          # ditto -c -k --keepParent is the other usual answer, and is what this
+          # project used while builds were signed: it preserves the Apple
+          # metadata a signature is checked against. It also produces an archive
+          # that Info-ZIP's `unzip` cannot faithfully restore, so anyone not
+          # using Finder ends up with a broken bundle. Nothing is signed any
+          # more, so there is no signature to protect and no reason to accept
+          # that trade.
+          zip -r -y -q "${{ env.ARTIFACT_NAME }}.zip" . -x "*.a"
+          unzip -l "${{ env.ARTIFACT_NAME }}.zip" | tail -25
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ARTIFACT_NAME }}.zip
+          path: "${{ env.ARTIFACTS_PATH }}/${{ env.ARTIFACT_NAME }}.zip"

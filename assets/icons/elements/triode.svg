@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Triode: plate, dashed grid, cathode.
+
+     Schematic symbol artwork. The convention, which replacements must follow:
+       * viewBox is -60 -60 120 120, and (0,0) is the part's CENTRE.
+       * 10 SVG units = 1 grid square, so a pin at grid (0,-2) is at (0,-20).
+         Pins are drawn by the canvas at the positions in Element.h, so artwork
+         that ignores this will have its terminals land in the wrong place.
+       * stroke-width 1.2 is the schematic's normal line weight. Heavier lines
+         are multiples of it (1.56 = 1.3x, 1.8 = 1.5x); the app re-strokes at
+         that ratio so lines stay visible when zoomed out.
+       * Colour is ignored - everything is recoloured by the app. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-60 -60 120 120" width="120" height="120">
+  <circle cx="0" cy="0" r="19.5" fill="none" stroke="#000" stroke-width="1.2"/>
+  <path d="M 0 -30 L 0 -10.5" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
+  <path d="M -9 -10.5 L 9 -10.5" fill="none" stroke="#000" stroke-width="1.56" stroke-linecap="round"/>
+  <path d="M -11.25 0 L -7.5 0" fill="none" stroke="#000" stroke-width="1.44" stroke-linecap="round"/>
+  <path d="M -4.875 0 L -1.125 0" fill="none" stroke="#000" stroke-width="1.44" stroke-linecap="round"/>
+  <path d="M 1.5 0 L 5.25 0" fill="none" stroke="#000" stroke-width="1.44" stroke-linecap="round"/>
+  <path d="M 7.875 0 L 11.625 0" fill="none" stroke="#000" stroke-width="1.44" stroke-linecap="round"/>
+  <path d="M -30 0 L -11.25 0" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
+  <path d="M -9 10.5 L 0 10.5" fill="none" stroke="#000" stroke-width="1.56" stroke-linecap="round"/>
+  <path d="M 0 10.5 L 0 30" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
+</svg>

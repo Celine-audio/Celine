@@ -1,0 +1,112 @@
+name: Windows
+
+# One workflow per platform rather than one matrix over both -- see linux.yml
+# for why. Keep the two in step when changing how the project is built;
+# everything worth sharing lives in CMakeLists.txt, which both call the same way.
+
+on:
+  workflow_dispatch: # lets you run a build from the UI
+  workflow_call: # release.yml calls this
+
+# When pushing new commits, cancel any running builds on that branch. Keyed on
+# the workflow as well as the ref, so a Windows run never cancels a Linux one.
+concurrency:
+  # Named for this platform rather than for `github.workflow`. When a workflow
+  # is *called*, github.workflow is the caller's name -- so all three builds of
+  # a release would land in one group and, with cancel-in-progress, kill each
+  # other, leaving whichever started last.
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUILD_TYPE: Release
+  BUILD_DIR: Builds
+  SCCACHE_GHA_ENABLED: true
+  IPP_DIR: C:\Program Files (x86)\Intel\oneAPI\ipp\latest\lib\cmake\ipp
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: Windows
+    runs-on: windows-latest
+
+    steps:
+      # Sets up the MSVC toolchain and developer command prompt, which is what
+      # clang-cl below needs to find the Windows SDK.
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install IPP
+        run: nuget install intelipp.static.win-x64 -Version 2026.0.0.712
+
+      - name: Install Ninja
+        run: choco install ninja
+
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Cache the build
+        uses: mozilla-actions/sccache-action@v0.0.11
+
+      - name: Configure
+        run: >
+          cmake -B ${{ env.BUILD_DIR }}
+          -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+          -DCMAKE_C_COMPILER_LAUNCHER=sccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+          -DCMAKE_C_COMPILER=clang-cl
+          -DCMAKE_CXX_COMPILER=clang-cl
+          .
+
+      - name: Build
+        run: cmake --build ${{ env.BUILD_DIR }} --config ${{ env.BUILD_TYPE }}
+
+      # No display wrangling here, unlike Linux: Windows runners have a desktop,
+      # so the one test that opens a real window just works.
+      - name: Test & benchmarks
+        working-directory: ${{ env.BUILD_DIR }}
+        run: ctest --verbose --output-on-failure
+
+      - name: Read in .env from CMake # see GitHubENV.cmake
+        run: |
+          cat .env # show us the config
+          cat .env >> $GITHUB_ENV # pull in our PRODUCT_NAME, etc
+
+      - name: Set additional env vars for next steps
+        run: |
+          ARTIFACTS_PATH=${{ env.BUILD_DIR }}/${{ env.PROJECT_NAME }}_artefacts/${{ env.BUILD_TYPE }}
+          echo "ARTIFACTS_PATH=$ARTIFACTS_PATH" >> $GITHUB_ENV
+          echo "VST3_PATH=$ARTIFACTS_PATH/VST3/${{ env.PRODUCT_NAME }}.vst3" >> $GITHUB_ENV
+          echo "ARTIFACT_NAME=${{ env.PRODUCT_NAME }}-${{ env.VERSION }}-Windows" >> $GITHUB_ENV
+
+      - name: Pluginval
+        run: |
+          curl -LO "https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Windows.zip"
+          7z x pluginval_Windows.zip
+          ./pluginval.exe --strictness-level 10 --verbose --validate "${{ env.VST3_PATH }}"
+
+      - name: Archive the plugins
+        working-directory: ${{ env.ARTIFACTS_PATH }}
+        run: |
+          # One archive holding every format built, rather than an installer --
+          # see linux.yml for why.
+          #
+          # Everything under the artefacts directory goes in, minus what the
+          # linker leaves beside the plugins: the static library they were built
+          # from, and the import libraries, export tables and symbol files. None
+          # of those are any use to someone installing this.
+          7z a -tzip "${{ env.ARTIFACT_NAME }}.zip" \
+            "-xr!*.lib" "-xr!*.exp" "-xr!*.pdb" "-xr!*.ilk" .
+
+          7z l "${{ env.ARTIFACT_NAME }}.zip"
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ARTIFACT_NAME }}.zip
+          path: "${{ env.ARTIFACTS_PATH }}/${{ env.ARTIFACT_NAME }}.zip"

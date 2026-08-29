@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- PLACEHOLDER: Rotate a quarter turn. Overwrite with the real icon; nothing in the code needs
+     changing, the build picks it up by filename.
+     Toolbar convention: 24x24 viewBox, monochrome. Colour is ignored - the app
+     recolours the whole drawable to match the theme. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <g fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20 12a8 8 0 1 1-2.34-5.66"/>
+    <path d="M20 3.5V8h-4.5"/>
+  </g>
+</svg>

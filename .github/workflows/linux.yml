@@ -1,0 +1,145 @@
+name: Linux
+
+# One workflow per platform rather than one matrix over both. They share almost
+# nothing in practice -- different compiler, different package manager, a
+# different way of getting IPP, and only one of them needs a display -- so a
+# single file spent most of its length saying `if: runner.os == ...`. Split,
+# each file is a readable account of how that platform is built, and a red
+# Windows run no longer hides a green Linux one in the same job.
+#
+# The cost is that the two drift if only one is edited. What keeps them honest
+# is that everything worth sharing is in CMakeLists.txt, which both call the
+# same way.
+
+on:
+  workflow_dispatch: # lets you run a build from the UI
+  workflow_call: # release.yml calls this
+
+# When pushing new commits, cancel any running builds on that branch. Keyed on
+# the workflow as well as the ref, so a Linux run never cancels a Windows one.
+concurrency:
+  # Named for this platform rather than for `github.workflow`. When a workflow
+  # is *called*, github.workflow is the caller's name -- so all three builds of
+  # a release would land in one group and, with cancel-in-progress, kill each
+  # other, leaving whichever started last.
+  group: linux-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUILD_TYPE: Release
+  BUILD_DIR: Builds
+  SCCACHE_GHA_ENABLED: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: Linux
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Set up Clang
+        uses: egor-tensin/setup-clang@v2
+
+      # xvfb and a window manager are installed here; the display itself is
+      # started per command that needs one, by xvfb-run further down.
+      - name: Install JUCE's Linux deps
+        # Thanks to McMartin & co https://forum.juce.com/t/list-of-juce-dependencies-under-linux/15121/44
+        run: |
+          # IPP stuff
+          wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" | sudo tee /etc/apt/sources.list.d/oneAPI.list
+
+          sudo apt-get update && sudo apt install libasound2-dev libx11-dev libxi-dev libxinerama-dev libxext-dev libfreetype6-dev libwebkit2gtk-4.1-dev libglu1-mesa-dev xvfb openbox ninja-build intel-oneapi-ipp-devel
+
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Cache the build
+        uses: mozilla-actions/sccache-action@v0.0.11
+
+      - name: Configure
+        run: >
+          cmake -B ${{ env.BUILD_DIR }}
+          -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+          -DCMAKE_C_COMPILER_LAUNCHER=sccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+          -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld
+          -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld
+          -DCMAKE_MODULE_LINKER_FLAGS=-fuse-ld=lld
+          .
+
+      - name: Build
+        run: cmake --build ${{ env.BUILD_DIR }} --config ${{ env.BUILD_TYPE }}
+
+      - name: Test & benchmarks
+        working-directory: ${{ env.BUILD_DIR }}
+        # Under a display, with a window manager running on it.
+        #
+        # Most of the suite only constructs JUCE components, which needs no
+        # server at all. One test does not: the first-run preset prompt builds an
+        # AlertWindow, and AlertWindow is a TopLevelWindow that puts a real
+        # window on the desktop from its own constructor. That one test is the
+        # whole reason any of this is here.
+        #
+        # The window manager is not decoration, it is the fix. JUCE interns
+        # WM_PROTOCOLS with XInternAtom(only_if_exists = true) and then writes it
+        # onto every window it creates -- juce_XWindowSystem_linux.cpp, in
+        # createWindow. On a bare Xvfb nothing has ever interned that atom, so it
+        # comes back None and the write fails with `BadAtom ... Atom id 0x0`,
+        # which is precisely what CI reported. Any EWMH window manager creates
+        # the atom at startup; openbox is the smallest one that does.
+        #
+        # xvfb-run rather than a server backgrounded in an earlier step: every
+        # `run:` is its own shell, so nothing guaranteed that server was still
+        # alive by the time the tests ran. This starts one for the length of the
+        # command, on a free display number, and sets DISPLAY itself.
+        run: >
+          xvfb-run -a --server-args="-screen 0 1280x1024x24"
+          bash -c 'openbox & sleep 2 && ctest --verbose --output-on-failure'
+
+      - name: Read in .env from CMake # see GitHubENV.cmake
+        run: |
+          cat .env # show us the config
+          cat .env >> $GITHUB_ENV # pull in our PRODUCT_NAME, etc
+
+      - name: Set additional env vars for next steps
+        run: |
+          ARTIFACTS_PATH=${{ env.BUILD_DIR }}/${{ env.PROJECT_NAME }}_artefacts/${{ env.BUILD_TYPE }}
+          echo "ARTIFACTS_PATH=$ARTIFACTS_PATH" >> $GITHUB_ENV
+          echo "VST3_PATH=$ARTIFACTS_PATH/VST3/${{ env.PRODUCT_NAME }}.vst3" >> $GITHUB_ENV
+          echo "ARTIFACT_NAME=${{ env.PRODUCT_NAME }}-${{ env.VERSION }}-Linux" >> $GITHUB_ENV
+
+      - name: Pluginval
+        # A display, and a window manager on it, for the same reason the tests
+        # need them: it opens the plugin's editor.
+        run: |
+          curl -LO "https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Linux.zip"
+          7z x pluginval_Linux.zip
+          xvfb-run -a --server-args="-screen 0 1280x1024x24" \
+            bash -c 'openbox & sleep 2 && ./pluginval --strictness-level 10 --verbose --validate "${{ env.VST3_PATH }}"'
+
+      - name: Archive the plugins
+        working-directory: ${{ env.ARTIFACTS_PATH }}
+        run: |
+          # One archive holding every format built, rather than an installer. An
+          # installer is a second build system that has to be taught the format
+          # list all over again, and gets it wrong quietly when a format is
+          # added -- which is exactly how LV2 came to be built and shipped
+          # nowhere. Unzip-and-copy needs nothing taught and nothing signed.
+          #
+          # Everything under the artefacts directory goes in, minus the static
+          # library the formats were linked from.
+          7z a -tzip "${{ env.ARTIFACT_NAME }}.zip" "-xr!*.a" .
+          7z l "${{ env.ARTIFACT_NAME }}.zip"
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ARTIFACT_NAME }}.zip
+          path: "${{ env.ARTIFACTS_PATH }}/${{ env.ARTIFACT_NAME }}.zip"

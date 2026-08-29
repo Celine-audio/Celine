@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Transformer.
+
+     Schematic symbol artwork. The convention, which replacements must follow:
+       * viewBox is -60 -60 120 120, and (0,0) is the part's CENTRE.
+       * 10 SVG units = 1 grid square, so a pin at grid (0,-2) is at (0,-20).
+         Pins are drawn by the canvas at the positions in Element.h, so artwork
+         that ignores this will have its terminals land in the wrong place.
+       * stroke-width 1.2 is the schematic's normal line weight. Heavier lines
+         are multiples of it (1.56 = 1.3x, 1.8 = 1.5x); the app re-strokes at
+         that ratio so lines stay visible when zoomed out.
+       * Colour is ignored - everything is recoloured by the app. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-60 -60 120 120" width="120" height="120">
+  <path d="M -30 -30 L -15 -30" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
+  <path d="M -30 30 L -15 30" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
+  <path d="M -15 -30 Q -26 -22.5 -15 -15 Q -26 -7.5 -15 0 Q -26 7.5 -15 15 Q -26 22.5 -15 30" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
+  <path d="M 30 -30 L 15 -30" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
+  <path d="M 30 30 L 15 30" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
+  <path d="M 15 -30 Q 26 -22.5 15 -15 Q 26 -7.5 15 0 Q 26 7.5 15 15 Q 26 22.5 15 30" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
+  <path d="M -3.5 -32 L -3.5 32" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
+  <path d="M 3.5 -32 L 3.5 32" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
+  <!-- Winding identity: one bar beside winding 1 (the "Primary turns" box),
+       two beside winding 2 ("Secondary turns"). Counting rather than digits so
+       the mark survives rotation: a glyph baked into artwork reads upside down
+       at 180 degrees, which is why IN/OUT and the scope signs are drawn in code
+       instead. Kept short so they read as a tally against the core rather than
+       as further laminations. -->
+  <path d="M -9.25 -5 L -9.25 5" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
+  <path d="M 7 -5 L 7 5" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
+  <path d="M 11.5 -5 L 11.5 5" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
+</svg>

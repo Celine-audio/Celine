@@ -1,0 +1,109 @@
+                                    Céline
+                          Licence and third-party notices
+
+Copyright (C) 2025 the Céline authors
+
+Céline is free software: you can redistribute it and/or modify it under the
+terms of the GNU Affero General Public License, version 3, as published by the
+Free Software Foundation.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+
+The full licence text is in the file COPYING beside this one.
+
+Source: https://github.com/Celine-audio/Celine
+
+
+================================================================================
+WHY AGPL
+================================================================================
+
+Céline being free open-source software using the JUCE framework, using its free licence, it inherits its AGPLv3 terms.
+Céline is then under the GNU AGPL v3 licence.
+
+In practice:
+
+  * Using it costs nothing and obliges nothing. The licence governs distributing
+    the software, not what you make with it. Audio you record through Céline and
+    the circuits you draw are your own work.
+
+  * You may fork, modify and redistribute it, provided you do so under the AGPL
+    and pass the source on. You may not relicense it or ship a closed-source
+    build of it.
+
+  * Anyone you give a binary to is entitled to the corresponding source for that
+    exact build. Development happens in public and each release is built from a
+    tagged commit, which is how that right is served.
+
+
+================================================================================
+THIRD-PARTY COMPONENTS
+================================================================================
+
+The following are bundled inside every build and keep their own licences rather
+than Céline's.
+
+  JUCE 9.0.1 ................... AGPLv3, (C) Raw Material Software Limited
+  clap-juce-extensions ......... MIT, (C) 2019-2020 Paul Walker
+  Jura typeface ................ SIL Open Font Licence 1.1, (C) 2019 The Jura Project Authors
+  JetBrains Mono typeface ...... SIL Open Font Licence 1.1, (C) 2020 The JetBrains Mono Project Authors
+  Font Awesome Free icons ...... CC BY 4.0, (C) Fonticons, Inc.
+
+Libraries JUCE vendors inside its own modules, compiled in as part of JUCE and
+all permissively licensed:
+
+  VST®3 SDK .................... MIT, (C) 2025 Steinberg Media Technologies GmbH
+  ASIO® SDK .................... GPLv3 option, (C) 2025 Steinberg Media Technologies GmbH
+  LunaSVG and PlutoVG .......... MIT. JUCE 9's SVG parser
+  LV2 SDK ...................... ISC
+  HarfBuzz ..................... MIT
+  SheenBidi .................... Apache 2.0
+  zlib, pnglib ................. zlib
+  jpeglib ...................... Independent JPEG Group
+  FLAC, Ogg Vorbis ............. BSD
+  AudioUnitSDK ................. Apache 2.0 (macOS builds only)
+
+The complete list, with paths, is in JUCE/LICENSE.md.
+
+VST and ASIO are registered trademarks of Steinberg Media Technologies GmbH.
+
+The ASIO SDK is dual-licensed: under Steinberg's own ASIO licence, or
+alternatively under the GNU General Public License version 3. Celine takes the
+GPL option, which is what lets an ASIO-enabled build stay AGPLv3 -- the same
+choice we made for JUCE.
+
+Font Awesome Free is CC BY 4.0, which makes attribution a condition of use
+rather than a courtesy. It is given here, in the README, and in the plugin's
+own About dialog.
+
+The CODE_OF_CONDUCT.md file is the Contributor Covenant 2.1, used under
+CC BY 4.0, (C) the Contributor Covenant project.
+
+Used only to build and test Céline:
+
+  Pamplejuce ................... MIT, (C) 2022 Sudara Williams. The CMake setup
+                                 and CI started as this template, and the file
+                                 you are reading replaced its licence here
+  Catch2 3.8.1 ................. Boost Software Licence 1.0
+  CPM.cmake .................... MIT
+
+
+================================================================================
+CIRCUIT MODELS
+================================================================================
+
+The device models in source/CelineEngine/Components/ are implementations of
+published equations fitted to manufacturer datasheets. Equations are not
+copyrightable and no third-party code was used, but the sources are credited in
+each header and are worth reading before trusting a result:
+
+  Norman Koren's valve models .. https://www.normankoren.com/Audio/index.html
+  Dempwolf and Zolzer .......... "A physically-motivated triode model for
+                                 circuit simulations", DAFx-11
+
+Datasheet-derived parameters are attributed in the header that uses them.
