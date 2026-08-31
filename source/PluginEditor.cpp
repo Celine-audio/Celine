@@ -1398,7 +1398,7 @@ namespace
     juce::String aboutBodyText()
     {
         const juce::String text = juce::String::fromUTF8 (
-            "Copyright \xc2\xa9 2025 the C\xc3\xa9line authors.\n"
+            "Copyright \xc2\xa9 2026 C\xc3\xa9line Audio.\n"
             "\n"
             "Built " __DATE__ " -- JUCE 9.0.1, C++23.\n"
             "\n"
