@@ -1458,7 +1458,15 @@ namespace
             "\n"
             "Font Awesome Free is CC BY 4.0, which makes attribution a condition of use rather than a courtesy.\n"
             "\n"
-            "Used only to build and test C\xc3\xa9line: Pamplejuce (MIT, \xc2\xa9 2022 Sudara Williams), Catch2 3.8.1 (Boost Software Licence 1.0) and CPM.cmake (MIT).\n"
+            "Used only to build and test C\xc3\xa9line:\n"
+            "\n"
+            "  Pamplejuce ................... MIT, \xc2\xa9 2022 Sudara Williams. The CMake setup\n"
+            "                                 and CI started as this template, and the file\n"
+            "                                 you are reading replaced its licence here\n"
+            "  cmake-includes ............... MIT, \xc2\xa9 Sudara Williams. The shared CMake\n"
+            "                                 modules in cmake/, carried as a submodule\n"
+            "  Catch2 3.8.1 ................. Boost Software Licence 1.0\n"
+            "  CPM.cmake .................... MIT\n"
             "\n"
             "The repository's LICENSE and THIRD-PARTY-NOTICES files carry the full account, including the verbatim licence of every bundled work.\n"
             "\n"
@@ -1477,13 +1485,12 @@ namespace
     {
        public:
         /** The size below which the footer's marks overlap the Close button. */
-        // Width is set by the widest notices row, below which the dot-leader
-        // table wraps; height by the footer.
-        enum { minimumWidth = 640, minimumHeight = 460 };
-
+        // Width is set by the footer: five marks at their required sizes plus the
+        // Close button. Height by the same row.
+        enum { minimumWidth = 660, minimumHeight = 470 };
 
         AboutPanel (SchematicUI::CelineLookAndFeel& lnf,
-                    const juce::String& heading,
+                    const juce::String& versionText,
                     const juce::String& bodyText)
         {
             setLookAndFeel (&lnf);
@@ -1501,11 +1508,19 @@ namespace
             clapLogo = SchematicUI::Assets::drawable ("format-clap.png");
             lv2Logo  = SchematicUI::Assets::drawable ("format-lv2.svg");
 
-            title.setText (heading, juce::dontSendNotification);
-            title.setFont (SchematicUI::Fonts::bold (18.0f));
-            title.setColour (juce::Label::textColourId, SchematicUI::Theme::text());
-            title.setJustificationType (juce::Justification::centredLeft);
-            addAndMakeVisible (title);
+            version.setText (versionText, juce::dontSendNotification);
+            version.setFont (SchematicUI::Fonts::mono (13.0f));
+            version.setColour (juce::Label::textColourId, SchematicUI::Theme::comment());
+            version.setJustificationType (juce::Justification::centredLeft);
+            addAndMakeVisible (version);
+
+            subtitle.setText (juce::String::fromUTF8 (
+                                  "Real-time circuit sandbox \xc2\xb7 C\xc3\xa9line Audio"),
+                              juce::dontSendNotification);
+            subtitle.setFont (SchematicUI::Fonts::light (12.0f));
+            subtitle.setColour (juce::Label::textColourId, SchematicUI::Theme::comment());
+            subtitle.setJustificationType (juce::Justification::centredLeft);
+            addAndMakeVisible (subtitle);
 
             body.setMultiLine (true, true);
             body.setReadOnly (true);
@@ -1518,15 +1533,18 @@ namespace
 
             // Monospaced so the notices' dot leaders line up.
             body.setFont (SchematicUI::Fonts::mono (13.0f));
-            body.setColour (juce::TextEditor::backgroundColourId, SchematicUI::Theme::consoleBackground());
-            body.setColour (juce::TextEditor::textColourId, SchematicUI::Theme::text());
-            body.setColour (juce::TextEditor::outlineColourId, SchematicUI::Theme::line());
-            body.setColour (juce::TextEditor::focusedOutlineColourId, SchematicUI::Theme::line());
+            body.setColour (juce::TextEditor::backgroundColourId, SchematicUI::Theme::background());
+            body.setColour (juce::TextEditor::textColourId, SchematicUI::Theme::textDim());
+
+            body.setColour (juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
+            body.setColour (juce::TextEditor::focusedOutlineColourId, juce::Colours::transparentBlack);
             body.setText (bodyText, false);
             addAndMakeVisible (body);
 
+            // The one action here, in the brand's violet: this is the window's own
+            // button, not a piece of chrome.
             close.setColour (juce::TextButton::buttonColourId, SchematicUI::Theme::violet());
-            close.setColour (juce::TextButton::textColourOffId, SchematicUI::Theme::text());
+            close.setColour (juce::TextButton::textColourOffId, SchematicUI::Theme::chrome());
             addAndMakeVisible (close);
         }
 
@@ -1538,6 +1556,14 @@ namespace
 
             if (logo != nullptr && ! logoBounds.isEmpty())
                 logo->drawWithin (g, logoBounds.toFloat(), juce::RectanglePlacement::centred, 1.0f);
+
+            if (! logoBounds.isEmpty())
+            {
+                g.setColour (SchematicUI::Theme::line().withAlpha (0.15f));
+                g.drawHorizontalLine (logoBounds.getBottom() + 26,
+                                      static_cast<float> (logoBounds.getX()),
+                                      static_cast<float> (getWidth()) - 18.0f);
+            }
 
             for (const auto& mark : { std::pair { asioLogo.get(), asioBounds },
                                       std::pair { vstLogo.get(), vstBounds },
@@ -1553,38 +1579,46 @@ namespace
         {
             auto area = getLocalBounds().reduced (18);
 
-            // Roomy on purpose. Apple's guidelines require the Audio Units mark
-            // to be "clearly subordinate in both size and placement to the
-            // primary company or product identity", and the marks below sit at
-            // their own required minimums -- so the way to satisfy that is to
-            // give Céline's wordmark the space, not to shrink theirs.
-            auto header = area.removeFromTop (78);
 
-            // Off the ink rather than the viewBox, for the reason the toolbar's
-            // copy gives: the wordmark is not centred in its own box.
-            if (logo != nullptr)
+            // Roomy on purpose. Apple's guidelines require the Audio Units mark to
+            // be "clearly subordinate in both size and placement to the primary
+            // company or product identity", and the marks below sit at their own
+            // required minimums -- so the way to satisfy that is to give Céline's
+            // wordmark the space, not to shrink theirs.
             {
-                const auto ink = logo->getDrawableBounds();
-                const float aspect = ink.getHeight() > 0.0f ? ink.getWidth() / ink.getHeight() : 1.0f;
-                const int height = 66;
+                constexpr int logoHeight = 66;
+                auto masthead = area.removeFromTop (logoHeight);
 
-                logoBounds = header.removeFromLeft (juce::roundToInt (height * aspect))
-                                 .withSizeKeepingCentre (juce::roundToInt (height * aspect), height);
-                header.removeFromLeft (10);
+                if (logo != nullptr)
+                {
+                    const auto ink = logo->getDrawableBounds();
+                    const float aspect = ink.getHeight() > 0.0f ? ink.getWidth() / ink.getHeight() : 1.0f;
+                    const int width = juce::roundToInt (logoHeight * aspect);
+
+                    logoBounds = masthead.removeFromLeft (width)
+                                     .withSizeKeepingCentre (width, logoHeight);
+                    masthead.removeFromLeft (14);
+                }
+
+                // Whatever is left of the row, which puts it just past the mark.
+                version.setBounds (masthead);
             }
 
-            title.setBounds (header);
+            area.removeFromTop (6);
+            subtitle.setBounds (area.removeFromTop (16));
 
-            area.removeFromTop (12);
+            // Clear of the rule paint() draws under the masthead.
+            area.removeFromTop (22);
 
-            // 72 px clears the smallest size any of these marks may be shown
-            // at. CLAP and LV2 have no minimum and are set by eye.
             auto row = area.removeFromBottom (96);
             close.setBounds (row.removeFromRight (96).withSizeKeepingCentre (96, 32));
 
             constexpr int gap = 20;
 
-            const auto place = [&row] (const std::unique_ptr<juce::Drawable>& d, int height,
+
+            constexpr float markSize = 76.0f;
+
+            const auto place = [&row] (const std::unique_ptr<juce::Drawable>& d,
                                        juce::Rectangle<int>& out)
             {
                 if (d == nullptr)
@@ -1592,16 +1626,18 @@ namespace
 
                 const auto ink = d->getDrawableBounds();
                 const float aspect = ink.getHeight() > 0.0f ? ink.getWidth() / ink.getHeight() : 1.0f;
+
+                const int height = juce::roundToInt (markSize / std::sqrt (aspect));
                 const int width = juce::roundToInt (static_cast<float> (height) * aspect);
 
                 out = row.removeFromLeft (width).withSizeKeepingCentre (width, height);
             };
 
-            place (asioLogo, 72, asioBounds); row.removeFromLeft (gap);
-            place (vstLogo, 72, vstBounds);   row.removeFromLeft (gap);
-            place (auLogo, 72, auBounds);     row.removeFromLeft (gap);
-            place (clapLogo, 64, clapBounds); row.removeFromLeft (gap);
-            place (lv2Logo, 48, lv2Bounds);
+            place (asioLogo, asioBounds); row.removeFromLeft (gap);
+            place (vstLogo, vstBounds);   row.removeFromLeft (gap);
+            place (auLogo, auBounds);     row.removeFromLeft (gap);
+            place (clapLogo, clapBounds); row.removeFromLeft (gap);
+            place (lv2Logo, lv2Bounds);
 
             area.removeFromBottom (12);
 
@@ -1615,7 +1651,7 @@ namespace
         juce::Rectangle<int> logoBounds;
         std::unique_ptr<juce::Drawable> asioLogo, vstLogo, auLogo, clapLogo, lv2Logo;
         juce::Rectangle<int> asioBounds, vstBounds, auBounds, clapBounds, lv2Bounds;
-        juce::Label title;
+        juce::Label version, subtitle;
         juce::TextEditor body;
     };
 } // namespace
@@ -1630,8 +1666,7 @@ void PluginEditor::showAboutDialog()
     const juce::String version;
 #endif
 
-    auto panel = std::make_unique<AboutPanel> (
-        lookAndFeel, version.isEmpty() ? product : product + " " + version, aboutBodyText());
+    auto panel = std::make_unique<AboutPanel> (lookAndFeel, version, aboutBodyText());
     juce::DialogWindow::LaunchOptions options;
     options.dialogTitle = "About " + product;
     options.dialogBackgroundColour = SchematicUI::Theme::chrome();
