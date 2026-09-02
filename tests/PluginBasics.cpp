@@ -4062,3 +4062,23 @@ TEST_CASE ("A tube added in a newer build degrades safely", "[plugin][schematic]
     CHECK (opened.toValueTree().getChild (0).getProperty ("modelId").toString()
              == "celine:triode-12ax7-mullard");
 }
+
+TEST_CASE ("The editor opens at the size it was left at", "[ui]")
+{
+    // setResizeLimits constrains the bounds it finds -- 0x0 during construction -- up
+    // to the minimum, and that fires resized(), which writes the size back to the
+    // processor. Read the stored size after that call and you get the minimum it has
+    // just written, so the window opens at its smallest every time and the size you
+    // left it at is never restored.
+    juce::ScopedJuceInitialiser_GUI gui;
+
+    PluginProcessor plugin;
+    plugin.editorWidth = 1280;
+    plugin.editorHeight = 820;
+
+    std::unique_ptr<juce::AudioProcessorEditor> editor (plugin.createEditor());
+    REQUIRE (editor != nullptr);
+
+    CHECK (editor->getWidth() == 1280);
+    CHECK (editor->getHeight() == 820);
+}

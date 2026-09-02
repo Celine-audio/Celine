@@ -63,12 +63,21 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     setResizable (true, true);
     const int minWidth = paletteWidth + inspectorWidth + 400;
     const int minHeight = 460;
+
+    // Read before setResizeLimits, not after. That call constrains the bounds it
+    // finds -- still 0x0 here -- up to the minimum, and that fires resized(), which
+    // writes the size back to the processor. Reading afterwards returns the minimum
+    // it has just written, so the window opened at its smallest size every time and
+    // the size you left it at was never restored.
+    const auto storedWidth = processorRef.editorWidth.load();
+    const auto storedHeight = processorRef.editorHeight.load();
+
     setResizeLimits (minWidth, minHeight, 4000, 3000);
 
     // Clamped rather than trusted: a size from a state blob written by an older
     // build, or on a bigger screen, must not produce a window you cannot use.
-    setSize (juce::jlimit (minWidth, 4000, processorRef.editorWidth.load()),
-             juce::jlimit (minHeight, 3000, processorRef.editorHeight.load()));
+    setSize (juce::jlimit (minWidth, 4000, storedWidth),
+             juce::jlimit (minHeight, 3000, storedHeight));
 
     juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<PluginEditor> (this)]
     {
@@ -1494,7 +1503,6 @@ namespace
                     const juce::String& bodyText)
         {
             setLookAndFeel (&lnf);
-            setSize (700, 640);
 
             logo = SchematicUI::Assets::drawable ("logo.svg");
 
@@ -1546,6 +1554,12 @@ namespace
             close.setColour (juce::TextButton::buttonColourId, SchematicUI::Theme::violet());
             close.setColour (juce::TextButton::textColourOffId, SchematicUI::Theme::chrome());
             addAndMakeVisible (close);
+
+            // Last, and it matters. setSize fires resized(), which measures each mark
+            // to place it, so called before the artwork is loaded it sizes all six of
+            // them to nothing. The dialog resizes the panel afterwards and so hides
+            // this entirely today.
+            setSize (700, 640);
         }
 
         ~AboutPanel() override { setLookAndFeel (nullptr); }
