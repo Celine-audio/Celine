@@ -138,6 +138,22 @@ public:
     void drawPopupMenuBackgroundWithOptions (juce::Graphics&, int width, int height,
                                              const juce::PopupMenu::Options&) override;
 
+    /** No shadow, rather than a square one behind a rounded panel.
+
+        Windows cannot give a menu the native window shadow -- `windowUsesNativeShadow`
+        refuses it to anything semi-transparent or temporary, and a menu of ours is both:
+        temporary because it is a menu, semi-transparent because the background colour is
+        (which is what buys the rounded corners in the first place). So the peer asks the
+        look and feel for a shadow instead, and JUCE's is a rectangle around the window's
+        bounds. Over corners the panel deliberately leaves empty, that rectangle is four
+        dark wedges -- the square spikes.
+
+        macOS never arrives here. There `windowHasDropShadow` becomes
+        `[NSWindow setHasShadow:]`, which follows the window's alpha and so rounds itself,
+        and the peer never asks the look and feel at all. Returning nullptr is therefore
+        a Windows-only change however it reads. */
+    std::unique_ptr<juce::DropShadower> createDropShadowerForComponent (juce::Component&) override;
+
     //==========================================================================
     /** A tooltip, in the house face and without a rule around it.
 

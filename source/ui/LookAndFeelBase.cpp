@@ -504,6 +504,23 @@ void LookAndFeelBase::drawPopupMenuBackgroundWithOptions (juce::Graphics& g, int
     drawPopupMenuBackground (g, width, height);
 }
 
+std::unique_ptr<juce::DropShadower> LookAndFeelBase::createDropShadowerForComponent (juce::Component&)
+{
+    // Nothing on any platform, and nothing lost on the Mac: the macOS peer turns
+    // windowHasDropShadow into an NSWindow shadow and never asks for one of these, so
+    // menus there keep the native shadow that already rounds itself against the alpha.
+    //
+    // The Windows peer does ask, because it cannot use the native shadow on a window
+    // that is semi-transparent and temporary -- which every menu here is. What it would
+    // build is a rectangle, and a rectangle behind a rounded panel is a dark wedge in
+    // each of the four corners. An honest absence beats that.
+    //
+    // Callout boxes are unaffected: drawCallOutBoxBackground draws its own shadow into
+    // the bubble, and the tooltip window is parented to the editor rather than put on
+    // the desktop, so neither was getting one of these anyway.
+    return nullptr;
+}
+
 int LookAndFeelBase::getPopupMenuBorderSizeWithOptions (const juce::PopupMenu::Options& options)
 {
     juce::ignoreUnused (options);
