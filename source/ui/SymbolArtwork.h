@@ -6,7 +6,7 @@
 
 #include <vector>
 
-namespace SchematicUI
+namespace Celine
 {
     //==========================================================================
     /**
@@ -84,4 +84,4 @@ namespace SchematicUI
     /** Every asset name the drawing can ask for. The test that walks these is
         what stops a renamed file from silently blanking a part. */
     juce::StringArray getAllSymbolAssetNames();
-} // namespace SchematicUI
+} // namespace Celine

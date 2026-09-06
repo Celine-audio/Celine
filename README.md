@@ -63,7 +63,16 @@ Middle-click to clone.
 
 ## Formats
 
-Built as **VST3®**, **AU** (macOS), **LV2**, **CLAP** and **Standalone**, on Windows, macOS, and Linux.
+Built as **VST3®**, **AU** (macOS), **LV2**, **CLAP** and **Standalone**, on Windows,
+macOS, and Linux, plus **AAX** on Windows and macOS.
+
+The AAX build is still waiting for approval from AVID, so it will not work in consumer versions as of now.
+Nothing is code-signed, so Gatekeeper and SmartScreen will warn on first run.
+
+To remove the quarantine attribute from a file or app on macOS, use the following command on all the files you wish to install.
+```bash
+xattr -d com.apple.quarantine <file_path>
+```
 
 The Windows standalone supports **ASIO®** alongside WASAPI and DirectSound.
 

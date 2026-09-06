@@ -3,13 +3,20 @@
 #include "Fonts.h"
 #include "Theme.h"
 
-namespace SchematicUI
+namespace Celine
 {
     using namespace SchematicModel;
 
     namespace
     {
-        const juce::Colour ghostColour = Theme::text().withAlpha (0.4f);
+        /** The part being placed, drawn faintly under the pointer.
+
+            A function rather than a constant. As a namespace-scope `const juce::Colour`
+            it was two bugs at once: a colour captured before the theme could be read,
+            which no theme change afterwards could move; and, because reading a colour
+            builds the palette, a palette built during static initialisation -- before
+            there is a message loop for it to defer its first save to. */
+        juce::Colour ghostColour() { return Theme::text().withAlpha (0.4f); }
 
         constexpr float minGridSize = 4.0f;
         constexpr float maxGridSize = 40.0f;
@@ -563,7 +570,7 @@ namespace SchematicUI
             ghost.y = hoverGrid.y;
             ghost.orientation = pendingOrientation;
             ghost.mirrored = pendingMirrored;
-            painter.drawSymbolOnly(g, ghost, ghostColour);
+            painter.drawSymbolOnly(g, ghost, ghostColour());
         }
     }
 
@@ -619,9 +626,11 @@ namespace SchematicUI
         inlineEditor->selectAll();
         inlineEditor->setJustification(juce::Justification::centred);
         inlineEditor->setFont(Fonts::light(juce::jlimit(12.0f, 20.0f, painter.gridSize * 0.9f)));
-        inlineEditor->setColour(juce::TextEditor::backgroundColourId, Theme::surface());
-        inlineEditor->setColour(juce::TextEditor::outlineColourId, Theme::teal());
-        inlineEditor->setColour(juce::TextEditor::focusedOutlineColourId, Theme::teal());
+        // No outline, like every other field in the window. This one floats over the
+        // sheet rather than sitting in a panel, so it is the brighter fill that has to
+        // separate it from the drawing -- surfaceBright is what selection wears
+        // everywhere else, and an open editor is a selection you are typing into.
+        inlineEditor->setColour(juce::TextEditor::backgroundColourId, Theme::surfaceBright());
 
         inlineEditor->onReturnKey = [this] { commitInlineEdit(); };
         inlineEditor->onEscapeKey = [this] { closeInlineEdit(); };
@@ -1643,4 +1652,4 @@ namespace SchematicUI
 
         return false;
     }
-} // namespace SchematicUI
+} // namespace Celine

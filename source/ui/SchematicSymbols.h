@@ -6,7 +6,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-namespace SchematicUI
+namespace Celine
 {
     //==========================================================================
     /** One scope's picture, copied out of wherever it is being written.
@@ -237,4 +237,4 @@ namespace SchematicUI
         static bool parsePotValue(const juce::String& text, double& valueOut,
                                   SchematicModel::Taper& taperOut, bool& taperGiven);
     };
-} // namespace SchematicUI
+} // namespace Celine

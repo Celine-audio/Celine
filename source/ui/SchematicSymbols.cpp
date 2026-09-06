@@ -4,7 +4,7 @@
 #include "SymbolArtwork.h"
 #include "Theme.h"
 
-namespace SchematicUI
+namespace Celine
 {
     using namespace SchematicModel;
 
@@ -75,21 +75,14 @@ namespace SchematicUI
 
         /** What a Rectangle's "model" picks: the list in Element.h is colours,
             since which section you are looking at is the whole of what a group
-            box has to say. Indexed positionally, so a colour added there needs
-            one added here; out of range falls back to the first. */
+            box has to say.
+
+            Read from the theme rather than held in a table here. It was a
+            function-local static of six literals, which is a snapshot twice over --
+            hex at a call site, and one taken before the theme was consulted. */
         juce::Colour rectangleColour(int modelIndex)
         {
-            static const juce::Colour colours[] = {
-                juce::Colour{0xff8b93a1}, // Grey
-                juce::Colour{0xff5b9bd5}, // Blue
-                juce::Colour{0xff5fb87a}, // Green
-                juce::Colour{0xffd9a441}, // Amber
-                juce::Colour{0xffd06666}, // Red
-                juce::Colour{0xffa77fd0}, // Violet
-            };
-
-            constexpr int count = static_cast<int>(std::size(colours));
-            return colours[juce::isPositiveAndBelow(modelIndex, count) ? modelIndex : 0];
+            return Theme::groupBox(modelIndex);
         }
 
         /** How far below its centre an element's lowest pin sits, in grid
@@ -1062,4 +1055,4 @@ namespace SchematicUI
         valueOut = trimmed.getDoubleValue();
         return true;
     }
-} // namespace SchematicUI
+} // namespace Celine

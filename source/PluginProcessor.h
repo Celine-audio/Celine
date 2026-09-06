@@ -219,6 +219,23 @@ public:
     std::atomic<int> editorWidth { 1060 };
     std::atomic<int> editorHeight { 700 };
 
+    /** Which preset the sheet came from, as the toolbar field shows it.
+
+        Here for the same reason the size is: the editor is rebuilt every time the
+        window closes, so a name that lived only there came back blank -- the sheet
+        still said what it always did and the field above it claimed nothing had been
+        loaded. Empty means no preset; `presetIsFactory` distinguishes a built-in,
+        which Save must not think it can overwrite, from a file on disk.
+
+        In getStateInformation but deliberately not in createDocument, again like the
+        size: loading a preset must not tell you it loaded a different one. Touched
+        from the message thread, and read wherever the host chooses to save from --
+        the same bargain createDocument already makes with the schematic itself. */
+    juce::String presetName;
+    bool presetIsFactory = false;
+    bool presetModified = false;
+    juce::File presetFile;
+
     /** Loads one back, rebuilds, and tells any open editor to catch up.
         Returns false if the tree isn't one of ours. */
     bool restoreDocument(const juce::ValueTree& document);

@@ -2,12 +2,12 @@
 
 #include <numeric>
 
-#include "CelineLookAndFeel.h"
+#include "PluginLookAndFeel.h"
 #include "EmbeddedAssets.h"
 #include "Fonts.h"
 #include "Theme.h"
 
-namespace SchematicUI
+namespace Celine
 {
     using namespace SchematicModel;
 
@@ -176,6 +176,27 @@ namespace SchematicUI
     // Inspector
     //==========================================================================
 
+    std::array<juce::Label*, 13> ElementInspector::captionLabels()
+    {
+        return {&valueCaption, &valueCaptionB, &labelCaption, &modelCaption, &taperCaption,
+                &orderCaption, &knobCaption, &widthCaption, &heightCaption,
+                &scopeMinCaption, &scopeMaxCaption, &scopeSecondsCaption, &cabFileCaption};
+    }
+
+    void ElementInspector::applyColours()
+    {
+        titleLabel.setColour(juce::Label::textColourId, Theme::text());
+
+        for (auto* caption : captionLabels())
+            caption->setColour(juce::Label::textColourId, Theme::text().withAlpha(0.65f));
+
+        scopeAutoButton.setColour(juce::ToggleButton::textColourId, Theme::text());
+        polarisedButton.setColour(juce::ToggleButton::textColourId, Theme::text());
+        modelDescription.setColour(juce::Label::textColourId, Theme::text().withAlpha(0.6f));
+        hintLabel.setColour(juce::Label::textColourId, Theme::text().withAlpha(0.5f));
+        deleteButton.setColour(juce::TextButton::buttonColourId, Theme::discard());
+    }
+
     ElementInspector::ElementInspector()
     {
         viewport.setViewedComponent(&content, false);
@@ -184,16 +205,11 @@ namespace SchematicUI
         addAndMakeVisible(viewport);
 
         titleLabel.setFont(Fonts::light(17.0f));
-        titleLabel.setColour(juce::Label::textColourId, Theme::text());
         content.addAndMakeVisible(titleLabel);
 
-        for (auto* caption : {&valueCaption, &valueCaptionB, &labelCaption, &modelCaption, &taperCaption,
-                              &orderCaption, &knobCaption, &widthCaption, &heightCaption,
-                              &scopeMinCaption, &scopeMaxCaption, &scopeSecondsCaption,
-                              &cabFileCaption})
+        for (auto* caption : captionLabels())
         {
             caption->setFont(Fonts::light(12.0f));
-            caption->setColour(juce::Label::textColourId, Theme::text().withAlpha(0.65f));
             content.addAndMakeVisible(caption);
         }
 
@@ -201,7 +217,6 @@ namespace SchematicUI
         scopeMaxCaption.setText("Volts, top", juce::dontSendNotification);
         scopeSecondsCaption.setText("Time span", juce::dontSendNotification);
 
-        scopeAutoButton.setColour(juce::ToggleButton::textColourId, Theme::text());
         scopeAutoButton.getProperties().set(pillSwitchProperty, true);
         scopeAutoButton.onClick = [this] { commitScopeAxes(); };
         content.addAndMakeVisible(scopeAutoButton);
@@ -285,7 +300,6 @@ namespace SchematicUI
         content.addAndMakeVisible(modelBox);
 
         modelDescription.setFont(Fonts::light(12.0f));
-        modelDescription.setColour(juce::Label::textColourId, Theme::text().withAlpha(0.6f));
         modelDescription.setJustificationType(juce::Justification::topLeft);
         content.addAndMakeVisible(modelDescription);
 
@@ -304,7 +318,6 @@ namespace SchematicUI
         };
         content.addAndMakeVisible(taperBox);
 
-        polarisedButton.setColour(juce::ToggleButton::textColourId, Theme::text());
         polarisedButton.getProperties().set(pillSwitchProperty, true);
         cabButton.getProperties().set(pillSwitchProperty, true);
         polarisedButton.onClick = [this]
@@ -347,15 +360,14 @@ namespace SchematicUI
         flipButton.onClick = [this] { if (onFlipRequested) onFlipRequested(); };
         content.addAndMakeVisible(flipButton);
 
-        deleteButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff6b2f2f));
         deleteButton.onClick = [this] { if (onDeleteRequested) onDeleteRequested(); };
         content.addAndMakeVisible(deleteButton);
 
         hintLabel.setFont(Fonts::light(13.0f));
-        hintLabel.setColour(juce::Label::textColourId, Theme::text().withAlpha(0.5f));
         hintLabel.setJustificationType(juce::Justification::topLeft);
         content.addAndMakeVisible(hintLabel);
 
+        applyColours();
         setElement(nullptr);
     }
 
@@ -1140,6 +1152,11 @@ namespace SchematicUI
         viewport.setWantsKeyboardFocus(false);
         addAndMakeVisible(viewport);
 
+        applyColours();
+    }
+
+    void MessageConsole::applyColours()
+    {
         promptIcon = Assets::drawable("terminal-solid-full.svg");
 
         if (promptIcon != nullptr)
@@ -1207,7 +1224,7 @@ namespace SchematicUI
             const auto colour =
                 message.severity == SchematicModel::Diagnostic::Severity::Error     ? Theme::error()
                 : message.severity == SchematicModel::Diagnostic::Severity::Warning ? Theme::warning()
-                                                                                    : Theme::info();
+                                                                                    : Theme::notice();
 
             // "R4 (35,-67)  Pin 2 touches nothing else." -- the part first,
             // because that is what you are looking for.
@@ -1299,4 +1316,4 @@ namespace SchematicUI
             }
         }
     }
-} // namespace SchematicUI
+} // namespace Celine

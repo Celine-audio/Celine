@@ -6,7 +6,138 @@ Follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ## [Unreleased]
 
+### Added
+
+- `tests/ThemeReachTests.cpp`, which renders the whole editor, moves every colour the
+  theme has, renders it again, and fails if anything the design ships is still on screen.
+  It found four real bugs the day it was first run across all four plugins.
+- **A theme is now this plugin's own**, in `<name>.celthm` under the company folder
+  rather than one file shared by the house. Every instance of it on the machine wears
+  the same colours whatever host or format it is loaded as, and an existing shared theme
+  is inherited on first run so nothing is lost by the split. Themes stay cross-
+  compatible: one exported from another Céline plugin still loads, and the colours this
+  one does not have are simply skipped.
+- **AAX**, on macOS and Windows. Pro Tools will not list it until it carries a PACE
+  signature applied with Avid's wraptool; an unwrapped build loads in a Pro Tools
+  Developer build and nowhere else.
+- **A theming engine.** Every colour the interface draws with is editable at runtime,
+  from **Theme…** in the settings menu, and can be written to and read from a `.celthm`
+  file to be kept or shared. Changes show at once — the palette is what everything draws
+  from, so there is no Apply to forget.
+- The theme file is shared by every Céline plugin: one `theme.celthm` under the company
+  folder, so theming one of them themes all of them. A key a build does not know is
+  ignored and a key it knows but the file omits keeps its shipped value, which is what
+  lets one file serve four plugins with different palettes.
+- The schematic's own colours are in the theme, not just the chrome — wires, parts, the
+  selection, the three caption meanings, the two selection-box rules and the six group
+  box colours. A palette that could not reach the drawing could not re-skin this plugin.
+- Tooltips on the controls along the bottom band and in the toolbar.
+
+### Changed
+
+- The look and feel is split: `ui/LookAndFeelBase` carries everything the four plugins
+  draw the same way, and `ui/PluginLookAndFeel` is a subclass for what this one does
+  differently. Fifteen files under `source/ui/` are now byte-identical across all four,
+  which is what makes the shared kit a move rather than a merge — see `CELINEUI.md`.
+- Every format now declares what this is, rather than leaving each host to file it under
+  nothing: **Fx|Distortion** to VST3, **lv2:DistortionPlugin** to LV2, **distortion** to
+  CLAP, and **Harmonic** to AAX. AU is unchanged — it has only a component type, `aufx`,
+  and no genre to state.
+- The CLAP build also declares that it handles mono as well as stereo, which it always
+  did.
+- **Button backgrounds and text fields are separate colours in the theme.** They shipped
+  as one — every button wore the same slate as every panel — so a theme could not lift
+  the controls off the surfaces they sit on. Two new roles, **Button** and **Text
+  field**, ship at exactly the values they replace, so nothing looks different until
+  somebody moves them.
+- **Menus, tooltips and buttons are drawn the way the other Céline plugins draw them.**
+  All three were still JUCE's defaults: square menus with a system border, a tooltip
+  that read as an operating-system window sitting on top of the plugin rather than as
+  part of it, and buttons with none of the design's rounding. The callout bubble and
+  the field outlines came across with them.
+- The About window is now the one the other Céline plugins use, and wears the DESIGNER
+  wordmark. What it says about this plugin — the tagline, the wordmark, and the circuit
+  model credits it owes on its own account — comes from `source/ProductInfo.h`.
+- The interface is in namespace `Celine` under `source/ui/`, as the other plugins are,
+  and `CelineLookAndFeel` is now `PluginLookAndFeel`. Several of these files are now
+  byte-identical across all four, which is what a shared kit has to mean before it can
+  be extracted into one.
+
 ### Fixed
+
+- **The toolbar's mark did not follow the theme.** The logo and the wordmark were tinted
+  once when the window opened, and tinting is destructive — so they stayed on whatever
+  colour the theme happened to be at that moment.
+- **The About window did not follow the theme at all.** It is a window of its own, so the
+  editor's `sendLookAndFeelChange` never reached it; it now listens to the palette
+  directly, and its marks are re-read from the binary rather than re-tinted.
+- **Group headings no longer escape the colour list.** They are painted by the panel in
+  the scrolled list's coordinates, and nothing clipped them — so a heading scrolled past
+  the top carried on being drawn above the list, over the subtitle and the footer. It
+  showed up as headings appearing in the middle of the window whenever something made
+  the panel repaint underneath the colour picker.
+- The colour picker no longer paints a square panel inside a rounded bubble. It filled
+  its own background, which met the bubble's rounded corners and lost the argument.
+- **Theming one instance now reaches the others.** Each plugin format is a separately
+  loaded module with its own copy of everything static, so the VST3 and the AU open in
+  one session were two palettes that never met — theming one left the other on the old
+  colours until it was reloaded. A window reads the saved theme when it opens, which is
+  the moment it can matter; nothing watches the disk in the background. Colours you are
+  in the middle of choosing are never overwritten by what another instance saved.
+- **The placement ghost's colour was captured before the program started.** It was a
+  namespace-scope `const juce::Colour` read from the theme, which made it two bugs at
+  once: a colour no theme change could move, and — because reading a colour builds the
+  palette — a palette built during static initialisation, before there was a message
+  loop for it to use. It is a function now, like every other colour in the window.
+- Building a palette no longer schedules a save of the file it has just read. Reading
+  any colour builds it, and the first read can come from a static initialiser — before
+  there is a message loop for the save to wait on, which JUCE asserts about.
+- **A theme you pick is kept — when you press Save.** It used to be live until you
+  closed the plugin and then gone, because nothing wrote it. There is now a **Save**
+  button in the theme editor, lit only while there is something to keep, and the status
+  line says whether there is. Editing itself touches nothing: a colour picker sends a
+  change per mouse move, and a preference is not worth a file per mouse move.
+- Text fields no longer draw a ring when you click into them. The caret already says
+  where the typing goes, and it was the one edge in the window that arrived on a click.
+- **The loaded preset survives closing the window.** It lived only on the editor, which
+  is rebuilt every time the window closes, so reopening showed an empty preset field
+  above a circuit that was still loaded. It is on the processor now, and in the session
+  state with it.
+- **A folder chosen in one instance reaches the others.** The settings file was held
+  open for the life of each instance, so one loaded earlier answered from the copy it
+  read then — and wrote that copy back over the new one when it closed.
+- The window no longer records a size it was resized to on the way out. A host is free
+  to collapse an editor it is putting away, and recording that overwrote the size you
+  had actually chosen.
+- The three tooltips the plugin already set are now visible. There was no
+  `juce::TooltipWindow` anywhere, and JUCE has no default, so nothing could draw them.
+- No colour is written as a hex literal at a call site any more; the six group box
+  colours were the last of them.
+- **Square corners on rounded controls.** A text field filled its whole rectangle and
+  drew a rounded rule inside it, so the four corners outside the rounding kept the fill
+  — a rounded box with square spikes at its corners, on the inspector's fields and on
+  the one that floats over the sheet. Menus had the same fault from the other end: their
+  window was opaque, so the corners a rounded panel did not paint came out as squares of
+  whatever was behind.
+- **Nothing in the window draws a rule around itself any more.** The toolbar buttons,
+  the preset field, the housing behind undo and redo, the dropdowns and every text field
+  each drew their own border; the other Céline plugins draw none of them, and a border
+  on top of a fill that already separates a control from its ground is a second edge
+  doing the first one's job. A focused field still gets its ring — that one is saying
+  something.
+- The dropdowns are drawn by the house's `drawComboBox` rather than Céline's own, which
+  outlined them at one and a half times the normal border weight.
+- The toolbar buttons no longer draw a rule around themselves. They are filled with a
+  colour that already separates them from the toolbar, so the outline drew a second edge
+  where one was doing the job — and it is what made them look unlike the same buttons in
+  the other Céline plugins.
+- Engaging bypass no longer reshapes its button. It painted its own inset, radius and
+  border rather than letting the base class draw it, so the two states covered slightly
+  different areas.
+- A theme change re-reads the look and feel before the window asks it anything. The
+  rebuild button's idle fill is the look and feel's own button colour, so asking first
+  answered with the colour the theme was replacing — which left that button wearing the
+  old palette until something else repainted it.
 
 - The window now reopens at the size it was left at. `setResizeLimits` constrains the bounds it finds.
 The stored size was read after that call, so it returned the minimum that had just been written, and every instance opened at its smallest.

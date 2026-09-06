@@ -1,6 +1,7 @@
 #include "PresetLibrary.h"
 
 #include "PluginProcessor.h"
+#include "ProductInfo.h"
 
 namespace
 {
@@ -38,17 +39,45 @@ namespace
         juce::PropertiesFile::Options options;
         options.applicationName = PresetLibrary::getProductName();
         options.filenameSuffix = "settings";
-        options.folderName = PresetLibrary::getProductName();
+
+        // The company folder, not this plugin's own: it is where the rest of the house
+        // keeps the choices that belong to the person rather than to a session, and one
+        // folder per plugin is four places to look when something is wrong.
+        options.folderName = juce::String (juce::CharPointer_UTF8 (ProductInfo::companyName));
         options.osxLibrarySubFolder = "Application Support";
 
         return options;
     }
+
+    /** Where this used to be kept, under the plugin's own name. Read once, if the new
+        one is not there yet, so upgrading does not silently forget a folder somebody
+        chose -- which would look exactly like the bug this move was part of fixing. */
+    juce::File legacySettingsFile()
+    {
+        juce::PropertiesFile::Options options = makeSettingsOptions();
+        options.folderName = PresetLibrary::getProductName();
+
+        return options.getDefaultFile();
+    }
+
+    juce::File defaultSettingsFile()
+    {
+        const auto file = makeSettingsOptions().getDefaultFile();
+
+        if (! file.existsAsFile())
+            if (const auto legacy = legacySettingsFile(); legacy.existsAsFile())
+            {
+                file.getParentDirectory().createDirectory();
+                legacy.copyFileTo (file);
+            }
+
+        return file;
+    }
 } // namespace
 
 PresetLibrary::PresetLibrary()
-    : settings (getSettingsOverride() != juce::File{}
-                    ? std::make_unique<juce::PropertiesFile> (getSettingsOverride(), makeSettingsOptions())
-                    : std::make_unique<juce::PropertiesFile> (makeSettingsOptions()))
+    : settingsFile (getSettingsOverride() != juce::File{} ? getSettingsOverride()
+                                                          : defaultSettingsFile())
 {
 }
 
@@ -57,15 +86,26 @@ void PresetLibrary::redirectSettingsForTesting (const juce::File& settingsFile)
     getSettingsOverride() = settingsFile;
 }
 
-PresetLibrary::PresetLibrary (const juce::File& settingsFile)
-    : settings (std::make_unique<juce::PropertiesFile> (settingsFile, makeSettingsOptions()))
+PresetLibrary::PresetLibrary (const juce::File& file)
+    : settingsFile (file)
 {
 }
 
 //==============================================================================
+/*
+    Opened for each read and write rather than held open for this object's lifetime.
+
+    Every instance of the plugin shares this file, and one that held it open would be
+    answering from the copy it read when it was created -- so a folder chosen in the
+    window you have open now would be invisible to the instance loaded five minutes
+    ago, and that instance would write its stale copy back over yours when it closed.
+    The cost is a small file parsed per call, on the message thread, when a menu opens.
+*/
 juce::File PresetLibrary::getDirectory() const
 {
-    const auto path = settings->getValue (directoryKey);
+    const juce::PropertiesFile file (settingsFile, makeSettingsOptions());
+    const auto path = file.getValue (directoryKey);
+
     return path.isEmpty() ? juce::File{} : juce::File (path);
 }
 
@@ -77,25 +117,28 @@ bool PresetLibrary::hasDirectory() const
 
 void PresetLibrary::setDirectory (const juce::File& folder)
 {
-    settings->setValue (directoryKey, folder.getFullPathName());
+    juce::PropertiesFile file (settingsFile, makeSettingsOptions());
+    file.setValue (directoryKey, folder.getFullPathName());
 
     // Written through immediately rather than on the timer. Another instance of
     // the plugin reads this file when its editor opens, and "I chose a folder
     // and the other window still doesn't know" is a confusing way to find out
     // there is a save delay.
-    settings->saveIfNeeded();
+    file.saveIfNeeded();
 }
 
 //==============================================================================
 bool PresetLibrary::hasBeenOffered() const
 {
-    return settings->getBoolValue (offeredKey, false);
+    const juce::PropertiesFile file (settingsFile, makeSettingsOptions());
+    return file.getBoolValue (offeredKey, false);
 }
 
 void PresetLibrary::markOffered()
 {
-    settings->setValue (offeredKey, true);
-    settings->saveIfNeeded();
+    juce::PropertiesFile file (settingsFile, makeSettingsOptions());
+    file.setValue (offeredKey, true);
+    file.saveIfNeeded();
 }
 
 //==============================================================================

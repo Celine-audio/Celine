@@ -7,7 +7,7 @@
 #include <memory>
 #include <vector>
 
-namespace SchematicUI
+namespace Celine
 {
     using namespace SchematicModel;
 
@@ -415,4 +415,4 @@ namespace SchematicUI
     {
         return juce::StringArray(assetNames, assetCount);
     }
-} // namespace SchematicUI
+} // namespace Celine

@@ -1,12 +1,12 @@
 #include <CelineEngine/Engine.h>
 #include <Schematic/Element.h>
-#include <UI/SchematicSymbols.h>
+#include <ui/SchematicSymbols.h>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 using namespace SchematicModel;
-using SchematicUI::SymbolPainter;
+using Celine::SymbolPainter;
 using Catch::Approx;
 
 namespace

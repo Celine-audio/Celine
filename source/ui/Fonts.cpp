@@ -4,7 +4,7 @@
 
 #include <array>
 
-namespace SchematicUI::Fonts
+namespace Celine::Fonts
 {
     namespace
     {
@@ -15,6 +15,7 @@ namespace SchematicUI::Fonts
                 case Weight::Light: return "Jura-Light.ttf";
                 case Weight::Bold:  return "Jura-Bold.ttf";
                 case Weight::Mono:  return "JetBrainsMono-Regular.ttf";
+                case Weight::Logo:  return "NicoMoji-Regular.ttf";
             }
 
             return "Jura-Light.ttf";
@@ -75,8 +76,8 @@ namespace SchematicUI::Fonts
             /** `tried` matters as much as the pointer: a weight that is not
                 embedded must not be re-parsed on every repaint just because the
                 answer came back null. */
-            std::array<juce::Typeface::Ptr, 3> faces {};
-            std::array<bool, 3> tried { false, false, false };
+            std::array<juce::Typeface::Ptr, 4> faces {};
+            std::array<bool, 4> tried { false, false, false, false };
 
             static FontCache* instance;
         };
@@ -98,6 +99,14 @@ namespace SchematicUI::Fonts
         return cache.faces[slot];
     }
 
+    juce::Font logo(float heightInPixels)
+    {
+        if (auto face = typeface(Weight::Logo))
+            return juce::Font(juce::FontOptions(face).withHeight(heightInPixels));
+
+        return bold(heightInPixels);
+    }
+
     juce::Font font(Weight weight, float heightInPixels)
     {
         if (auto face = typeface(weight))
@@ -107,4 +116,4 @@ namespace SchematicUI::Fonts
         // refusing to draw.
         return juce::Font(juce::FontOptions(heightInPixels));
     }
-} // namespace SchematicUI::Fonts
+} // namespace Celine::Fonts

@@ -111,7 +111,13 @@ jobs:
         # "Celine <version>" to the bundle id, so a grant now survives a version
         # bump instead of being asked for again with every release.
         run: |
-          for bundle in Standalone/*.app VST3/*.vst3 AU/*.component CLAP/*.clap; do
+          # The AAX bundle is signed here for the same reason as the rest -- a
+          # universal build arrives unsigned -- and that is *not* the signature
+          # Pro Tools asks for. AAX is gated on a PACE signature applied with
+          # Avid's wraptool under a developer account, and without it a release
+          # Pro Tools will not list the plugin at all. What CI produces is a
+          # bundle that is ready to be wrapped, not one that is ready to load.
+          for bundle in Standalone/*.app VST3/*.vst3 AU/*.component CLAP/*.clap AAX/*.aaxplugin; do
             [ -e "$bundle" ] || continue
             codesign --force --deep --sign - "$bundle"
             codesign --verify --strict "$bundle"

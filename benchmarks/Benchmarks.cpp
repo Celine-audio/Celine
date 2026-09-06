@@ -302,7 +302,7 @@ TEST_CASE ("Circuit engine performance")
 TEST_CASE ("Drawing performance")
 {
     using namespace SchematicModel;
-    using namespace SchematicUI;
+    using namespace Celine;
 
     // A sheet of the shape someone actually builds: parts in rows, wired along
     // each row, so there are junctions and nets to work out as well as symbols.

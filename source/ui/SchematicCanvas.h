@@ -7,7 +7,7 @@
 #include <optional>
 #include <vector>
 
-namespace SchematicUI
+namespace Celine
 {
     //==========================================================================
     /**
@@ -440,4 +440,4 @@ namespace SchematicUI
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SchematicCanvas)
     };
-} // namespace SchematicUI
+} // namespace Celine

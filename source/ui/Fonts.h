@@ -2,7 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-namespace SchematicUI
+namespace Celine
 {
     //==========================================================================
     /**
@@ -34,6 +34,11 @@ namespace SchematicUI
             Light,
             Bold,
             Mono,
+
+            /** Nico Moji, and only for the wordmark beside the logo. A display face
+                with a look of its own, which is the point — and the reason it is not
+                on this list for anything else to reach for. */
+            Logo,
         };
 
         /** The typeface, parsed once. Null if the file is not embedded. */
@@ -46,9 +51,14 @@ namespace SchematicUI
             that means the same thing. */
         juce::Font font(Weight weight, float heightInPixels);
 
-        /** Shorthand for the three the design actually uses. */
+        /** Shorthand for the ones the design actually uses. */
         inline juce::Font light(float height) { return font(Weight::Light, height); }
         inline juce::Font bold(float height) { return font(Weight::Bold, height); }
         inline juce::Font mono(float height) { return font(Weight::Mono, height); }
+
+        /** The wordmark's face. Falls back to Jura Bold rather than to the platform
+            sans if Nico Moji is not embedded: a missing display face should leave the
+            name looking like the rest of the design, not like a different program. */
+        juce::Font logo(float height);
     } // namespace Fonts
-} // namespace SchematicUI
+} // namespace Celine

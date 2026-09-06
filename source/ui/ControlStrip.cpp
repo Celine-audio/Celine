@@ -1,10 +1,10 @@
 #include "ControlStrip.h"
 
-#include "CelineLookAndFeel.h"
+#include "PluginLookAndFeel.h"
 #include "Fonts.h"
 #include "Theme.h"
 
-namespace SchematicUI
+namespace Celine
 {
     ControlStrip::ControlStrip(PluginProcessor& processor) : processorRef(processor)
     {
@@ -237,4 +237,4 @@ namespace SchematicUI
             }
         }
     }
-} // namespace SchematicUI
+} // namespace Celine

@@ -6,7 +6,7 @@
 
 #include <functional>
 
-namespace SchematicUI
+namespace Celine
 {
     //==========================================================================
     /**
@@ -143,7 +143,18 @@ namespace SchematicUI
         void resized() override;
         void paint(juce::Graphics&) override;
 
+        /** Every colour this panel hands to a child rather than reading as it paints.
+            Called from the constructor and again on every theme change. */
+        void applyColours();
+        void lookAndFeelChanged() override { applyColours(); }
+
        private:
+        /** The captions, as one list. Two loops need it -- the constructor's, which
+            sets the face, and applyColours', which runs again whenever the theme
+            moves -- and two hand-written copies of thirteen names is one place for a
+            new caption to be added to only one of them. */
+        std::array<juce::Label*, 13> captionLabels();
+
         void rebuildForElement();
 
         void showNothingSelected();
@@ -294,6 +305,12 @@ namespace SchematicUI
         void resized() override;
         void mouseDown(const juce::MouseEvent&) override;
 
+        /** The prompt mark, re-tinted. Artwork rather than a colour handed to a child,
+            but the same rule applies: tinting is destructive, so a theme change has to
+            start again from what is in the binary. */
+        void applyColours();
+        void lookAndFeelChanged() override { applyColours(); }
+
        private:
         /** One laid-out row: what to draw, in what colour, and what it points
             at. Laid out once when the messages change rather than per paint,
@@ -340,4 +357,4 @@ namespace SchematicUI
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MessageConsole)
     };
-} // namespace SchematicUI
+} // namespace Celine

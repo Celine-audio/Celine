@@ -2,12 +2,12 @@
 
 #include <PluginProcessor.h>
 #include <Schematic/ExampleSchematics.h>
-#include <UI/SchematicSymbols.h>
+#include <ui/SchematicSymbols.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 using namespace SchematicModel;
-using SchematicUI::SymbolPainter;
+using Celine::SymbolPainter;
 
 namespace
 {
@@ -312,13 +312,13 @@ TEST_CASE ("A pinned scope range is drawn as given", "[scope][axes]")
     // The whole reason to pin a range is that the picture stops resizing itself
     // to its contents -- so what is under test is that a *quiet* trace and a
     // loud one map to different heights, where auto-scaling makes them the same.
-    SchematicUI::ScopeReading reading;
+    Celine::ScopeReading reading;
     reading.live = true;
     reading.autoScale = false;
     reading.rangeMin = -10.0f;
     reading.rangeMax = 10.0f;
 
-    for (int c = 0; c < SchematicUI::ScopeReading::columns; ++c)
+    for (int c = 0; c < Celine::ScopeReading::columns; ++c)
     {
         reading.minimum[c] = -1.0f;
         reading.maximum[c] = 1.0f;
@@ -327,7 +327,7 @@ TEST_CASE ("A pinned scope range is drawn as given", "[scope][axes]")
     juce::Image image (juce::Image::ARGB, 128, 64, true);
     juce::Graphics g (image);
 
-    const auto scale = SchematicUI::drawScopeTrace (g, { 0.0f, 0.0f, 128.0f, 64.0f }, reading,
+    const auto scale = Celine::drawScopeTrace (g, { 0.0f, 0.0f, 128.0f, 64.0f }, reading,
                                                     juce::Colours::white, juce::Colours::grey,
                                                     juce::Colours::black);
 
@@ -342,7 +342,7 @@ TEST_CASE ("A pinned scope range is drawn as given", "[scope][axes]")
     // And auto-scaling on the same data fits it instead, which is the contrast
     // the setting exists for.
     reading.autoScale = true;
-    const auto fitted = SchematicUI::drawScopeTrace (g, { 0.0f, 0.0f, 128.0f, 64.0f }, reading,
+    const auto fitted = Celine::drawScopeTrace (g, { 0.0f, 0.0f, 128.0f, 64.0f }, reading,
                                                      juce::Colours::white, juce::Colours::grey,
                                                      juce::Colours::black);
 
@@ -356,13 +356,13 @@ TEST_CASE ("An unusable scope range falls back to fitting the data", "[scope][ax
     // An inverted or empty range divides by zero in the renderer. The inspector
     // refuses one, but a hand-edited file can carry one in, and a line of
     // infinities is a poor way to find that out.
-    SchematicUI::ScopeReading reading;
+    Celine::ScopeReading reading;
     reading.live = true;
     reading.autoScale = false;
     reading.rangeMin = 5.0f;
     reading.rangeMax = 5.0f;
 
-    for (int c = 0; c < SchematicUI::ScopeReading::columns; ++c)
+    for (int c = 0; c < Celine::ScopeReading::columns; ++c)
     {
         reading.minimum[c] = -2.0f;
         reading.maximum[c] = 2.0f;
@@ -371,7 +371,7 @@ TEST_CASE ("An unusable scope range falls back to fitting the data", "[scope][ax
     juce::Image image (juce::Image::ARGB, 128, 64, true);
     juce::Graphics g (image);
 
-    const auto scale = SchematicUI::drawScopeTrace (g, { 0.0f, 0.0f, 128.0f, 64.0f }, reading,
+    const auto scale = Celine::drawScopeTrace (g, { 0.0f, 0.0f, 128.0f, 64.0f }, reading,
                                                     juce::Colours::white, juce::Colours::grey,
                                                     juce::Colours::black);
 

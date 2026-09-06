@@ -24,8 +24,11 @@ set(COMPANY_NAME "Celine Audio")
 set(BUNDLE_ID "com.celineaudio.Celine")
 
 # AU is only built on macOS -- JUCE skips it elsewhere -- so the same list works
-# on every platform. LV2 is what Linux hosts (Ardour, Carla, Reaper) want.
-set(FORMATS AU VST3 LV2 Standalone)
+# on every platform. LV2 is what Linux hosts (Ardour, Carla, Reaper) want. AAX is
+# built on macOS and Windows only, and needs a PACE signature applied with Avid's
+# wraptool before a shipping Pro Tools will list it -- an unwrapped build loads in a
+# Pro Tools Developer build and nowhere else.
+set(FORMATS AAX AU VST3 LV2 Standalone)
 
 # Force JUCE to work with sccache
 # instruct MSVC to embed debug info (/Z7) instead of emitting a .pdb
@@ -73,6 +76,18 @@ juce_add_plugin("${PROJECT_NAME}"
         # every host treat this as a different plugin.
         LV2URI "https://github.com/Celine-audio/Celine"
 
+        # Which shelf each host files this on. Left unset every one of them defaults to
+        # its "uncategorised" heading, which is not neutral -- it is its own drawer, and
+        # a plugin in it is one nobody browsing the category they expect will find.
+        #
+        # Distortion here, unlike GALLERY's Filter: this runs audio through valve and
+        # diode stages solved as a real circuit, so nonlinearity is the entire point.
+        # AAX has no distortion heading, and Harmonic is the one amp and distortion
+        # emulations sit under there.
+        VST3_CATEGORIES Fx Distortion
+        AAX_CATEGORY Harmonic
+        LV2_PLUGIN_CLASS DistortionPlugin
+
         FORMATS "${FORMATS}"
 
         PRODUCT_NAME "${PRODUCT_NAME}")
@@ -81,9 +96,13 @@ juce_add_plugin("${PROJECT_NAME}"
 # into ODR violations.
 add_library(SharedCode INTERFACE)
 
+# audio-effect has to stay first -- clap-juce-extensions reads the head of this list to
+# decide what kind of plugin it is building. What follows is the shelf a host files it
+# on, and then the layouts it actually handles: both, since it takes mono in and mono
+# out as readily as stereo.
 clap_juce_extensions_plugin(TARGET "${PROJECT_NAME}"
         CLAP_ID "${BUNDLE_ID}"
-        CLAP_FEATURES audio-effect)
+        CLAP_FEATURES audio-effect distortion mono stereo)
 
 # Fast math, C++23 and a few other target defaults.
 include(SharedCodeDefaults)

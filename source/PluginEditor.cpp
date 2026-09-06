@@ -10,20 +10,40 @@
 #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
 #include "Schematic/ExampleSchematics.h"
 
-#include "UI/EmbeddedAssets.h"
+#include "ui/EmbeddedAssets.h"
+#include "ui/AboutPanel.h"
+#include "ui/ThemePanel.h"
 
 namespace
 {
-    const juce::Colour chromeColour = SchematicUI::Theme::chrome();
-    const juce::Colour textColour = SchematicUI::Theme::text();
-    const juce::Colour pendingColour = SchematicUI::Theme::pending();
+    /** One character, not three full stops. The house sets it in the menus, and a
+        run of periods is a different glyph at a different width. */
+    const juce::String ellipsis = juce::String::fromUTF8 ("\xe2\x80\xa6");
 }
+
 
 //==============================================================================
 PluginEditor::PluginEditor (PluginProcessor& p)
     : AudioProcessorEditor (&p), processorRef (p), canvas (p.getSchematic()), controlStrip (p)
 {
     setLookAndFeel (&lookAndFeel);
+
+    // A tooltip paints a rounded panel, so it must not be opaque -- an opaque component
+    // has to fill every pixel it owns, and the four corners outside the rounding are
+    // exactly the ones it does not paint; left opaque they came out as square spikes of
+    // whatever was in the buffer. TooltipWindow sets the flag in its constructor and
+    // offers no way to ask otherwise. Safe because this one is parented to the editor
+    // rather than put on the desktop, so what shows through the corners is this window.
+    tooltips.setOpaque (false);
+
+    // The palette is one per process, so a colour changed in any window moves every
+    // window in the session -- which is what somebody picking a colour expects.
+    Celine::Theme::palette().addChangeListener (this);
+
+    // Once, here, rather than on a timer: another instance may have saved a theme since
+    // this module last looked, and a window opening is the moment that can matter. The
+    // disk is not touched again unless somebody asks it to be.
+    Celine::Theme::palette().refreshFromDisk();
 
     // Standalone only: JUCE's own Options menu and Audio/MIDI dialog are never
     // our children, so they resolve against the *default* look and feel -- which
@@ -34,6 +54,16 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     buildToolbar();
     buildPanels();
     buildBottomBand();
+
+    // After the children exist and before the window is sized: applyColours reaches
+    // into them, and resized() runs off the back of setSize further down.
+    applyColours();
+
+    // A rebuilt editor catches up with what is already loaded. Without this the sheet
+    // came back and the field above it did not, which reads as the preset having been
+    // lost rather than as the window having been reopened.
+    lastCircuitFile = processorRef.presetFile;
+    showPresetFromProcessor();
 
     // A preset load or a host restoring a session replaces the drawing under us.
     // Bounced through the message thread, since some hosts restore state from
@@ -61,8 +91,8 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     updateActionButtons();
 
     setResizable (true, true);
-    const int minWidth = paletteWidth + inspectorWidth + 400;
-    const int minHeight = 460;
+    const int minWidth = minimumWidth;
+    const int minHeight = minimumHeight;
 
     // Read before setResizeLimits, not after. That call constrains the bounds it
     // finds -- still 0x0 here -- up to the minimum, and that fires resized(), which
@@ -92,8 +122,8 @@ PluginEditor::PluginEditor (PluginProcessor& p)
 
 void PluginEditor::buildToolbar()
 {
-    settingsButton = std::make_unique<SchematicUI::IconButton> (
-        "Settings", SchematicUI::Assets::drawable ("gear-solid-full.svg"));
+    settingsButton = std::make_unique<Celine::IconButton> (
+        "Settings", Celine::Assets::drawable ("gear-solid-full.svg"));
 
     // Assets are looked up by *filename*. Asking for the C++ identifier JUCE
     // derives instead fails silently -- it strips hyphens rather than replacing
@@ -114,8 +144,8 @@ void PluginEditor::buildToolbar()
         for (const auto& spec : specs)
         {
             auto& slot = actionButtons[static_cast<size_t> (spec.action)];
-            slot = std::make_unique<SchematicUI::IconButton> (
-                spec.name, SchematicUI::Assets::drawable (spec.file));
+            slot = std::make_unique<Celine::IconButton> (
+                spec.name, Celine::Assets::drawable (spec.file));
             slot->onClick = spec.click;
             slot->setWantsKeyboardFocus (false);
             addAndMakeVisible (*slot);
@@ -123,7 +153,7 @@ void PluginEditor::buildToolbar()
     }
 
     {
-        struct Spec { std::unique_ptr<SchematicUI::IconButton>* slot; const char* name; const char* file; };
+        struct Spec { std::unique_ptr<Celine::IconButton>* slot; const char* name; const char* file; };
 
         const Spec specs[] = {
             { &selectToolButton, "Select (S)", "arrow-pointer-solid-full.svg" },
@@ -135,17 +165,15 @@ void PluginEditor::buildToolbar()
 
         for (const auto& spec : specs)
         {
-            *spec.slot = std::make_unique<SchematicUI::IconButton> (
-                spec.name, SchematicUI::Assets::drawable (spec.file));
+            *spec.slot = std::make_unique<Celine::IconButton> (
+                spec.name, Celine::Assets::drawable (spec.file));
             (*spec.slot)->setWantsKeyboardFocus (false);
             addAndMakeVisible (**spec.slot);
         }
     }
 
-    logo = SchematicUI::Assets::drawable ("logo.svg");
-
-    if (logo != nullptr)
-        SchematicUI::Assets::tint (*logo, SchematicUI::Theme::text());
+    // The house mark is loaded and tinted in applyColours, not here: tinting is
+    // destructive, so a theme change has to start again from the artwork.
 
     // Undo and redo share one housing, painted by the editor behind them.
     actionButton (Action::Undo).setDrawsFrame (false);
@@ -161,15 +189,20 @@ void PluginEditor::buildToolbar()
         addAndMakeVisible (button);
     }
 
-    using Tool = SchematicUI::SchematicCanvas::Tool;
+    using Tool = Celine::SchematicCanvas::Tool;
 
     selectToolButton->onClick = [this] { canvas.setTool (Tool::Select); };
     deleteToolButton->onClick = [this] { canvas.setTool (Tool::Delete); };
     saveButton->onClick       = [this] { browseForCircuit (true); };
     loadButton->onClick       = [this] { browseForCircuit (false); };
     importButton->onClick     = [this] { browseForImport(); };
+    presetsButton.setTooltip ("The circuit that is loaded, and the presets you can load. "
+                              "A dot beside the name means it has been edited since.");
     presetsButton.onClick     = [this] { showPresetsMenu(); };
     settingsButton->onClick   = [this] { showSettingsMenu(); };
+    rebuildButton.setTooltip ("Hands the drawing to the audio engine. Nothing you draw is "
+                              "heard until this is pressed, which is why it turns amber "
+                              "while the sheet is ahead of what you are listening to.");
     rebuildButton.onClick     = [this] { rebuildCircuit(); };
 
     // The canvas changes tool on its own -- placing a part drops it back to
@@ -192,7 +225,7 @@ void PluginEditor::buildPanels()
     };
 
     palette.onTypeChosen = [this] (SchematicModel::ElementType type) { canvas.setPendingType (type); };
-    palette.onWireChosen = [this] { canvas.setTool (SchematicUI::SchematicCanvas::Tool::Wire); };
+    palette.onWireChosen = [this] { canvas.setTool (Celine::SchematicCanvas::Tool::Wire); };
 
     canvas.onSchematicChanged = [this]
     {
@@ -206,7 +239,7 @@ void PluginEditor::buildPanels()
 
     // Fetched on demand rather than pushed: the canvas draws a schematic and
     // knows nothing about audio, so it asks for a snapshot of some numbers.
-    canvas.scopeReader = [this] (int elementId, SchematicUI::ScopeReading& out)
+    canvas.scopeReader = [this] (int elementId, Celine::ScopeReading& out)
     { return readScopeTrace (elementId, out); };
 
     canvas.onUndoRequested = [this] { undo(); };
@@ -253,33 +286,36 @@ void PluginEditor::buildPanels()
 
 void PluginEditor::buildBottomBand()
 {
+    inputSlider.setTooltip ("Level into the circuit. Valves and diodes answer to how hard "
+                            "they are driven, so this sets how the circuit behaves and not "
+                            "only how loud it is.");
+    outputSlider.setTooltip ("Level out, after the circuit. Use it to match the bypassed "
+                             "level once the input has been set where you want it.");
+
     for (auto* slider : { &inputSlider, &outputSlider })
     {
         slider->setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
 
         // Drawn differently from the drawn circuit's own knobs, which share this
         // band; deaf to the wheel, as those are.
-        slider->getProperties().set (SchematicUI::digitalGainProperty, true);
+        slider->getProperties().set (digitalGainProperty, true);
         slider->setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
         slider->setScrollWheelEnabled (false);
 
         addAndMakeVisible (slider);
     }
 
-    bypassButton = std::make_unique<SchematicUI::PowerButton> (
-        "Bypass", SchematicUI::Assets::drawable ("power-off-solid-full.svg"));
+    bypassButton = std::make_unique<Celine::PowerButton> (
+        "Bypass", Celine::Assets::drawable ("power-off-solid-full.svg"));
     bypassButton->setWantsKeyboardFocus (false);
     addAndMakeVisible (*bypassButton);
 
+    channelModeBox.setTooltip ("How many circuits run, and what feeds them. Stereo simulates "
+                               "the drawing twice, once per channel; the mono settings "
+                               "simulate it once, from the left, the right, or the two summed.");
     channelModeBox.addItemList ({ "Stereo", "Mono L", "Mono R", "Mono L+R" }, 1);
     channelModeBox.setWantsKeyboardFocus (false);
 
-    // The one dropdown on a light panel, so it is coloured here rather than in
-    // the look and feel the inspector's boxes share.
-    channelModeBox.setColour (juce::ComboBox::backgroundColourId, SchematicUI::Theme::teal());
-    channelModeBox.setColour (juce::ComboBox::textColourId, SchematicUI::Theme::textOnPanel());
-    channelModeBox.setColour (juce::ComboBox::outlineColourId, SchematicUI::Theme::textOnPanel());
-    channelModeBox.setColour (juce::ComboBox::arrowColourId, SchematicUI::Theme::textOnPanel());
     addAndMakeVisible (channelModeBox);
 
     addAndMakeVisible (controlStrip);
@@ -291,9 +327,8 @@ void PluginEditor::buildBottomBand()
 
     for (auto* label : { &inputLabel, &outputLabel, &channelModeLabel })
     {
-        label->setFont (SchematicUI::Fonts::light (15.0f));
+        label->setFont (Celine::Fonts::light (15.0f));
         label->setJustificationType (juce::Justification::centred);
-        label->setColour (juce::Label::textColourId, SchematicUI::Theme::textOnPanel());
         addAndMakeVisible (label);
     }
 
@@ -308,6 +343,8 @@ void PluginEditor::buildBottomBand()
 PluginEditor::~PluginEditor()
 {
     processorRef.onSchematicReplaced = nullptr;
+
+    Celine::Theme::palette().removeChangeListener (this);
 
     // Before the children go: a component holding a dangling LookAndFeel is a
     // crash on the way out.
@@ -338,8 +375,7 @@ void PluginEditor::schematicChangedExternally()
     updateActionButtons();
 
     pendingRebuild = false;
-    rebuildButton.setColour (juce::TextButton::buttonColourId,
-                             getLookAndFeel().findColour (juce::TextButton::buttonColourId));
+    refreshRebuildButtonColour();
     setStatus ("Loaded.", false);
 
     // At the moment the import lands, not as a line in the build's notes. This
@@ -364,7 +400,7 @@ void PluginEditor::schematicChangedExternally()
 
 void PluginEditor::updateToolButtons()
 {
-    using Tool = SchematicUI::SchematicCanvas::Tool;
+    using Tool = Celine::SchematicCanvas::Tool;
 
     const auto tool = canvas.getTool();
 
@@ -383,23 +419,37 @@ void PluginEditor::setLoadedPreset (const juce::File& file)
     // A file means a preset; File{} means the sheet came from somewhere with no
     // file behind it -- an example, a cleared sheet, or a host session.
     lastCircuitFile = file;
-    presetsButton.setPresetName (file != juce::File{} ? file.getFileNameWithoutExtension()
-                                                      : juce::String(),
-                                 false);
-    presetsButton.setModified (false);
+
+    processorRef.presetFile = file;
+    processorRef.presetName = file != juce::File{} ? file.getFileNameWithoutExtension()
+                                                   : juce::String();
+    processorRef.presetIsFactory = false;
+    processorRef.presetModified = false;
+
+    showPresetFromProcessor();
 }
 
 void PluginEditor::setLoadedFactoryPreset (const juce::String& name)
 {
     // No file behind it, so Save must not think it can overwrite anything --
     // lastCircuitFile stays where it was and the dialog opens where it did.
-    presetsButton.setPresetName (name, true);
-    presetsButton.setModified (false);
+    processorRef.presetName = name;
+    processorRef.presetIsFactory = true;
+    processorRef.presetModified = false;
+
+    showPresetFromProcessor();
 }
 
 void PluginEditor::markPresetModified()
 {
+    processorRef.presetModified = true;
     presetsButton.setModified (true);
+}
+
+void PluginEditor::showPresetFromProcessor()
+{
+    presetsButton.setPresetName (processorRef.presetName, processorRef.presetIsFactory);
+    presetsButton.setModified (processorRef.presetModified);
 }
 
 void PluginEditor::recordUndoState()
@@ -479,7 +529,7 @@ void PluginEditor::updateActionButtons()
 
     for (const auto action : { Action::Mirror, Action::Flip, Action::Copy, Action::Rotate })
         actionButton (action).setEnabled (hasSelection
-                                         || canvas.getTool() == SchematicUI::SchematicCanvas::Tool::Place);
+                                         || canvas.getTool() == Celine::SchematicCanvas::Tool::Place);
 
     // setEnabled repaints the button it is called on, but the undo/redo housing
     // is painted by the editor, so nothing above would bring it up to date.
@@ -497,7 +547,7 @@ void PluginEditor::markPending()
         return;
 
     pendingRebuild = true;
-    rebuildButton.setColour (juce::TextButton::buttonColourId, pendingColour);
+    refreshRebuildButtonColour();
     setStatus ("Circuit changed. Press \"Rebuild\" to load it.", false);
     repaint();
 }
@@ -515,8 +565,7 @@ void PluginEditor::rebuildCircuit()
     }
 
     pendingRebuild = false;
-    rebuildButton.setColour (juce::TextButton::buttonColourId,
-                             getLookAndFeel().findColour (juce::TextButton::buttonColourId));
+    refreshRebuildButtonColour();
 
     controlStrip.refresh();
 
@@ -600,7 +649,7 @@ void PluginEditor::setStatus (const juce::String& message, bool isError)
     console.setHeadline (message, isError);
 }
 
-bool PluginEditor::readScopeTrace (int elementId, SchematicUI::ScopeReading& out) const
+bool PluginEditor::readScopeTrace (int elementId, Celine::ScopeReading& out) const
 {
     const auto* trace = processorRef.getScopeTrace (elementId);
 
@@ -613,7 +662,7 @@ bool PluginEditor::readScopeTrace (int elementId, SchematicUI::ScopeReading& out
     // is complete has actually been written.
     out.writeColumn = trace->writeColumn.load (std::memory_order_acquire);
 
-    for (int c = 0; c < SchematicUI::ScopeReading::columns; ++c)
+    for (int c = 0; c < Celine::ScopeReading::columns; ++c)
     {
         out.minimum[c] = trace->minimum[c].load (std::memory_order_relaxed);
         out.maximum[c] = trace->maximum[c].load (std::memory_order_relaxed);
@@ -1083,7 +1132,7 @@ namespace
 
         void paint (juce::Graphics& g) override
         {
-            using namespace SchematicUI;
+            using namespace Celine;
 
             g.fillAll (Theme::chrome());
 
@@ -1168,9 +1217,9 @@ void PluginEditor::styleStandaloneNotification()
         {
             if (auto* button = dynamic_cast<juce::TextButton*> (child))
             {
-                button->setColour (juce::TextButton::buttonColourId, SchematicUI::Theme::surface());
-                button->setColour (juce::TextButton::textColourOffId, SchematicUI::Theme::text());
-                button->setColour (juce::TextButton::textColourOnId, SchematicUI::Theme::text());
+                button->setColour (juce::TextButton::buttonColourId, Celine::Theme::surface());
+                button->setColour (juce::TextButton::textColourOffId, Celine::Theme::text());
+                button->setColour (juce::TextButton::textColourOnId, Celine::Theme::text());
                 button->setLookAndFeel (&lookAndFeel);
                 button->toFront (false);
             }
@@ -1201,7 +1250,7 @@ void PluginEditor::offerPresetFolderOnFirstRun()
     class FolderPrompt : public juce::Component
     {
        public:
-        explicit FolderPrompt (SchematicUI::CelineLookAndFeel& lnf)
+        explicit FolderPrompt (PluginLookAndFeel& lnf)
         {
             setLookAndFeel (&lnf);
             setSize (360, 160);
@@ -1210,20 +1259,20 @@ void PluginEditor::offerPresetFolderOnFirstRun()
                              "show up in the Presets menu.\n\n"
                              "You can change it later from that menu.",
                              juce::dontSendNotification);
-            message.setFont (SchematicUI::Fonts::light (14.0f));
-            message.setColour (juce::Label::textColourId, SchematicUI::Theme::text());
+            message.setFont (Celine::Fonts::light (14.0f));
+            message.setColour (juce::Label::textColourId, Celine::Theme::text());
             message.setJustificationType (juce::Justification::topLeft);
             addAndMakeVisible (message);
 
-            choose.setColour (juce::TextButton::buttonColourId, SchematicUI::Theme::violet());
-            choose.setColour (juce::TextButton::textColourOffId, SchematicUI::Theme::text());
+            choose.setColour (juce::TextButton::buttonColourId, Celine::Theme::violet());
+            choose.setColour (juce::TextButton::textColourOffId, Celine::Theme::text());
             addAndMakeVisible (choose);
             addAndMakeVisible (later);
         }
 
         ~FolderPrompt() override { setLookAndFeel (nullptr); }
 
-        void paint (juce::Graphics& g) override { g.fillAll (SchematicUI::Theme::chrome()); }
+        void paint (juce::Graphics& g) override { g.fillAll (Celine::Theme::chrome()); }
 
         void resized() override
         {
@@ -1248,7 +1297,7 @@ void PluginEditor::offerPresetFolderOnFirstRun()
 
     juce::DialogWindow::LaunchOptions options;
     options.dialogTitle = PresetLibrary::getProductName() + " presets";
-    options.dialogBackgroundColour = SchematicUI::Theme::chrome();
+    options.dialogBackgroundColour = Celine::Theme::chrome();
     options.escapeKeyTriggersCloseButton = true;
     options.useNativeTitleBar = true;
     options.resizable = false;
@@ -1380,7 +1429,7 @@ void PluginEditor::showSettingsMenu()
     {
         menu.addSeparator();
 
-        juce::PopupMenu::Item audio ("Audio / MIDI settings...");
+        juce::PopupMenu::Item audio ("Audio / MIDI settings" + ellipsis);
         audio.setAction ([holder] { holder->showAudioSettingsDialog(); });
         menu.addItem (audio);
     }
@@ -1389,7 +1438,11 @@ void PluginEditor::showSettingsMenu()
     // the licence notice.
     menu.addSeparator();
 
-    juce::PopupMenu::Item about ("About " + PresetLibrary::getProductName() + "...");
+    juce::PopupMenu::Item theme ("Theme" + ellipsis);
+    theme.setAction ([this] { Celine::showThemeWindow (this); });
+    menu.addItem (theme);
+
+    juce::PopupMenu::Item about ("About " + PresetLibrary::getProductName() + ellipsis);
     about.setAction ([this] { showAboutDialog(); });
     menu.addItem (about);
 
@@ -1399,324 +1452,78 @@ void PluginEditor::showSettingsMenu()
 }
 
 //==============================================================================
-namespace
+
+void PluginEditor::refreshRebuildButtonColour()
 {
-    /** The About window's prose. One string rather than a stack of labels:
-        a licence summary trimmed to fit a layout is a licence summary that
-        has been changed. */
-    juce::String aboutBodyText()
-    {
-        const juce::String text = juce::String::fromUTF8 (
-            "Copyright \xc2\xa9 2026 C\xc3\xa9line Audio.\n"
-            "\n"
-            "Built " __DATE__ " -- JUCE 9.0.1, C++23.\n"
-            "\n"
-            "\n"
-            "LICENCE\n"
-            "\n"
-            "C\xc3\xa9line is free software: you may redistribute it and modify it under the terms of the GNU Affero General Public Licence, version 3.\n"
-            "\n"
-            "It comes with ABSOLUTELY NO WARRANTY, to the extent permitted by law.\n"
-            "\n"
-            "Source, including the exact commit this build came from:\n"
-            "    https://github.com/Celine-audio/Celine\n"
-            "\n"
-            "Full licence text:\n"
-            "    https://www.gnu.org/licenses/agpl-3.0.html\n"
-            "\n"
-            "\n"
-            "WHY AGPL\n"
-            "\n"
-            "C\xc3\xa9line being free open-source software using the JUCE framework, using its free licence, it inherits its AGPLv3 terms. C\xc3\xa9line is then under the GNU AGPL v3 licence.\n"
-            "\n"
-            "In practice:\n"
-            "\n"
-            "  * Using it costs nothing and obliges nothing. The licence governs distributing the software, not what you make with it. Audio you record through C\xc3\xa9line and the circuits you draw are your own work.\n"
-            "\n"
-            "  * You may fork, modify and redistribute it, provided you do so under the AGPLv3 license and pass the source on. You may not relicense it or ship a closed-source build of it.\n"
-            "\n"
-            "  * Anyone you give a binary to is entitled to the corresponding source for that exact build. Development happens in public and each release is built from a tagged commit, which is how that right is served.\n"
-            "\n"
-            "\n"
-            "THIRD-PARTY COMPONENTS\n"
-            "\n"
-            "Bundled inside every build, keeping their own licences rather than C\xc3\xa9line's:\n"
-            "\n"
-            "  JUCE 9.0.1 ................... AGPLv3, \xc2\xa9 Raw Material Software Limited\n"
-            "  clap-juce-extensions ......... MIT, \xc2\xa9 2019-2020 Paul Walker\n"
-            "  Jura typeface ................ SIL Open Font Licence 1.1, \xc2\xa9 2019 The Jura Project Authors\n"
-            "  JetBrains Mono typeface ...... SIL Open Font Licence 1.1, \xc2\xa9 2020 The JetBrains Mono Project Authors\n"
-            "  Font Awesome Free icons ...... CC BY 4.0, \xc2\xa9 Fonticons, Inc.\n"
-            "\n"
-            "Libraries JUCE vendors inside its own modules, compiled in as part of JUCE and all permissively licensed:\n"
-            "\n"
-            "  VST\xc2\xae" "3 SDK .................... MIT, \xc2\xa9 2025 Steinberg Media Technologies GmbH\n"
-            "  ASIO\xc2\xae SDK .................... GPLv3 option, \xc2\xa9 2025 Steinberg Media Technologies GmbH (Windows standalone)\n"
-            "  LunaSVG and PlutoVG .......... MIT. JUCE 9's SVG parser\n"
-            "  LV2 SDK ...................... ISC\n"
-            "  HarfBuzz ..................... MIT\n"
-            "  SheenBidi .................... Apache 2.0\n"
-            "  zlib, pnglib ................. zlib\n"
-            "  jpeglib ...................... Independent JPEG Group\n"
-            "  FLAC, Ogg Vorbis ............. BSD\n"
-            "  AudioUnitSDK ................. Apache 2.0 (macOS builds only)\n"
-            "\n"
-            "VST and ASIO are registered trademarks of Steinberg Media Technologies GmbH.\n"
-            "\n"
-            "The ASIO SDK is dual-licensed : Steinberg\x27s own licence, or the GPLv3. C\xc3\xa9line takes the GPL option, which is what keeps an ASIO-enabled build AGPLv3.\n"
-            "\n"
-            "Font Awesome Free is CC BY 4.0, which makes attribution a condition of use rather than a courtesy.\n"
-            "\n"
-            "Used only to build and test C\xc3\xa9line:\n"
-            "\n"
-            "  Pamplejuce ................... MIT, \xc2\xa9 2022 Sudara Williams. The CMake setup\n"
-            "                                 and CI started as this template, and the file\n"
-            "                                 you are reading replaced its licence here\n"
-            "  cmake-includes ............... MIT, \xc2\xa9 Sudara Williams. The shared CMake\n"
-            "                                 modules in cmake/, carried as a submodule\n"
-            "  Catch2 3.8.1 ................. Boost Software Licence 1.0\n"
-            "  CPM.cmake .................... MIT\n"
-            "\n"
-            "The repository's LICENSE and THIRD-PARTY-NOTICES files carry the full account, including the verbatim licence of every bundled work.\n"
-            "\n"
-            "\n"
-            "CIRCUIT MODELS\n"
-            "\n"
-            "The valve models implement the equations of Norman Koren, and of Dempwolf and Z\xc3\xb6lzer, \"A physically-motivated triode model for circuit simulations\" (DAFx-11). Device parameters are fitted to manufacturer datasheets, which are credited in the header that uses them.\n"
-            "\n"
-            "What the simulation does not model is documented in LIMITATIONS.md. Read it before trusting a result or blaming a circuit.");
+    rebuildButton.setColour (juce::TextButton::buttonColourId,
+                             pendingRebuild
+                                 ? Celine::Theme::pending()
+                                 : getLookAndFeel().findColour (juce::TextButton::buttonColourId));
+}
 
+void PluginEditor::applyColours()
+{
+    // Bypass shouts in red where every other armed control wears the theme's armed
+    // colour. Set here rather than once at construction, so a theme change moves it.
+    if (bypassButton != nullptr)
+        bypassButton->setActiveColour (Celine::Theme::danger());
 
-        return text;
-    }
+    // Re-read from the binary rather than re-tinted in place. Assets::tint writes the
+    // fill into the drawable, so a second pass would be colouring the result of the
+    // first rather than the artwork -- which is how a mark ends up stuck on whatever
+    // colour it was first given.
+    logo = Celine::Assets::drawable ("logo.svg");
 
-    class AboutPanel : public juce::Component
-    {
-       public:
-        /** The size below which the footer's marks overlap the Close button. */
-        // Width is set by the footer: five marks at their required sizes plus the
-        // Close button. Height by the same row.
-        enum { minimumWidth = 660, minimumHeight = 470 };
+    if (logo != nullptr)
+        Celine::Assets::tint (*logo, Celine::Theme::text());
 
-        AboutPanel (SchematicUI::CelineLookAndFeel& lnf,
-                    const juce::String& versionText,
-                    const juce::String& bodyText)
-        {
-            setLookAndFeel (&lnf);
+    // The one dropdown on a light panel, so it is coloured here rather than in the look
+    // and feel the inspector's boxes share.
+    channelModeBox.setColour (juce::ComboBox::backgroundColourId, Celine::Theme::teal());
+    channelModeBox.setColour (juce::ComboBox::textColourId, Celine::Theme::textOnPanel());
+    channelModeBox.setColour (juce::ComboBox::arrowColourId, Celine::Theme::textOnPanel());
 
-            logo = SchematicUI::Assets::drawable ("logo.svg");
+    // The bottom band stands on the light panel too, so its labels take the panel's ink
+    // rather than the chrome's.
+    for (auto* label : { &inputLabel, &outputLabel, &channelModeLabel })
+        label->setColour (juce::Label::textColourId, Celine::Theme::textOnPanel());
 
-            if (logo != nullptr)
-                SchematicUI::Assets::tint (*logo, SchematicUI::Theme::text());
+    refreshRebuildButtonColour();
+}
 
-            // Untinted, unlike the wordmark: these are shown as supplied.
-            asioLogo = SchematicUI::Assets::drawable ("asio-compatible.png");
-            vstLogo  = SchematicUI::Assets::drawable ("vst-compatible.png");
-            auLogo   = SchematicUI::Assets::drawable ("format-au.svg");
-            clapLogo = SchematicUI::Assets::drawable ("format-clap.png");
-            lv2Logo  = SchematicUI::Assets::drawable ("format-lv2.svg");
+void PluginEditor::changeListenerCallback (juce::ChangeBroadcaster*)
+{
+    // First, because applyColours below reads colours back out of it: the rebuild
+    // button's idle fill is the look and feel's own button colour, and asking before
+    // this ran would answer with the colour the theme is replacing.
+    //
+    // Everything JUCE draws for us is *told* its colours, so the look and feel has to
+    // re-read them before anything repaints -- see PluginLookAndFeel::applyPalette.
+    lookAndFeel.applyPalette();
 
-            version.setText (versionText, juce::dontSendNotification);
-            version.setFont (SchematicUI::Fonts::mono (13.0f));
-            version.setColour (juce::Label::textColourId, SchematicUI::Theme::comment());
-            version.setJustificationType (juce::Justification::centredLeft);
-            addAndMakeVisible (version);
+    applyColours();
 
-            subtitle.setText (juce::String::fromUTF8 (
-                                  "Real-time circuit sandbox \xc2\xb7 C\xc3\xa9line Audio"),
-                              juce::dontSendNotification);
-            subtitle.setFont (SchematicUI::Fonts::light (12.0f));
-            subtitle.setColour (juce::Label::textColourId, SchematicUI::Theme::comment());
-            subtitle.setJustificationType (juce::Justification::centredLeft);
-            addAndMakeVisible (subtitle);
+    // And every child that took a colour once and kept it gets a chance to take it
+    // again. JUCE walks the tree for us; a control that snapshots colours says so by
+    // overriding lookAndFeelChanged().
+    sendLookAndFeelChange();
 
-            body.setMultiLine (true, true);
-            body.setReadOnly (true);
-            body.setScrollbarsShown (true);
-            body.setCaretVisible (false);
-
-            // Read-only still allows Select All and Copy, which is how the
-            // source URL gets out of here.
-            body.setPopupMenuEnabled (true);
-
-            // Monospaced so the notices' dot leaders line up.
-            body.setFont (SchematicUI::Fonts::mono (13.0f));
-            body.setColour (juce::TextEditor::backgroundColourId, SchematicUI::Theme::background());
-            body.setColour (juce::TextEditor::textColourId, SchematicUI::Theme::textDim());
-
-            body.setColour (juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
-            body.setColour (juce::TextEditor::focusedOutlineColourId, juce::Colours::transparentBlack);
-            body.setText (bodyText, false);
-            addAndMakeVisible (body);
-
-            // The one action here, in the brand's violet: this is the window's own
-            // button, not a piece of chrome.
-            close.setColour (juce::TextButton::buttonColourId, SchematicUI::Theme::violet());
-            close.setColour (juce::TextButton::textColourOffId, SchematicUI::Theme::chrome());
-            addAndMakeVisible (close);
-
-            // Last, and it matters. setSize fires resized(), which measures each mark
-            // to place it, so called before the artwork is loaded it sizes all six of
-            // them to nothing. The dialog resizes the panel afterwards and so hides
-            // this entirely today.
-            setSize (700, 640);
-        }
-
-        ~AboutPanel() override { setLookAndFeel (nullptr); }
-
-        void paint (juce::Graphics& g) override
-        {
-            g.fillAll (SchematicUI::Theme::chrome());
-
-            if (logo != nullptr && ! logoBounds.isEmpty())
-                logo->drawWithin (g, logoBounds.toFloat(), juce::RectanglePlacement::centred, 1.0f);
-
-            if (! logoBounds.isEmpty())
-            {
-                g.setColour (SchematicUI::Theme::line().withAlpha (0.15f));
-                g.drawHorizontalLine (logoBounds.getBottom() + 26,
-                                      static_cast<float> (logoBounds.getX()),
-                                      static_cast<float> (getWidth()) - 18.0f);
-            }
-
-            for (const auto& mark : { std::pair { asioLogo.get(), asioBounds },
-                                      std::pair { vstLogo.get(), vstBounds },
-                                      std::pair { auLogo.get(), auBounds },
-                                      std::pair { clapLogo.get(), clapBounds },
-                                      std::pair { lv2Logo.get(), lv2Bounds } })
-                if (mark.first != nullptr && ! mark.second.isEmpty())
-                    mark.first->drawWithin (g, mark.second.toFloat(),
-                                            juce::RectanglePlacement::centred, 1.0f);
-        }
-
-        void resized() override
-        {
-            auto area = getLocalBounds().reduced (18);
-
-
-            // Roomy on purpose. Apple's guidelines require the Audio Units mark to
-            // be "clearly subordinate in both size and placement to the primary
-            // company or product identity", and the marks below sit at their own
-            // required minimums -- so the way to satisfy that is to give Céline's
-            // wordmark the space, not to shrink theirs.
-            {
-                constexpr int logoHeight = 66;
-                auto masthead = area.removeFromTop (logoHeight);
-
-                if (logo != nullptr)
-                {
-                    const auto ink = logo->getDrawableBounds();
-                    const float aspect = ink.getHeight() > 0.0f ? ink.getWidth() / ink.getHeight() : 1.0f;
-                    const int width = juce::roundToInt (logoHeight * aspect);
-
-                    logoBounds = masthead.removeFromLeft (width)
-                                     .withSizeKeepingCentre (width, logoHeight);
-                    masthead.removeFromLeft (14);
-                }
-
-                // Whatever is left of the row, which puts it just past the mark.
-                version.setBounds (masthead);
-            }
-
-            area.removeFromTop (6);
-            subtitle.setBounds (area.removeFromTop (16));
-
-            // Clear of the rule paint() draws under the masthead.
-            area.removeFromTop (22);
-
-            auto row = area.removeFromBottom (96);
-            close.setBounds (row.removeFromRight (96).withSizeKeepingCentre (96, 32));
-
-            constexpr int gap = 20;
-
-
-            constexpr float markSize = 76.0f;
-
-            const auto place = [&row] (const std::unique_ptr<juce::Drawable>& d,
-                                       juce::Rectangle<int>& out)
-            {
-                if (d == nullptr)
-                    return;
-
-                const auto ink = d->getDrawableBounds();
-                const float aspect = ink.getHeight() > 0.0f ? ink.getWidth() / ink.getHeight() : 1.0f;
-
-                const int height = juce::roundToInt (markSize / std::sqrt (aspect));
-                const int width = juce::roundToInt (static_cast<float> (height) * aspect);
-
-                out = row.removeFromLeft (width).withSizeKeepingCentre (width, height);
-            };
-
-            place (asioLogo, asioBounds); row.removeFromLeft (gap);
-            place (vstLogo, vstBounds);   row.removeFromLeft (gap);
-            place (auLogo, auBounds);     row.removeFromLeft (gap);
-            place (clapLogo, clapBounds); row.removeFromLeft (gap);
-            place (lv2Logo, lv2Bounds);
-
-            area.removeFromBottom (12);
-
-            body.setBounds (area);
-        }
-
-        juce::TextButton close { "Close" };
-
-       private:
-        std::unique_ptr<juce::Drawable> logo;
-        juce::Rectangle<int> logoBounds;
-        std::unique_ptr<juce::Drawable> asioLogo, vstLogo, auLogo, clapLogo, lv2Logo;
-        juce::Rectangle<int> asioBounds, vstBounds, auBounds, clapBounds, lv2Bounds;
-        juce::Label version, subtitle;
-        juce::TextEditor body;
-    };
-} // namespace
+    repaint();
+}
 
 void PluginEditor::showAboutDialog()
 {
-    const juce::String product = PresetLibrary::getProductName();
-
-#ifdef VERSION
-    const juce::String version { VERSION };
-#else
-    const juce::String version;
-#endif
-
-    auto panel = std::make_unique<AboutPanel> (lookAndFeel, version, aboutBodyText());
-    juce::DialogWindow::LaunchOptions options;
-    options.dialogTitle = "About " + product;
-    options.dialogBackgroundColour = SchematicUI::Theme::chrome();
-    options.escapeKeyTriggersCloseButton = true;
-    options.useNativeTitleBar = true;
-    options.resizable = true;
-
-    auto* raw = panel.get();
-    options.content.setOwned (panel.release());
-
-    // Async, and self-deleting once dismissed -- see the preset prompt for why
-    // neither of those is optional inside a host.
-    auto* window = options.launchAsync();
-
-    // The window, not the content: a DialogWindow sizes itself around whatever
-    // it is given, so a constraint set on the panel alone is one the drag never
-    // consults. The maximum is generous rather than absent -- there is no use
-    // for an About box the size of a display, and a window that can be dragged
-    // there is one somebody will lose.
-    if (window != nullptr)
-        window->setResizeLimits (AboutPanel::minimumWidth, AboutPanel::minimumHeight, 1100, 1300);
-
-    const juce::Component::SafePointer<juce::DialogWindow> dialog (window);
-
-    raw->close.onClick = [dialog]
-    {
-        if (dialog != nullptr)
-            dialog->exitModalState (0);
-    };
+    // The house window, shared with the other Céline plugins. What it says about this
+    // one comes from ProductInfo.h -- the tagline, the wordmark, and the notices this
+    // plugin owes on its own account.
+    showAboutWindow (this);
 }
 
 //==============================================================================
 //==============================================================================
 void PluginEditor::paint (juce::Graphics& g)
 {
-    g.fillAll (chromeColour);
+    g.fillAll (Celine::Theme::chrome());
 
     // drawWithin centres the artwork's *viewBox*, and the wordmark's ink is not
     // centred in its own -- there is far more empty space above the glyphs than
@@ -1725,7 +1532,7 @@ void PluginEditor::paint (juce::Graphics& g)
     // ControlStrip child that sits in the middle of it -- see controlBandBounds.
     if (! controlBandBounds.isEmpty())
     {
-        g.setColour (SchematicUI::Theme::panel());
+        g.setColour (Celine::Theme::panel());
         g.fillRect (controlBandBounds);
     }
 
@@ -1734,19 +1541,19 @@ void PluginEditor::paint (juce::Graphics& g)
     // to the pair and not to one of them.
     if (! undoRedoHousing.isEmpty())
     {
-        const auto housing = undoRedoHousing.toFloat().reduced (SchematicUI::Theme::borderWidth * 0.5f);
+        const auto housing = undoRedoHousing.toFloat().reduced (Celine::Theme::borderWidth * 0.5f);
 
-        g.setColour (SchematicUI::Theme::surface());
-        g.fillRoundedRectangle (housing, SchematicUI::Theme::cornerRadius);
-
-        // Greyed with the pair, since this is the frame those two buttons do
-        // not draw for themselves. Either one being usable keeps it lit: the
-        // housing says "this group does something", and undo alone is enough.
+        // Fill only, like every other button in the row. This is the frame those two
+        // buttons do not draw for themselves, and it used to carry a rule as well --
+        // which made the pair the one outlined thing in a toolbar of filled ones.
+        //
+        // Dimmed with the pair rather than outlined: either one being usable keeps it
+        // lit, because the housing says "this group does something" and undo alone is
+        // enough for that.
         g.setColour (history.canUndo() || history.canRedo()
-                         ? SchematicUI::Theme::line()
-                         : SchematicUI::Theme::lineDisabled());
-        g.drawRoundedRectangle (housing, SchematicUI::Theme::cornerRadius,
-                                SchematicUI::Theme::borderWidth);
+                         ? Celine::Theme::button()
+                         : Celine::Theme::button().withMultipliedAlpha (0.5f));
+        g.fillRoundedRectangle (housing, Celine::Theme::cornerRadius);
         g.drawLine (housing.getCentreX(), housing.getY() + 1.0f,
                     housing.getCentreX(), housing.getBottom() - 1.0f, 1.0f);
     }
@@ -1760,13 +1567,13 @@ void PluginEditor::layOutToolbar (juce::Rectangle<int>& area)
 
     //--------------------------------------------------------------------------
     // Toolbar
-    auto toolbar = area.removeFromTop (SchematicUI::Theme::toolbarHeight).reduced (6, 6);
+    auto toolbar = area.removeFromTop (Celine::Theme::toolbarHeight).reduced (6, 6);
 
     // The design's grid: every button 33 square on a 40px pitch, so the row is
     // one rhythm from end to end. Groups are separated by a wider gap rather
     // than by a divider.
-    const int size = SchematicUI::Theme::buttonSize;
-    const int gap = SchematicUI::Theme::buttonGap;
+    const int size = Celine::Theme::buttonSize;
+    const int gap = Celine::Theme::buttonGap;
     const int groupGap = 16;
 
     auto place = [&toolbar] (juce::Component& c)
@@ -1811,8 +1618,8 @@ void PluginEditor::layOutToolbar (juce::Rectangle<int>& area)
 
     settingsButton->setBounds (toolbar.removeFromRight (size).withSizeKeepingCentre (size, size));
     toolbar.removeFromRight (gap);
-    rebuildButton.setBounds (toolbar.removeFromRight (SchematicUI::Theme::rebuildWidth)
-                                 .withSizeKeepingCentre (SchematicUI::Theme::rebuildWidth, size));
+    rebuildButton.setBounds (toolbar.removeFromRight (Celine::Theme::rebuildWidth)
+                                 .withSizeKeepingCentre (Celine::Theme::rebuildWidth, size));
     toolbar.removeFromRight (gap);
     bypassButton->setBounds (toolbar.removeFromRight (size).withSizeKeepingCentre (size, size));
 
@@ -1838,7 +1645,7 @@ void PluginEditor::layOutToolbar (juce::Rectangle<int>& area)
         // on", and Import is the one that answers "both of them".
         constexpr int buttonsInGroup = 3;
         const int available = toolbar.getWidth() - buttonsInGroup * (size + gap) - 2 * sideMargin;
-        const int fieldWidth = juce::jlimit (0, SchematicUI::Theme::presetWidth, available);
+        const int fieldWidth = juce::jlimit (0, Celine::Theme::presetWidth, available);
         const int groupWidth = buttonsInGroup * (size + gap) + fieldWidth;
 
         // Below a certain width the field is a sliver that reads as a rendering
@@ -1865,13 +1672,13 @@ void PluginEditor::layOutToolbar (juce::Rectangle<int>& area)
 
 void PluginEditor::layOutPanels (juce::Rectangle<int> area)
 {
-    controlBandBounds = area.removeFromBottom (SchematicUI::ControlStrip::preferredHeight);
+    controlBandBounds = area.removeFromBottom (Celine::ControlStrip::preferredHeight);
     auto strip = controlBandBounds.reduced (6, 4);
 
     // Caption over control, in the strip's own proportions -- see
     // ControlStrip::layOutCell, which the drawn knobs go through, so the fixed
     // pair and the circuit's own knobs sit on one baseline.
-    using Strip = SchematicUI::ControlStrip;
+    using Strip = Celine::ControlStrip;
 
     auto placeKnob = [] (juce::Rectangle<int> cell, juce::Slider& knob, juce::Label& label)
     {
@@ -1922,8 +1729,16 @@ void PluginEditor::resized()
     // Handed to the processor so the window comes back the size it was left.
     // Recorded here rather than in the destructor because a host may save its
     // session while the editor is still open.
-    processorRef.editorWidth = getWidth();
-    processorRef.editorHeight = getHeight();
+    //
+    // Only a size somebody could actually have left it at. A host is free to resize an
+    // editor it is putting away -- to nothing, or to whatever its own frame is before
+    // it lays out -- and recording that would overwrite the real size with a number the
+    // window can never open at, which is indistinguishable from never having saved it.
+    if (getWidth() >= minimumWidth && getHeight() >= minimumHeight)
+    {
+        processorRef.editorWidth = getWidth();
+        processorRef.editorHeight = getHeight();
+    }
 
     auto area = getLocalBounds();
     layOutToolbar (area);

@@ -1097,6 +1097,11 @@ void PluginProcessor::getStateInformation (juce::MemoryBlock& destData)
     document.setProperty ("editorWidth", editorWidth.load(), nullptr);
     document.setProperty ("editorHeight", editorHeight.load(), nullptr);
 
+    document.setProperty ("presetName", presetName, nullptr);
+    document.setProperty ("presetIsFactory", presetIsFactory, nullptr);
+    document.setProperty ("presetModified", presetModified, nullptr);
+    document.setProperty ("presetFile", presetFile.getFullPathName(), nullptr);
+
     if (auto xml = document.createXml())
         copyXmlToBinary (*xml, destData);
 }
@@ -1111,6 +1116,16 @@ void PluginProcessor::setStateInformation (const void* data, int sizeInBytes)
         {
             editorWidth = static_cast<int> (document["editorWidth"]);
             editorHeight = static_cast<int> (document["editorHeight"]);
+        }
+
+        if (document.hasProperty ("presetName"))
+        {
+            presetName = document["presetName"].toString();
+            presetIsFactory = static_cast<bool> (document["presetIsFactory"]);
+            presetModified = static_cast<bool> (document["presetModified"]);
+
+            const auto path = document["presetFile"].toString();
+            presetFile = path.isEmpty() ? juce::File{} : juce::File (path);
         }
 
         restoreDocument (document);

@@ -2,9 +2,9 @@
 #include <PluginProcessor.h>
 #include <CelineEngine/Components/FastMath.h>
 #include <Schematic/ExampleSchematics.h>
-#include <UI/ControlStrip.h>
-#include <UI/SchematicCanvas.h>
-#include <UI/Theme.h>
+#include <ui/ControlStrip.h>
+#include <ui/SchematicCanvas.h>
+#include <ui/Theme.h>
 #include <juce_dsp/juce_dsp.h>
 #include <set>
 #include <thread>
@@ -335,10 +335,10 @@ TEST_CASE ("Resizing the editor gives every extra pixel to the canvas", "[plugin
             // What is actually under test is the *rule* -- the four fixed edges
             // keep their sizes and the sheet takes the rest -- so the numbers
             // should come from wherever the rule reads them.
-            constexpr int palette = SchematicUI::Theme::paletteWidth;
-            constexpr int inspector = SchematicUI::Theme::inspectorWidth;
-            constexpr int toolbar = SchematicUI::Theme::toolbarHeight;
-            constexpr int strip = SchematicUI::ControlStrip::preferredHeight;
+            constexpr int palette = Celine::Theme::paletteWidth;
+            constexpr int inspector = Celine::Theme::inspectorWidth;
+            constexpr int toolbar = Celine::Theme::toolbarHeight;
+            constexpr int strip = Celine::ControlStrip::preferredHeight;
 
             return juce::Rectangle<int> { palette, toolbar,
                                           width - palette - inspector,
@@ -2363,7 +2363,7 @@ TEST_CASE ("A bare letter names a part", "[plugin]")
     // Delete key and right-click.
     runWithinPluginEditor ([] (PluginProcessor& plugin) {
         using namespace SchematicModel;
-        using SchematicUI::SchematicCanvas;
+        using Celine::SchematicCanvas;
 
         auto* editor = plugin.getActiveEditor();
 
@@ -2771,7 +2771,7 @@ TEST_CASE ("A rebuilt switch shows its throw straight away", "[editor]")
         REQUIRE (plugin.rebuild().isValid());
         REQUIRE (plugin.getLiveControls().size() == 1);
 
-        SchematicUI::ControlStrip strip (plugin);
+        Celine::ControlStrip strip (plugin);
         strip.refresh();
 
         // Whatever refresh() left on screen, before any timer has run.
@@ -2813,7 +2813,7 @@ TEST_CASE ("A pot's wiper is drawn where its knob is", "[schematic]")
         juce::Image image (juce::Image::ARGB, 120, 120, true);
         juce::Graphics g (image);
 
-        SchematicUI::SymbolPainter painter;
+        Celine::SymbolPainter painter;
         painter.gridSize = 14.0f;
         painter.origin = { 60.0f, 60.0f };
         painter.draw (g, element, juce::Colours::white);
@@ -2964,7 +2964,7 @@ TEST_CASE ("Wires are selectable, movable and deletable", "[editor]")
         CHECK (first != second);
         CHECK (sheet.findWire (first) != nullptr);
 
-        SchematicUI::SchematicCanvas canvas (sheet);
+        Celine::SchematicCanvas canvas (sheet);
         canvas.setSize (600, 400);
         canvas.zoomToFit();
 
@@ -3012,7 +3012,7 @@ TEST_CASE ("A wire between two parts is clickable along its span", "[editor]")
         sheet.addWire (pin (left, 1), pin (right, 1));
         const int wire = sheet.getWires().front().id;
 
-        SchematicUI::SchematicCanvas canvas (sheet);
+        Celine::SchematicCanvas canvas (sheet);
         canvas.setSize (700, 420);
         canvas.zoomToFit();
 
@@ -3233,10 +3233,10 @@ TEST_CASE ("A wire stays clickable when the sheet is zoomed out", "[editor]")
     sheet.addWire ({ 0, 0 }, { 0, 80 });
     const int wire = sheet.getWires().front().id;
 
-    SchematicUI::SchematicCanvas canvas (sheet);
+    Celine::SchematicCanvas canvas (sheet);
     canvas.setSize (600, 400);
     canvas.zoomToFit();
-    canvas.setTool (SchematicUI::SchematicCanvas::Tool::Select);
+    canvas.setTool (Celine::SchematicCanvas::Tool::Select);
 
     const auto centre = canvas.pixelAt ({ 60.0f, 0.0f });
     const auto pixelsPerSquare = canvas.pixelAt ({ 61.0f, 0.0f }).x - centre.x;
@@ -3269,10 +3269,10 @@ TEST_CASE ("A box catches wires, crossing and enclosing alike", "[editor]")
     const int across = sheet.getWires()[0].id;
     const int down = sheet.getWires()[1].id;
 
-    SchematicUI::SchematicCanvas canvas (sheet);
+    Celine::SchematicCanvas canvas (sheet);
     canvas.setSize (600, 400);
     canvas.zoomToFit();
-    canvas.setTool (SchematicUI::SchematicCanvas::Tool::Select);
+    canvas.setTool (Celine::SchematicCanvas::Tool::Select);
 
     // Drags a box from one grid point to another and returns what it caught.
     auto dragBox = [&canvas] (juce::Point<float> fromGrid, juce::Point<float> toGrid)
@@ -3591,9 +3591,9 @@ TEST_CASE ("A wire's hit target is the same size however far you are zoomed in",
         sheet.addWire ({ 0, 0 }, { extent, 0 });
         const int wire = sheet.getWires().front().id;
 
-        SchematicUI::SchematicCanvas canvas (sheet);
+        Celine::SchematicCanvas canvas (sheet);
         canvas.setSize (900, 600);
-        canvas.setTool (SchematicUI::SchematicCanvas::Tool::Select);
+        canvas.setTool (Celine::SchematicCanvas::Tool::Select);
         canvas.zoomToFit();
 
         const auto half = static_cast<float> (extent) * 0.5f;
@@ -3645,9 +3645,9 @@ TEST_CASE ("A selected wire's handles do not guard the space around it", "[edito
         sheet.addWire ({ 0, 0 }, { 10, 0 });
         const int id = sheet.getWires().front().id;
 
-        SchematicUI::SchematicCanvas canvas (sheet);
+        Celine::SchematicCanvas canvas (sheet);
         canvas.setSize (900, 600);
-        canvas.setTool (SchematicUI::SchematicCanvas::Tool::Select);
+        canvas.setTool (Celine::SchematicCanvas::Tool::Select);
         canvas.zoomToFit();
 
         const auto end = canvas.pixelAt ({ 10.0f, 0.0f });
@@ -3708,13 +3708,13 @@ TEST_CASE ("Undo restores the drawing and leaves the knobs alone", "[editor]")
         REQUIRE (editor != nullptr);
 
         // The canvas, for the two callbacks the editor hangs undo off.
-        SchematicUI::SchematicCanvas* canvas = nullptr;
+        Celine::SchematicCanvas* canvas = nullptr;
 
         const std::function<void (juce::Component&)> walk = [&] (juce::Component& parent)
         {
             for (auto* child : parent.getChildren())
             {
-                if (auto* found = dynamic_cast<SchematicUI::SchematicCanvas*> (child))
+                if (auto* found = dynamic_cast<Celine::SchematicCanvas*> (child))
                     canvas = found;
 
                 walk (*child);
