@@ -34,7 +34,6 @@ ThemePanel::Row::Row (Theme::Role roleToEdit, ThemePanel& panel)
 
     name.setText (entry.label, juce::dontSendNotification);
     name.setFont (Fonts::light (12.5f));
-    name.setColour (juce::Label::textColourId, Theme::textDim());
     name.setInterceptsMouseClicks (false, false);
     addAndMakeVisible (name);
 
@@ -44,16 +43,21 @@ ThemePanel::Row::Row (Theme::Role roleToEdit, ThemePanel& panel)
     hex.setJustification (juce::Justification::centred);
     hex.setBorder (juce::BorderSize<int> (0));
     hex.setIndents (0, 0);
-    hex.setColour (juce::TextEditor::backgroundColourId, Theme::background());
-    hex.setColour (juce::TextEditor::textColourId, Theme::textDim());
-    hex.setColour (juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
-    hex.setColour (juce::TextEditor::focusedOutlineColourId, juce::Colours::transparentBlack);
-    hex.setTooltip ("The colour as a hex value. Paste one in, or read one off.");
+    hex.setTooltip ("The colour as a hex value.");
     hex.onReturnKey = [this] { applyTypedText(); };
     hex.onFocusLost = [this] { applyTypedText(); };
     addAndMakeVisible (hex);
 
     refresh();
+}
+
+void ThemePanel::Row::applyColours()
+{
+    name.setColour (juce::Label::textColourId, Theme::textDim());
+    hex.setColour (juce::TextEditor::backgroundColourId, Theme::background());
+    hex.setColour (juce::TextEditor::textColourId, Theme::textDim());
+    hex.setColour (juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
+    hex.setColour (juce::TextEditor::focusedOutlineColourId, juce::Colours::transparentBlack);
 }
 
 void ThemePanel::Row::refresh()
@@ -126,7 +130,6 @@ ThemePanel::ThemePanel()
     title.setText ("Theme", juce::dontSendNotification);
     title.setFont (Fonts::logo (22.0f));
     title.getProperties().set (keepFontProperty, true);
-    title.setColour (juce::Label::textColourId, Theme::text());
     addAndMakeVisible (title);
 
     subtitle.setText (juce::String::fromUTF8 (
@@ -134,7 +137,6 @@ ThemePanel::ThemePanel()
                           "Save keeps them."),
                       juce::dontSendNotification);
     subtitle.setFont (Fonts::light (11.5f));
-    subtitle.setColour (juce::Label::textColourId, Theme::comment());
     subtitle.setJustificationType (juce::Justification::topLeft);
     addAndMakeVisible (subtitle);
 
@@ -182,15 +184,13 @@ ThemePanel::ThemePanel()
     addAndMakeVisible (resetButton);
 
     status.setFont (Fonts::light (11.0f));
-    status.setColour (juce::Label::textColourId, Theme::comment());
     status.setJustificationType (juce::Justification::centredLeft);
     addAndMakeVisible (status);
 
-    close.setColour (juce::TextButton::buttonColourId, Theme::accent());
-    close.setColour (juce::TextButton::textColourOffId, Theme::chrome());
     addAndMakeVisible (close);
 
     Theme::palette().addChangeListener (this);
+    applyColours();
     refreshRows();
 
     // Last, and it matters: setSize fires resized(), which lays out rows that have to
@@ -239,6 +239,15 @@ void ThemePanel::changeListenerCallback (juce::ChangeBroadcaster* source)
     lookAndFeel.applyPalette();
     sendLookAndFeelChange();
     repaint();
+}
+
+void ThemePanel::applyColours()
+{
+    title.setColour (juce::Label::textColourId, Theme::text());
+    subtitle.setColour (juce::Label::textColourId, Theme::comment());
+    status.setColour (juce::Label::textColourId, Theme::comment());
+    close.setColour (juce::TextButton::buttonColourId, Theme::accent());
+    close.setColour (juce::TextButton::textColourOffId, Theme::chrome());
 }
 
 void ThemePanel::refreshRows()
@@ -478,28 +487,108 @@ void ThemePanel::resized()
 }
 
 //==============================================================================
+void ThemePanel::confirmClose (std::function<void (bool)> whenDecided)
+{
+    if (! Theme::palette().hasUnsavedChanges())
+    {
+        whenDecided (true);
+        return;
+    }
+
+    const auto options =
+        juce::MessageBoxOptions()
+            .withIconType (juce::MessageBoxIconType::QuestionIcon)
+            .withTitle ("Warning")
+            .withMessage ("The theme has been changed and not saved. Closing without "
+                          "saving will discard the changes.")
+            .withButton ("Save")
+            .withButton ("Discard")
+            .withButton ("Cancel")
+            .withAssociatedComponent (this);
+
+    juce::NativeMessageBox::showAsync (
+        options,
+        [safe = juce::Component::SafePointer<ThemePanel> (this),
+         decided = std::move (whenDecided)] (int chosen)
+        {
+            if (safe == nullptr)
+                return;
+
+            if (chosen == 0)
+                safe->saveTheme();
+            else if (chosen == 1)
+                Theme::palette().revert();   // back to the last saved theme
+
+            decided (chosen != 2);
+        });
+}
+
+namespace
+{
+    /** The theme editor's window.
+
+        Its own class rather than DialogWindow::LaunchOptions, because every way out has
+        to go through the same question -- the Close button, the escape key and the
+        title bar's own close button all end up here. */
+    class ThemeWindow final : public juce::DialogWindow
+    {
+    public:
+        ThemeWindow (ThemePanel* content, juce::Component* around)
+            : juce::DialogWindow ("Theme", Theme::chrome(), true, true,
+                                  // The scale the editor is being shown at. A dialog
+                                  // opened from a plugin window on a scaled display and
+                                  // told nothing about it comes up the wrong size.
+                                  around != nullptr
+                                      ? juce::Component::getApproximateScaleFactorForComponent (around)
+                                      : 1.0f)
+        {
+            setUsingNativeTitleBar (true);
+            setResizable (true, false);
+            setContentOwned (content, true);
+            setResizeLimits (ThemePanel::minimumWidth, ThemePanel::minimumHeight,
+                             ThemePanel::minimumWidth * 2, ThemePanel::minimumHeight * 2);
+
+            if (around != nullptr)
+                centreAroundComponent (around, getWidth(), getHeight());
+            else
+                centreWithSize (getWidth(), getHeight());
+
+            // Without this the window opens *behind* the plugin in a host that keeps its
+            // own windows on top -- Ableton does -- and there is then no way to reach it
+            // except by closing the plugin. DialogWindow::LaunchOptions does this for
+            // you, which is exactly what was lost by building the window by hand.
+            setAlwaysOnTop (juce::WindowUtils::areThereAnyAlwaysOnTopWindows());
+
+            setVisible (true);
+        }
+
+        void closeButtonPressed() override
+        {
+            if (auto* panel = dynamic_cast<ThemePanel*> (getContentComponent()))
+            {
+                panel->confirmClose ([safe = juce::Component::SafePointer<ThemeWindow> (this)] (bool allowed)
+                                     {
+                                         if (allowed && safe != nullptr)
+                                             safe->exitModalState (0);
+                                     });
+
+                return;
+            }
+
+            exitModalState (0);
+        }
+
+        JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ThemeWindow)
+    };
+}
+
 void Celine::showThemeWindow (juce::Component* associatedComponent)
 {
-    auto panel = std::make_unique<ThemePanel>();
+    auto* panel = new ThemePanel();
+    auto* window = new ThemeWindow (panel, associatedComponent);
 
-    juce::DialogWindow::LaunchOptions options;
-    options.dialogTitle = "Theme";
-    options.dialogBackgroundColour = Theme::chrome();
-    options.escapeKeyTriggersCloseButton = true;
-    options.useNativeTitleBar = true;
-    options.resizable = true;
-    options.componentToCentreAround = associatedComponent;
+    // Self-deleting once dismissed, which is what launchAsync used to do for us.
+    window->enterModalState (true, nullptr, true);
 
-    auto* raw = panel.get();
-    options.content.setOwned (panel.release());
-
-    auto* window = options.launchAsync();
-
-    if (window != nullptr)
-    {
-        window->setResizeLimits (ThemePanel::minimumWidth, ThemePanel::minimumHeight,
-                                 ThemePanel::minimumWidth * 2, ThemePanel::minimumHeight * 2);
-
-        raw->close.onClick = [window] { window->exitModalState (0); };
-    }
+    panel->close.onClick = [window] { window->closeButtonPressed(); };
 }

@@ -284,6 +284,19 @@ namespace Celine::Theme
         dirty = false;
     }
 
+    void Palette::revert()
+    {
+        const auto stored = storedFile();
+        const juce::ScopedValueSetter<bool> guard (restoring, true);
+
+        if (stored.existsAsFile())
+            loadFrom (stored);
+        else
+            reset();
+
+        dirty = false;
+    }
+
     void Palette::refreshFromDisk()
     {
         // Colours somebody is in the middle of choosing are not overwritten by what

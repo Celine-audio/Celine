@@ -39,6 +39,14 @@ namespace Celine
 
         juce::TextButton close { "Close" };
 
+        /** Decides whether this window may close, asking first if there are colours
+            that have not been saved.
+
+            Calls back with true to go ahead and false to stay open. Asynchronous
+            because the question is a dialog, and a plugin must never block a host's
+            message thread waiting for an answer. */
+        void confirmClose (std::function<void (bool)> whenDecided);
+
     private:
         //======================================================================
         /** One colour: what it is called, the swatch that opens a picker, and the hex
@@ -56,6 +64,11 @@ namespace Celine
                 colour moved somewhere other than this row -- a file being loaded, or a
                 reset. */
             void refresh();
+
+            /** The colours this row hands to its children rather than reading as it
+                paints. */
+            void applyColours();
+            void lookAndFeelChanged() override { applyColours(); }
 
         private:
             void applyTypedText();
@@ -83,6 +96,13 @@ namespace Celine
     /** Writes the colours to this plugin's theme file. Nothing else does. */
     void saveTheme();
     void resetTheme();
+
+        /** Everything this window hands to a child rather than reading as it paints --
+            its own title, status line and Close button included. The rows look after
+            themselves; this is the panel's own chrome, which used to be set once and
+            then sat on the old palette while everything around it moved. */
+        void applyColours();
+        void lookAndFeelChanged() override { applyColours(); }
 
         void refreshRows();
         void changeListenerCallback (juce::ChangeBroadcaster*) override;

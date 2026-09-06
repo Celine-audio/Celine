@@ -65,6 +65,9 @@ void LookAndFeelBase::applyPalette()
     setColour (juce::Label::textColourId, text());
     setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
     setColour (juce::Label::outlineColourId, juce::Colours::transparentBlack);
+    setColour (juce::Label::backgroundWhenEditingColourId, juce::Colours::transparentBlack);
+    setColour (juce::Label::outlineWhenEditingColourId, juce::Colours::transparentBlack);
+    setColour (juce::Label::textWhenEditingColourId, text());
 
     setColour (juce::TextEditor::backgroundColourId, field());
     setColour (juce::TextEditor::textColourId, text());
@@ -743,6 +746,12 @@ void LookAndFeelBase::drawPopupMenuSectionHeader (juce::Graphics& g,
     g.drawFittedText (sectionName, r, juce::Justification::centredLeft, 1);
 }
 
+std::unique_ptr<juce::FocusOutline> LookAndFeelBase::createFocusOutlineForComponent (juce::Component&)
+{
+    // Explicitly handled by Desktop::updateFocusOutline, which checks for null.
+    return nullptr;
+}
+
 juce::Font LookAndFeelBase::getLabelFont (juce::Label& label)
 {
     // A label that has asked for a particular face keeps it.
@@ -771,7 +780,16 @@ juce::Label* LookAndFeelBase::createSliderTextBox (juce::Slider& slider)
     label->setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
     label->setColour (juce::Label::outlineColourId, juce::Colours::transparentBlack);
     label->setColour (juce::Label::textColourId, Theme::text());
-    label->setColour (juce::Label::outlineWhenEditingColourId, Theme::teal());
+
+    // Editing a value draws no box round it, like every other field here. This drew one
+    // in the armed colour, which was the last rule left anywhere in the window -- and it
+    // appeared on a click, which is the thing that made it look like a system control.
+    label->setColour (juce::Label::backgroundWhenEditingColourId, juce::Colours::transparentBlack);
+    label->setColour (juce::Label::outlineWhenEditingColourId, juce::Colours::transparentBlack);
+
+    // JUCE fills this one from its own colour scheme rather than leaving it unset, so
+    // without saying otherwise the digits you are typing are not the theme's ink.
+    label->setColour (juce::Label::textWhenEditingColourId, Theme::text());
 
     return label;
 }

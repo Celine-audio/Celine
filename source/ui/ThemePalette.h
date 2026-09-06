@@ -111,6 +111,13 @@ namespace Celine::Theme
             is somebody pressing Save. */
         void store();
 
+        /** Throws away every change since the last save.
+
+            Back to what is on disk, or to what the design ships if nothing has been
+            saved yet. Windows repaint, but nothing is marked unsaved by it -- putting
+            colours back is not a change somebody made. */
+        void revert();
+
         /** Colours have moved since the last save. What the editor's status line reads,
             and the whole of why Save exists. */
         bool hasUnsavedChanges() const noexcept { return dirty; }

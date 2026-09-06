@@ -8,6 +8,9 @@ Follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ### Added
 
+- Closing the theme editor with colours you have not saved now asks, offering **Save**,
+  **Discard** or **Cancel**. Every way out goes through it — the Close button, the escape
+  key and the title bar's own close button.
 - `tests/ThemeReachTests.cpp`, which renders the whole editor, moves every colour the
   theme has, renders it again, and fails if anything the design ships is still on screen.
   It found four real bugs the day it was first run across all four plugins.
@@ -65,6 +68,31 @@ Follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ### Fixed
 
+- **Clicking into a value box no longer draws a border round it.** The slider's text box
+  asked for one in the armed colour while it was being edited -- the last rule left
+  anywhere in the window, and one that appeared on a click, which is exactly what made it
+  read as a system control dropped into the design.
+- The digits you type into a value box are the theme's ink. JUCE fills
+  `textWhenEditingColourId` from its own colour scheme rather than leaving it unset, so
+  the text being edited was never taking its colour from the theme.
+- **Discarding a theme now puts the colours back.** It marked the change abandoned and
+  left it on screen, so "discard" only meant "do not write the file" -- the window behind
+  it kept the colours you had just rejected until something else reloaded the theme.
+- **The theme window no longer opens behind the plugin.** Building it by hand to
+  intercept every way of closing it lost the two things `DialogWindow::LaunchOptions`
+  does for you: it is on top when the host keeps its own windows on top -- Ableton does,
+  and the window was unreachable without closing the plugin -- and it is told the scale
+  the editor is being shown at.
+- **The yellow ring around whatever you were editing is gone.** JUCE draws a focus
+  outline as a separate desktop window, and its default is a rounded rectangle at a fixed
+  radius of three — so on a field rounded to the house radius it traced a shape the
+  control does not have, sitting slightly off its corners. It also lived only as long as
+  that window did, which is why it appeared on one launch and not the next. Nothing here
+  needs it: a field being edited says so with its caret and its selection.
+- **The theme editor's own Close button follows the accent it is showing you.** Its
+  colours were set once when the window opened, so picking a new accent recoloured every
+  other control in the plugin and left the button next to the swatch on the old one. The
+  window's title, subtitle and status line had the same fault.
 - **The toolbar's mark did not follow the theme.** The logo and the wordmark were tinted
   once when the window opened, and tinting is destructive — so they stayed on whatever
   colour the theme happened to be at that moment.

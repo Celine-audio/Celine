@@ -169,6 +169,19 @@ public:
     juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
     juce::Font getComboBoxFont (juce::ComboBox&) override;
     juce::Font getPopupMenuFont() override;
+    /** No focus ring, on anything.
+
+        JUCE draws one as a separate desktop window around whatever has keyboard focus,
+        and its default is a yellow rounded rectangle at a fixed radius of three -- so on
+        a field rounded to the house radius it traced a shape the control does not have,
+        floating slightly off its corners. It also survives only as long as that window
+        does, which is why it came back on one launch and not the next.
+
+        Nothing here needs it: a field being edited already says so through its caret and
+        its selection, and every other control shows focus by being the thing under the
+        pointer. */
+    std::unique_ptr<juce::FocusOutline> createFocusOutlineForComponent (juce::Component&) override;
+
     juce::Font getLabelFont (juce::Label&) override;
     juce::Font getAlertWindowTitleFont() override;
     juce::Font getAlertWindowMessageFont() override;

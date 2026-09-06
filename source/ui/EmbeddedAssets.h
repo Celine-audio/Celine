@@ -62,4 +62,18 @@ namespace Celine::Assets
         redrawn logo with a different descender stays centred without anybody
         remembering that this is why. */
     void drawWordmark(juce::Graphics&, juce::Drawable&, juce::Rectangle<float> area);
+
+    /** How much of a wordmark's ink box the ordinary letters occupy -- the band from the
+        baseline to the x-height, as a fraction of the whole.
+
+        For sizing rather than placing. Setting every wordmark's *box* to one height
+        makes the ones with an ascender or a descender come out with smaller letters,
+        because the box has to hold the tail as well: "gallery" has both an `l` and a
+        `g`, "aura" has neither, and at the same box height the second reads noticeably
+        larger. Dividing the height you want the letters to be by this gives the box
+        height that produces it.
+
+        Returns 1.0 when the band cannot be measured -- a wordmark drawn as one merged
+        path has no glyphs to take a median of -- which leaves the old behaviour. */
+    float xHeightFraction(juce::Drawable&);
 } // namespace Celine::Assets

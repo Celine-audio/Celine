@@ -70,15 +70,25 @@ namespace Celine::Assets
             lowest: descenders are the minority by construction -- that is what makes
             them descenders -- so the middle value is the line the word stands on
             however many of them there are. */
-        float opticalCentreOffset(juce::Drawable& drawable)
+        /** The band an ordinary letter occupies: baseline to x-height.
+
+            Both edges are medians rather than extremes, and that is the whole point. An
+            "l" reaches higher than the rest and a "g" drops below them, so the ink box a
+            wordmark reports is taller than the letters actually look -- by different
+            amounts in different words. Measuring from the extremes made "gallery",
+            which has both, sit differently from "aura", which has neither, and read as
+            a different size at the same nominal height.
+
+            Returns false when there are too few glyphs to take a median of, which is
+            the case for a wordmark drawn as one merged path. */
+        bool xHeightBand(juce::Drawable& drawable, float& top, float& baseline)
         {
             auto* composite = dynamic_cast<juce::DrawableComposite*>(&drawable);
 
             if (composite == nullptr || composite->getNumChildren() < 2)
-                return 0.0f;
+                return false;
 
-            std::vector<float> bottoms;
-            auto top = std::numeric_limits<float>::max();
+            std::vector<float> tops, bottoms;
 
             for (int i = 0; i < composite->getNumChildren(); ++i)
             {
@@ -87,23 +97,55 @@ namespace Celine::Assets
                 if (glyph.isEmpty())
                     continue;
 
+                tops.push_back(glyph.getY());
                 bottoms.push_back(glyph.getBottom());
-                top = juce::jmin(top, glyph.getY());
             }
 
             if (bottoms.size() < 2)
-                return 0.0f;
+                return false;
 
-            const auto middle = bottoms.begin() + (std::ptrdiff_t)(bottoms.size() / 2);
-            std::nth_element(bottoms.begin(), middle, bottoms.end());
+            const auto middleOf = [](std::vector<float>& values)
+            {
+                const auto middle = values.begin() + (std::ptrdiff_t)(values.size() / 2);
+                std::nth_element(values.begin(), middle, values.end());
+                return *middle;
+            };
+
+            top = middleOf(tops);
+            baseline = middleOf(bottoms);
+
+            return baseline > top;
+        }
+
+        float opticalCentreOffset(juce::Drawable& drawable)
+        {
+            float top = 0.0f, baseline = 0.0f;
+
+            if (! xHeightBand(drawable, top, baseline))
+                return 0.0f;
 
             const auto whole = drawable.getDrawableBounds();
 
             if (whole.getHeight() <= 0.0f)
                 return 0.0f;
 
-            return (whole.getCentreY() - 0.5f * (top + *middle)) / whole.getHeight();
+            return (whole.getCentreY() - 0.5f * (top + baseline)) / whole.getHeight();
         }
+    }
+
+    float xHeightFraction(juce::Drawable& drawable)
+    {
+        float top = 0.0f, baseline = 0.0f;
+
+        if (! xHeightBand(drawable, top, baseline))
+            return 1.0f;
+
+        const auto whole = drawable.getDrawableBounds();
+
+        if (whole.getHeight() <= 0.0f)
+            return 1.0f;
+
+        return (baseline - top) / whole.getHeight();
     }
 
     void drawWordmark(juce::Graphics& g, juce::Drawable& drawable, juce::Rectangle<float> area)
