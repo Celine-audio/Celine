@@ -133,8 +133,7 @@ ThemePanel::ThemePanel()
     addAndMakeVisible (title);
 
     subtitle.setText (juce::String::fromUTF8 (
-                          "Every colour this plugin draws with. Changes show at once; "
-                          "Save keeps them."),
+                          "Customise, save, import and share themes."),
                       juce::dontSendNotification);
     subtitle.setFont (Fonts::light (11.5f));
     subtitle.setJustificationType (juce::Justification::topLeft);

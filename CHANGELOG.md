@@ -38,6 +38,20 @@ Follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ### Changed
 
+- Menus and tooltips carry a faint rule, the same one the callout bubble wears. On macOS
+  the window's own shadow gave them an edge for free; on Windows there is no shadow to
+  borrow one from, so they ran into whatever was behind them. Drawn rather than
+  inherited, so both platforms show the same thing.
+- Tooltips cast a shadow, sitting inside a margin reserved for it. A tooltip is the one
+  thing genuinely floating above the window, and a dark panel on a dark window with
+  nothing lifting it off is just a slightly different dark. The shadow is drawn rather
+  than asked for: JUCE's own shadower builds a rectangle, which behind a rounded panel is
+  a dark wedge in each corner, so it stays declined. Menus keep the rule and no shadow --
+  a menu is a desktop window sized to its items, so the only way to make a margin for one
+  is to grow the window, which moves the menu off the button it was opened from and
+  leaves the margin showing as a black box wherever the window turns out to have no
+  per-pixel alpha. The tooltip can have one because it is a child of the editor rather
+  than a window of its own.
 - The look and feel is split: `ui/LookAndFeelBase` carries everything the four plugins
   draw the same way, and `ui/PluginLookAndFeel` is a subclass for what this one does
   differently. Fifteen files under `source/ui/` are now byte-identical across all four,

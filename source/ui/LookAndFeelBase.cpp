@@ -494,6 +494,19 @@ void LookAndFeelBase::drawPopupMenuBackground (juce::Graphics& g, int width, int
 
     g.setColour (Theme::surface());
     g.fillRoundedRectangle (bounds, Theme::cornerRadius);
+
+    // A rule faint enough to read as an edge rather than as a frame -- the same one the
+    // callout bubble and the tooltip wear. On macOS the window's own shadow gave the
+    // panel an edge for free; on Windows there is none to borrow one from.
+    //
+    // And a rule is all there is. A shadow was tried here and taken out again: it needs
+    // a margin to fall into, and the only way to make one is to grow the window -- which
+    // moves the menu off the button it was opened from, and leaves the margin showing as
+    // a black box wherever the window turns out not to have per-pixel alpha. The tooltip
+    // can have one because it is parented to the editor rather than being a window.
+    g.setColour (Theme::line().withAlpha (0.2f));
+    g.drawRoundedRectangle (bounds.reduced (Theme::borderWidth * 0.5f),
+                            Theme::cornerRadius, Theme::borderWidth);
 }
 
 void LookAndFeelBase::drawPopupMenuBackgroundWithOptions (juce::Graphics& g, int width, int height,
@@ -653,20 +666,38 @@ namespace
     constexpr float tooltipPaddingX = 10.0f;
     constexpr float tooltipPaddingY = 7.0f;
     constexpr float tooltipMaximumWidth = 320.0f;
+
+    /** Margin round the panel for its shadow to fall into. The tooltip window is sized
+        to this as well as to the text -- a shadow drawn outside the component's own
+        bounds is a shadow that is clipped away. */
+    constexpr float tooltipShadow = 7.0f;
 }
 
 void LookAndFeelBase::drawTooltip (juce::Graphics& g, const juce::String& text,
                                      int width, int height)
 {
-    const auto bounds = juce::Rectangle<float> (0.0f, 0.0f, (float) width, (float) height);
+    // The panel sits inside its component, leaving a margin for the shadow to fall into
+    // -- getTooltipBounds reserves it. A tooltip is the one thing here that is genuinely
+    // floating above the window rather than part of it, and without something lifting it
+    // off, a dark panel on a dark window is just a slightly different dark.
+    const auto whole = juce::Rectangle<float> (0.0f, 0.0f, (float) width, (float) height);
+    const auto panel = whole.reduced (tooltipShadow);
 
-    // Fill only. The border V4 draws is the thing that made a tooltip read as a system
-    // window sitting on top of the plugin rather than as part of it.
+    juce::Path shape;
+    shape.addRoundedRectangle (panel, Theme::cornerRadius);
+
+    juce::DropShadow (juce::Colours::black.withAlpha (0.45f), (int) tooltipShadow, { 0, 2 })
+        .drawForPath (g, shape);
+
     g.setColour (Theme::surface());
-    g.fillRoundedRectangle (bounds, Theme::cornerRadius);
+    g.fillPath (shape);
 
-    layoutTooltip (text, (float) width - tooltipPaddingX * 2.0f)
-        .draw (g, bounds.reduced (tooltipPaddingX, tooltipPaddingY));
+    // The same faint rule the menus and the callout bubble wear.
+    g.setColour (Theme::line().withAlpha (0.2f));
+    g.strokePath (shape, juce::PathStrokeType (Theme::borderWidth));
+
+    layoutTooltip (text, panel.getWidth() - tooltipPaddingX * 2.0f)
+        .draw (g, panel.reduced (tooltipPaddingX, tooltipPaddingY));
 }
 
 juce::Rectangle<int> LookAndFeelBase::getTooltipBounds (const juce::String& tipText,
@@ -677,8 +708,8 @@ juce::Rectangle<int> LookAndFeelBase::getTooltipBounds (const juce::String& tipT
     // and filled with another.
     const auto layout = layoutTooltip (tipText, tooltipMaximumWidth);
 
-    const auto width = (int) std::ceil (layout.getWidth() + tooltipPaddingX * 2.0f);
-    const auto height = (int) std::ceil (layout.getHeight() + tooltipPaddingY * 2.0f);
+    const auto width = (int) std::ceil (layout.getWidth() + (tooltipPaddingX + tooltipShadow) * 2.0f);
+    const auto height = (int) std::ceil (layout.getHeight() + (tooltipPaddingY + tooltipShadow) * 2.0f);
 
     // Below and to the right of the pointer, unless that would take it off the edge.
     return juce::Rectangle<int> (screenPosition.x > parentArea.getCentreX() ? screenPosition.x - (width + 12)
