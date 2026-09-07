@@ -1,5 +1,6 @@
 #pragma once
 
+#include "dsp/PartitionedConvolver.h"
 #include "Schematic/SchematicBuilder.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -117,6 +118,13 @@ public:
     static constexpr int cabinetImpulseSamples = 2048;
     static constexpr double cabinetReferenceRate = 48000.0;
 
+    /** The most taps the engine will ever be handed, which is the cap taken at the
+        highest rate this is expected to run at. The engine is sized for it once, in
+        prepareToPlay, because sizing allocates -- and a session opened at 192 kHz
+        must not be the one that finds out the buffers were cut for 48. */
+    static constexpr int maximumCabinetSamples =
+        (int) (cabinetImpulseSamples * 192000.0 / cabinetReferenceRate);
+
     //==========================================================================
     /** One scope's picture, written by the audio thread and read by the UI.
 
@@ -184,7 +192,7 @@ public:
         Exists because loading happens on a background thread and returns
         nothing, so this is the only way to see that a file was truncated to the
         cap rather than merely asked to be. */
-    int getCabinetLength() const { return cabinet.getCurrentIRSize(); }
+    int getCabinetLength() const { return cabinetLength.load(); }
 
     /** Writes the knob parameters back onto the parts that own them.
 
@@ -341,9 +349,30 @@ private:
         the one part of the chain that gains nothing from running faster.
 
         **Zero latency**, so it stays out of the latency the oversampler
-        reports. A partitioned convolver would be cheaper but would put the
-        whole thing out of step with the dry path bypass depends on. */
-    juce::dsp::Convolution cabinet { juce::dsp::Convolution::Latency { 0 } };
+        reports -- which is what keeps it in step with the dry path bypass
+        depends on. The house engine convolves its first partition directly, so
+        it has none of its own.
+
+        **The house engine rather than juce::dsp::Convolution**, and the reason
+        is threading. JUCE's documents that its methods may not be interleaved:
+        a load has to be synchronised with process(), "which in practice means
+        making the load() call from the audio thread". Loading from the message
+        thread while audio ran -- which is what a schematic edit did -- is a
+        data race, and the symptom is a heap-use-after-free rather than
+        anything you would hear coming. This engine is built the other way
+        round: the message thread prepares a filter and parks it, and the audio
+        thread picks it up at a frame boundary under a try-lock it never waits
+        on. Two further things follow from the swap being ours. It keeps the
+        input history, so a reload carries on from the same past instead of
+        convolving an empty one -- JUCE's clicked on every load. And it lands
+        within a frame rather than whenever a background thread gets to it:
+        measured at about 275 blocks, a second and a half, before a cabinet
+        became audible. */
+    PartitionedConvolver cabinet;
+
+    /** The length of the response in the convolver, since the engine does not
+        keep one. Message thread writes it, the editor reads it. */
+    std::atomic<int> cabinetLength { 0 };
 
     /** Whether the audio thread should actually run it: true only when the
         switch is on *and* a file is loaded, so a missing impulse response is

@@ -385,15 +385,17 @@ void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     preparedBlockSize = juce::jmax (1, samplesPerBlock);
 
     // Prepared at the *host's* rate, not the oversampled one -- see the member.
-    cabinet.prepare ({ sampleRate,
-                       static_cast<juce::uint32> (preparedBlockSize),
-                       static_cast<juce::uint32> (juce::jmax (1, getTotalNumOutputChannels())) });
+    // Sized for the longest response it will ever be handed, which is the tap cap
+    // taken at the highest rate this will run at rather than at this one: prepare
+    // allocates, and it may only happen here.
+    cabinet.prepare (juce::jmax (1, getTotalNumOutputChannels()), maximumCabinetSamples);
 
     // prepare() resets the convolver, and the impulse response has to be
     // resampled to whatever rate we have just been given anyway. Forgetting what
     // was loaded is what makes refreshCabinet() reload rather than take its
     // "already have this one" short cut.
     loadedCabinetFile = juce::File{};
+    cabinetLength.store (0);
 
     prepareOversampler();
     rebuild();
@@ -651,6 +653,66 @@ void PluginProcessor::sampleScopes (Circuit& circuit) noexcept
     }
 }
 
+namespace
+{
+    /** Resamples a response onto a new rate.
+
+        Built from the same two JUCE classes the convolver's own loader used, in
+        the same order, so that a cabinet resampled by this path is the one that
+        was resampled by that one -- swapping the engine was not meant to change
+        anybody's cabinet. */
+    juce::AudioBuffer<float> resampleTo (const juce::AudioBuffer<float>& source,
+                                         double sourceRate, double destinationRate)
+    {
+        if (sourceRate <= 0.0 || destinationRate <= 0.0
+            || juce::approximatelyEqual (sourceRate, destinationRate))
+            return source;
+
+        const auto ratio = sourceRate / destinationRate;
+
+        juce::AudioBuffer<float> original = source;
+        juce::MemoryAudioSource memory (original, false);
+        juce::ResamplingAudioSource resampler (&memory, false, source.getNumChannels());
+
+        const auto length = juce::roundToInt (juce::jmax (1.0, source.getNumSamples() / ratio));
+
+        resampler.setResamplingRatio (ratio);
+        resampler.prepareToPlay (length, sourceRate);
+
+        juce::AudioBuffer<float> result (source.getNumChannels(), length);
+        resampler.getNextAudioBlock ({ &result, 0, result.getNumSamples() });
+
+        return result;
+    }
+
+    /** Scales a response so its loudest channel carries an eighth of unit energy.
+
+        The measure juce::dsp::Convolution applies under Normalise::yes, written
+        out here because it is a private helper there and because keeping the
+        number identical is the point: a different one would be a level change
+        on every cabinet anybody has already dialled in. */
+    void normalise (juce::AudioBuffer<float>& buffer)
+    {
+        float loudest = 0.0f;
+
+        for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
+        {
+            const auto* samples = buffer.getReadPointer (channel);
+            float sum = 0.0f;
+
+            for (int i = 0; i < buffer.getNumSamples(); ++i)
+                sum += samples[i] * samples[i];
+
+            loudest = juce::jmax (loudest, sum);
+        }
+
+        if (loudest < 1.0e-8f)
+            return;
+
+        buffer.applyGain (0.125f / std::sqrt (loudest));
+    }
+}
+
 juce::String PluginProcessor::refreshCabinet()
 {
     // The first Output terminal that has anything to say. A sheet can hold
@@ -696,43 +758,49 @@ juce::String PluginProcessor::refreshCabinet()
         return {};
     }
 
-    // Checked before loading rather than after, because loadImpulseResponse
-    // hands the file to a background thread and returns nothing: a .wav that is
-    // not really a .wav would otherwise fail silently and leave the convolver
-    // holding whatever was in it before.
+    // Read here rather than handed to somebody else to read: the engine takes a
+    // buffer, so this thread owns every step from the file to the filter, and a
+    // .wav that is not really a .wav is an error this function can return rather
+    // than a silent failure on a thread nobody is listening to.
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+
+    const std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
+
+    if (reader == nullptr || reader->numChannels < 1 || reader->lengthInSamples < 1)
     {
-        juce::AudioFormatManager formats;
-        formats.registerBasicFormats();
-
-        const std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
-
-        if (reader == nullptr)
-        {
-            cabinetActive = false;
-            loadedCabinetFile = juce::File{};
-            return file.getFileName() + " is not an audio file this build can read.";
-        }
+        cabinetActive = false;
+        loadedCabinetFile = juce::File{};
+        return file.getFileName() + " is not an audio file this build can read.";
     }
 
-    // The cap is a duration, not a buffer size -- 2048 taps at 48 kHz is 42.7 ms
-    // of cabinet, and it has to stay 42.7 ms at any other rate. JUCE applies
-    // `size` after its own resampling, so scaling it here is what keeps the
-    // filter the same filter. See cabinetImpulseSamples.
-    const auto maxSamples = static_cast<size_t> (juce::jmax (
-        1, juce::roundToInt (cabinetImpulseSamples * currentSampleRate / cabinetReferenceRate)));
+    juce::AudioBuffer<float> response (juce::jlimit (1, 2, (int) reader->numChannels),
+                                       (int) juce::jmin (reader->lengthInSamples,
+                                                         (juce::int64) maximumCabinetSamples));
+    reader->read (&response, 0, response.getNumSamples(), 0, true, reader->numChannels > 1);
 
-    cabinet.loadImpulseResponse (file,
-                                 juce::dsp::Convolution::Stereo::yes,
-                                 // No trimming: a cabinet impulse response is
-                                 // normally *already* the length it wants to be,
-                                 // and silently cropping its head would move the
-                                 // whole filter.
-                                 juce::dsp::Convolution::Trim::no,
-                                 maxSamples,
-                                 // Normalised, because an arbitrary file's level
-                                 // is arbitrary and an un-normalised one can
-                                 // arrive twenty dB hot.
-                                 juce::dsp::Convolution::Normalise::yes);
+    response = resampleTo (response, reader->sampleRate, currentSampleRate);
+
+    // The cap is a duration, not a buffer size -- 2048 taps at 48 kHz is 42.7 ms
+    // of cabinet, and it has to stay 42.7 ms at any other rate. Applied *after*
+    // resampling, which is what makes that true: cropping the file's own samples
+    // first, as the old path did, measured the duration in the file's rate rather
+    // than in ours, and a 48 kHz cabinet in a 96 kHz session came out 85 ms long.
+    const auto taps = juce::jmax (1, juce::roundToInt (cabinetImpulseSamples
+                                                       * currentSampleRate / cabinetReferenceRate));
+
+    if (response.getNumSamples() > taps)
+        response.setSize (response.getNumChannels(), taps, true, true, true);
+
+    // Normalised, because an arbitrary file's level is arbitrary and an
+    // un-normalised one can arrive twenty dB hot. The same measure JUCE's
+    // convolver applied, kept so that swapping the engine did not also change
+    // how loud every cabinet is: the loudest channel's summed energy, scaled to
+    // an eighth.
+    normalise (response);
+
+    cabinet.setImpulseResponse (response, false);
+    cabinetLength.store (response.getNumSamples());
 
     loadedCabinetFile = file;
     cabinetActive = true;
@@ -937,8 +1005,17 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         // circuit is.
         if (! state.bypassed && cabinetActive.load (std::memory_order_relaxed))
         {
-            const juce::dsp::ProcessContextReplacing<float> context (piece);
-            cabinet.process (context);
+            // A view onto the piece rather than a copy of it: the engine filters an
+            // AudioBuffer in place, and building one from the block's own channel
+            // pointers borrows the samples instead of allocating for them.
+            float* channels[2] = { piece.getChannelPointer (0),
+                                   piece.getNumChannels() > 1 ? piece.getChannelPointer (1) : nullptr };
+
+            juce::AudioBuffer<float> view (channels,
+                                           (int) juce::jmin ((size_t) 2, piece.getNumChannels()),
+                                           (int) piece.getNumSamples());
+
+            cabinet.process (view);
         }
     }
 }

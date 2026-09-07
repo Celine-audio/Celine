@@ -8,6 +8,19 @@ Follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ### Added
 
+- **A realtime-safety and host-stress test suite**, the same four files in every plugin.
+  `RealtimeSafetyTests` replaces the allocator and fails if `processBlock` allocates —
+  and proves the guard is armed first, because a check that silently stops working is
+  worse than no check. `HostStressTests` does what hosts really do: block sizes from one
+  sample to eight thousand including sizes never prepared for, every sample rate from
+  44.1k to 192k, buffers of NaN and infinity and denormals, `processBlock` before
+  `prepareToPlay`, every parameter swept while audio runs, state saved and restored
+  mid-playback, the editor opened and closed under load. `ConcurrencyStressTests` runs a
+  real audio thread against the message thread doing all of that at once.
+  `PerformanceTests` reports the cost of a block as a share of the block's own duration,
+  and fails if any single block takes longer than the audio it is for.
+- Each plugin carries a `Busy` fixture saying what its own busiest state is which is what stops the rest from passing
+  against a plugin that is doing nothing.
 - Closing the theme editor with colours you have not saved now asks, offering **Save**,
   **Discard** or **Cancel**. Every way out goes through it — the Close button, the escape
   key and the title bar's own close button.
@@ -82,6 +95,21 @@ Follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ### Fixed
 
+- **The cabinet no longer loads from the wrong thread.** `juce::dsp::Convolution`
+  documents that its methods may not be interleaved: a load has to be synchronised with
+  `process()`, "which in practice means making the load() call from the audio thread".
+  Loading from the message thread while audio ran — which is what every schematic edit
+  did — is a data race, and its symptom is a heap-use-after-free rather than anything
+  you would hear coming. The cabinet now runs on the house convolver, whose swap is
+  built the other way round: the message thread prepares a filter and parks it, and the
+  audio thread picks it up at a frame boundary under a try-lock it never waits on.
+  ThreadSanitizer reports nothing where it reported a race before, and the sound is
+  unchanged — measured against the previous engine at 4.7e-10, which is arithmetic noise.
+- **A cabinet is audible in the next block instead of a second and a half later.** The
+  old engine handed the file to a background thread and the filter arrived whenever that
+  thread got to it: measured at about 275 blocks. The response is built on the thread
+  that asked for it now.
+- **A cabinet is now the same length at every sample rate.**
 - **Clicking into a value box no longer draws a border round it.** The slider's text box
   asked for one in the armed colour while it was being edited -- the last rule left
   anywhere in the window, and one that appeared on a click, which is exactly what made it

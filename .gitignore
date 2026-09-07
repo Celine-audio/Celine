@@ -26,6 +26,7 @@ Testing
 # clion cmake builds
 cmake-build-debug
 cmake-build-release
+cmake-build-tsan
 cmake-build-relwithdebinfo
 packaging/Output/*
 # Written by cmake/GitHubENV.cmake whenever CI is set.
