@@ -5,6 +5,10 @@
 #include <cstdlib>
 #include <new>
 
+#if JUCE_WINDOWS
+ #include <malloc.h>
+#endif
+
 namespace
 {
     // Per-thread, so only the thread under test is watched and the harness around it
@@ -82,6 +86,33 @@ namespace
 
         std::free (p);
     }
+
+    // Over-aligned allocation is the one part of this with no portable spelling.
+    // posix_memalign does not exist on Windows, and the memory _aligned_malloc returns
+    // there must go back through _aligned_free rather than free -- handing it to the
+    // ordinary one is heap corruption rather than a diagnostic. std::aligned_alloc is
+    // no answer either: MSVC's runtime has never provided it.
+    void* alignedAllocate (std::size_t bytes, std::size_t alignment)
+    {
+       #if JUCE_WINDOWS
+        return _aligned_malloc (bytes, alignment);
+       #else
+        void* p = nullptr;
+        return posix_memalign (&p, alignment, bytes) == 0 ? p : nullptr;
+       #endif
+    }
+
+    void alignedRelease (void* p) noexcept
+    {
+        if (p != nullptr && watching > 0)
+            ++counts.deallocations;
+
+       #if JUCE_WINDOWS
+        _aligned_free (p);
+       #else
+        std::free (p);
+       #endif
+    }
 }
 
 void* operator new (std::size_t size)
@@ -119,12 +150,8 @@ void* operator new (std::size_t size, std::align_val_t align)
         counts.bytes += size;
     }
 
-    // posix_memalign rather than std::aligned_alloc, which wants a deployment target
-    // newer than the one this ships against.
-    void* p = nullptr;
-
-    if (::posix_memalign (&p, juce::jmax (sizeof (void*), static_cast<std::size_t> (align)),
-                          size == 0 ? 1 : size) == 0)
+    if (auto* p = alignedAllocate (size == 0 ? 1 : size,
+                                   juce::jmax (sizeof (void*), static_cast<std::size_t> (align))))
         return p;
 
     throw std::bad_alloc();
@@ -132,7 +159,7 @@ void* operator new (std::size_t size, std::align_val_t align)
 
 void* operator new[] (std::size_t size, std::align_val_t align) { return operator new (size, align); }
 
-void operator delete (void* p, std::align_val_t) noexcept { release (p); }
-void operator delete[] (void* p, std::align_val_t) noexcept { release (p); }
-void operator delete (void* p, std::size_t, std::align_val_t) noexcept { release (p); }
-void operator delete[] (void* p, std::size_t, std::align_val_t) noexcept { release (p); }
+void operator delete (void* p, std::align_val_t) noexcept { alignedRelease (p); }
+void operator delete[] (void* p, std::align_val_t) noexcept { alignedRelease (p); }
+void operator delete (void* p, std::size_t, std::align_val_t) noexcept { alignedRelease (p); }
+void operator delete[] (void* p, std::size_t, std::align_val_t) noexcept { alignedRelease (p); }
