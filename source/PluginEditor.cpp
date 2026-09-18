@@ -10,9 +10,9 @@
 #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
 #include "Schematic/ExampleSchematics.h"
 
-#include "ui/EmbeddedAssets.h"
-#include "ui/AboutPanel.h"
-#include "ui/ThemePanel.h"
+#include <CelineUI/EmbeddedAssets.h>
+#include <CelineUI/AboutPanel.h>
+#include <CelineUI/ThemePanel.h>
 
 namespace
 {

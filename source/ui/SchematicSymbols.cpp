@@ -1,8 +1,8 @@
 #include "SchematicSymbols.h"
 
-#include "Fonts.h"
+#include <CelineUI/Fonts.h>
 #include "SymbolArtwork.h"
-#include "Theme.h"
+#include <CelineUI/Theme.h>
 
 namespace Celine
 {

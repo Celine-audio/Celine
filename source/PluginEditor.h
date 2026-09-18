@@ -7,7 +7,7 @@
 #include "ui/ControlStrip.h"
 #include "ui/EditorPanels.h"
 #include "ui/SchematicCanvas.h"
-#include "ui/Theme.h"
+#include <CelineUI/Theme.h>
 #include "ui/ToolbarWidgets.h"
 
 // Declared rather than included: the definition lives in a header that only the

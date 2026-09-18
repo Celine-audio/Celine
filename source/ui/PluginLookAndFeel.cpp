@@ -1,7 +1,7 @@
 #include "PluginLookAndFeel.h"
 
-#include "EmbeddedAssets.h"
-#include "Fonts.h"
+#include <CelineUI/EmbeddedAssets.h>
+#include <CelineUI/Fonts.h>
 
 using namespace Celine;
 
