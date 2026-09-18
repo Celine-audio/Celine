@@ -3,6 +3,7 @@
 #include <CelineEngine/Components/FastMath.h>
 #include <Schematic/ExampleSchematics.h>
 #include <ui/ControlStrip.h>
+#include <ui/EditorPanels.h>
 #include <ui/SchematicCanvas.h>
 #include <ui/Theme.h>
 #include <juce_dsp/juce_dsp.h>
@@ -366,6 +367,52 @@ TEST_CASE ("Resizing the editor gives every extra pixel to the canvas", "[plugin
         CHECK (plugin.editorWidth.load() == 1400);
         CHECK (plugin.editorHeight.load() == 900);
     });
+}
+
+TEST_CASE ("The palette's rows never run under its scrollbar", "[plugin][ui]")
+{
+    // A viewport decides its scrollbar from the list's current size, so a
+    // width asked of it during layout describes the list as it was. On the
+    // first layout that is an empty list: no bar, full width -- and then the
+    // bar arrives on top of rows laid out without it, clipping their rounded
+    // right-hand ends square until the next resize puts them right. Which is
+    // why it came and went.
+    const auto check = [] (Celine::ElementPalette& palette, bool shouldScroll)
+    {
+        auto* viewport = dynamic_cast<juce::Viewport*> (palette.getChildComponent (0));
+        REQUIRE (viewport != nullptr);
+
+        const int listWidth = viewport->getViewedComponent()->getWidth();
+        const int visibleWidth = viewport->getMaximumVisibleWidth();
+
+        INFO ("palette " << palette.getWidth() << "x" << palette.getHeight() << ": rows "
+                         << listWidth << " px wide, " << visibleWidth << " px visible");
+        CHECK (viewport->getVerticalScrollBar().isVisible() == shouldScroll);
+
+        // Exactly, not merely within: narrower would leave a dead strip down
+        // the right where the bar isn't.
+        CHECK (listWidth == visibleWidth);
+    };
+
+    SECTION ("growing a list that fits into one that scrolls")
+    {
+        Celine::ElementPalette palette;
+        palette.setSize (200, 4000);
+        check (palette, false);
+
+        palette.setSize (200, 300);
+        check (palette, true);
+
+        palette.setSize (200, 4000);
+        check (palette, false);
+    }
+
+    SECTION ("opened straight into a window too short for it")
+    {
+        Celine::ElementPalette palette;
+        palette.setSize (200, 300);
+        check (palette, true);
+    }
 }
 
 //==============================================================================

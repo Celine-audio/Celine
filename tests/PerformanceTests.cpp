@@ -101,54 +101,82 @@ TEST_CASE ("No block is wildly more expensive than its neighbours", "[performanc
     // than the rest, because something was rebuilt inside the callback. The worst block
     // is compared against the median rather than the mean, so a handful of slow ones
     // cannot hide in the baseline.
-    PluginProcessor plugin;
-    const Busy busy { plugin };
-
+    //
+    // Up to three attempts, each on a fresh instance fed the same noise. A shared CI
+    // runner is a virtual machine that is now and then paused outright, and the block
+    // in flight then measures tens of milliseconds for reasons that have nothing to do
+    // with the plugin: the macOS runner once put 52 ms on a block whose median was
+    // 0.14 ms, a spike that thirty thousand blocks on a desk never came near. A
+    // structural cost is different -- a fresh instance given the same input does the
+    // same work at the same block, every time -- so it fails all three attempts, and
+    // one clean attempt is proof the spike belonged to the host.
     constexpr double rate = 48000.0;
     constexpr int size = 256;
-
-    plugin.prepareToPlay (rate, size);
-
-    juce::AudioBuffer<float> buffer (2, size);
-    juce::MidiBuffer midi;
-    juce::Random random { 5151 };
-
-    for (int b = 0; b < 64; ++b)
-    {
-        fillNoise (buffer, random);
-        plugin.processBlock (buffer, midi);
-    }
-
-    std::vector<double> times;
-
-    for (int b = 0; b < 2000; ++b)
-    {
-        fillNoise (buffer, random);
-
-        const auto start = std::chrono::steady_clock::now();
-        plugin.processBlock (buffer, midi);
-        const std::chrono::duration<double> elapsed { std::chrono::steady_clock::now() - start };
-
-        times.push_back (elapsed.count());
-    }
-
-    auto sorted = times;
-    std::sort (sorted.begin(), sorted.end());
-
-    const auto median = sorted[sorted.size() / 2];
-    const auto worst = sorted.back();
     const auto blockSeconds = (double) size / rate;
 
-    std::printf ("\n  median %6.3f ms, worst %6.3f ms  (a block is %.3f ms of audio)\n"
-                 "  worst is %.1fx the median\n\n",
-                 median * 1000.0, worst * 1000.0, blockSeconds * 1000.0, worst / median);
+    struct Spread
+    {
+        double median = 0.0;
+        double worst = 0.0;
+    };
+
+    const auto measureSpread = []
+    {
+        PluginProcessor plugin;
+        const Busy busy { plugin };
+
+        plugin.prepareToPlay (rate, size);
+
+        juce::AudioBuffer<float> buffer (2, size);
+        juce::MidiBuffer midi;
+        juce::Random random { 5151 };
+
+        for (int b = 0; b < 64; ++b)
+        {
+            fillNoise (buffer, random);
+            plugin.processBlock (buffer, midi);
+        }
+
+        std::vector<double> times;
+
+        for (int b = 0; b < 2000; ++b)
+        {
+            fillNoise (buffer, random);
+
+            const auto start = std::chrono::steady_clock::now();
+            plugin.processBlock (buffer, midi);
+            const std::chrono::duration<double> elapsed { std::chrono::steady_clock::now() - start };
+
+            times.push_back (elapsed.count());
+        }
+
+        std::sort (times.begin(), times.end());
+        return Spread { times[times.size() / 2], times.back() };
+    };
 
     // The scheduler alone accounts for a good deal of scatter in a test process, so
     // this is looking for something structural: a rebuild landing inside a callback,
-    // which shows up as tens of times the median rather than a few.
-    CHECK (worst < median * 60.0);
+    // which shows up as tens of times the median rather than a few. And whatever the
+    // scatter, no single block may take longer than the audio it is for, which is
+    // the point at which the host actually drops it.
+    const auto isClean = [blockSeconds] (const Spread& s)
+    { return s.worst < s.median * 60.0 && s.worst < blockSeconds; };
 
-    // And whatever the scatter, no single block may take longer than the audio it is
-    // for, which is the point at which the host actually drops it.
-    CHECK (worst < blockSeconds);
+    Spread spread;
+
+    for (int attempt = 1; attempt <= 3; ++attempt)
+    {
+        spread = measureSpread();
+
+        std::printf ("\n  attempt %d: median %6.3f ms, worst %6.3f ms  (a block is %.3f ms of audio)\n"
+                     "  worst is %.1fx the median\n\n",
+                     attempt, spread.median * 1000.0, spread.worst * 1000.0, blockSeconds * 1000.0,
+                     spread.worst / spread.median);
+
+        if (isClean (spread))
+            break;
+    }
+
+    CHECK (spread.worst < spread.median * 60.0);
+    CHECK (spread.worst < blockSeconds);
 }

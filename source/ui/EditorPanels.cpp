@@ -158,12 +158,17 @@ namespace Celine
 
         viewport.setBounds(getLocalBounds().reduced(4));
 
-        // Asked for rather than assumed: the width available inside the viewport
-        // is the panel minus the scrollbar, and whether the bar is there depends
-        // on the height we are about to set.
+        // Decided here, not asked of the viewport. Whether a scrollbar takes
+        // width depends on the height we are about to set, but the viewport
+        // answers getMaximumVisibleWidth() for the list's *current* height. On
+        // the first layout that is zero, so it reports the full width, the bar
+        // then arrives on top of rows laid out without it, and their rounded
+        // right-hand ends sit clipped square underneath until the next resize.
+        // The inspector and the console work it out the same way.
         const int listHeight = rowHeight * entries.size();
-        content.setSize(listHeight > viewport.getHeight() ? viewport.getMaximumVisibleWidth()
-                                                          : viewport.getWidth(),
+        const bool scrolls = listHeight > viewport.getHeight();
+        content.setSize(scrolls ? viewport.getWidth() - viewport.getScrollBarThickness()
+                                : viewport.getWidth(),
                         listHeight);
 
         auto area = content.getLocalBounds();
