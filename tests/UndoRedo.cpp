@@ -1,9 +1,9 @@
 #include <Schematic/SchematicHistory.h>
-#include <UI/SchematicCanvas.h>
+#include <ui/SchematicCanvas.h>
 #include <catch2/catch_test_macros.hpp>
 
 using namespace SchematicModel;
-using namespace SchematicUI;
+using namespace Celine;
 
 namespace
 {

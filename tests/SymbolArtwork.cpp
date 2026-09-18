@@ -1,12 +1,12 @@
 #include <Schematic/Element.h>
-#include <UI/SchematicSymbols.h>
-#include <UI/EmbeddedAssets.h>
-#include <UI/SymbolArtwork.h>
-#include <UI/Theme.h>
+#include <ui/SchematicSymbols.h>
+#include <ui/EmbeddedAssets.h>
+#include <ui/SymbolArtwork.h>
+#include <ui/Theme.h>
 #include <catch2/catch_test_macros.hpp>
 
 using namespace SchematicModel;
-using namespace SchematicUI;
+using namespace Celine;
 
 TEST_CASE ("Every part resolves to artwork that exists", "[artwork][gui]")
 {

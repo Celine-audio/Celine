@@ -3,8 +3,8 @@
 #include <PluginEditor.h>
 #include <PresetLibrary.h>
 #include <Schematic/ExampleSchematics.h>
-#include <UI/EmbeddedAssets.h>
-#include <UI/ToolbarWidgets.h>
+#include <ui/EmbeddedAssets.h>
+#include <ui/ToolbarWidgets.h>
 #include <catch2/catch_test_macros.hpp>
 
 namespace
@@ -136,9 +136,9 @@ TEST_CASE ("Engaging bypass recolours the button without reshaping it", "[toolba
     // Only the *colour* may differ, so the two states must cover exactly the same
     // pixels. Compared as a coverage mask rather than as an image, which is what
     // lets the colour change and nothing else.
-    SchematicUI::PowerButton button ("Bypass",
-                                     SchematicUI::Assets::drawable ("power-off-solid-full.svg"));
-    button.setSize (SchematicUI::Theme::buttonSize, SchematicUI::Theme::buttonSize);
+    Celine::PowerButton button ("Bypass",
+                                     Celine::Assets::drawable ("power-off-solid-full.svg"));
+    button.setSize (Celine::Theme::buttonSize, Celine::Theme::buttonSize);
 
     auto mask = [&button] (bool bypassed)
     {

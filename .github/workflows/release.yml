@@ -77,9 +77,14 @@ jobs:
           body: |
             Built from `${{ github.ref_name }}`.
 
-            Available for macOS, Windows, and Linux in Standalone, VST3, LV2, CLAP, AU (macOS) formats.
+            Available for macOS, Windows, and Linux in VST3, LV2 and CLAP formats, plus AU on macOS and AAX on macOS and Windows.
             These builds are not code signed. macOS will warn the app is from an unidentified developer. Windows SmartScreen will warn on first run.
+            The AAX build is still waiting for approval from AVID, so it will not work in consumer versions as of now.
             
+            To remove the quarantine attribute from a file or app on macOS, use the following command on all the files you wish to install.
+            ```bash
+            xattr -d com.apple.quarantine <file_path>
+            ```  
             ---
 
             Céline is free software under the [AGPLv3](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/COPYING), and comes with no warranty. The corresponding source for these binaries is this repository at tag [`${{ github.ref_name }}`](https://github.com/${{ github.repository }}/tree/${{ github.ref_name }}).

@@ -1,5 +1,7 @@
 #include <CelineEngine/Circuits.h>
 
+#include "helpers/realtime_guard.h"
+
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -7,41 +9,6 @@
 #include <cmath>
 #include <cstdlib>
 #include <numbers>
-
-//==============================================================================
-// Allocation counting, so the realtime-safety claim is checked rather than
-// asserted. Counting is off unless a test explicitly turns it on, so the rest
-// of the suite (and Catch2 itself) is unaffected.
-//==============================================================================
-
-namespace
-{
-    std::atomic<bool> countingAllocations{false};
-    std::atomic<int> allocationCount{0};
-
-    void noteAllocation() noexcept
-    {
-        if (countingAllocations.load(std::memory_order_relaxed))
-            allocationCount.fetch_add(1, std::memory_order_relaxed);
-    }
-} // namespace
-
-void* operator new(std::size_t size)
-{
-    noteAllocation();
-    return std::malloc(size == 0 ? 1 : size);
-}
-
-void* operator new[](std::size_t size)
-{
-    noteAllocation();
-    return std::malloc(size == 0 ? 1 : size);
-}
-
-void operator delete(void* p) noexcept { std::free(p); }
-void operator delete[](void* p) noexcept { std::free(p); }
-void operator delete(void* p, std::size_t) noexcept { std::free(p); }
-void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
 
 namespace
 {
@@ -600,8 +567,9 @@ TEST_CASE("process() does not allocate", "[circuit][realtime]")
     for (size_t i = 0; i < block.size(); ++i)
         block[i] = static_cast<float>(5.0 * std::sin(phaseStep * static_cast<double>(i)));
 
-    allocationCount.store(0);
-    countingAllocations.store(true);
+    // The counter is thread-local and covers the aligned forms too -- see
+    // helpers/realtime_guard.h.
+    RealtimeGuard guard;
 
     for (int pass = 0; pass < 8; ++pass)
     {
@@ -616,9 +584,7 @@ TEST_CASE("process() does not allocate", "[circuit][realtime]")
         }
     }
 
-    countingAllocations.store(false);
-
-    CHECK(allocationCount.load() == 0);
+    CHECK(guard.allocations() == 0);
 }
 
 TEST_CASE("Block processing matches sample-by-sample processing", "[circuit]")

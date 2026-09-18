@@ -3,12 +3,12 @@
 #include "PluginProcessor.h"
 #include "PresetLibrary.h"
 #include "Schematic/SchematicHistory.h"
-#include "UI/CelineLookAndFeel.h"
-#include "UI/ControlStrip.h"
-#include "UI/EditorPanels.h"
-#include "UI/SchematicCanvas.h"
-#include "UI/Theme.h"
-#include "UI/ToolbarWidgets.h"
+#include "ui/PluginLookAndFeel.h"
+#include "ui/ControlStrip.h"
+#include "ui/EditorPanels.h"
+#include "ui/SchematicCanvas.h"
+#include "ui/Theme.h"
+#include "ui/ToolbarWidgets.h"
 
 // Declared rather than included: the definition lives in a header that only the
 // standalone build compiles, and a pointer to an incomplete type is all this
@@ -30,7 +30,8 @@ namespace juce
     you hear has fallen behind what you see.
 */
 class PluginEditor : public juce::AudioProcessorEditor,
-                     private juce::Timer
+                     private juce::Timer,
+                     private juce::ChangeListener
 {
 public:
     explicit PluginEditor (PluginProcessor&);
@@ -66,7 +67,7 @@ public:
         Const on purpose: everything that *changes* the drawing goes through the
         editor, which is what keeps undo, the Rebuild button and the preset's
         modified dot in step. This is for asking what is currently selected. */
-    const SchematicUI::SchematicCanvas& getCanvas() const noexcept { return canvas; }
+    const Celine::SchematicCanvas& getCanvas() const noexcept { return canvas; }
 
     /** Which preset the toolbar is currently claiming, or empty for none. */
     juce::String getLoadedPresetName() const { return presetsButton.getPresetName(); }
@@ -102,7 +103,34 @@ private:
         use rather than a courtesy -- neither of which a README reaches, since
         the plugin is what gets copied around. This is that notice, travelling
         with the binary. */
+    /** Puts the processor's idea of the loaded preset into the toolbar field. The
+        processor is where it lives, so this is what a rebuilt editor catches up from
+        as well as what a change writes through to. */
+    /** The smallest the window is allowed to be. Named here rather than left in the
+        constructor because resized() has to know it too -- it will not record a size
+        below this as one worth reopening at. */
+    static constexpr int minimumWidth = Celine::Theme::paletteWidth
+                                      + Celine::Theme::inspectorWidth + 400;
+    static constexpr int minimumHeight = 460;
+
+    void showPresetFromProcessor();
+
     void showAboutDialog();
+
+    /** The theme moved. Re-reads everything that is *told* its colours rather than
+        asked, then lets every child do the same. */
+    void changeListenerCallback (juce::ChangeBroadcaster*) override;
+
+    /** Every colour this window hands to a child rather than reading as it paints.
+        Called from the constructor and again on every theme change -- a colour handed
+        to setColour is a snapshot, and a snapshot does not follow a theme. */
+    void applyColours();
+
+    /** The rebuild button is the design's one stateful colour: the pending amber while
+        the sheet is ahead of what you can hear, and the ordinary button fill once it is
+        not. Gathered here because three places used to set it and a fourth -- a theme
+        change -- has to agree with all of them. */
+    void refreshRebuildButtonColour();
 
     /** The object that owns the audio device in a standalone build, or null in
         a host -- where the device is the host's business and there is no such
@@ -118,7 +146,7 @@ private:
     void browseForCabinetFile();
 
     /** Copies one scope's picture out of the processor for drawing. */
-    bool readScopeTrace (int elementId, SchematicUI::ScopeReading& out) const;
+    bool readScopeTrace (int elementId, Celine::ScopeReading& out) const;
 
     /** Picks a `.celsch` to drop onto the sheet alongside what is already
         drawn. */
@@ -179,14 +207,19 @@ private:
 
     /** Declared before every child component on purpose: members are destroyed
         in reverse order, so this outlives the things that draw with it. */
-    SchematicUI::CelineLookAndFeel lookAndFeel;
+    PluginLookAndFeel lookAndFeel;
+
+    // Every control in the window has a tooltip and none of them can show one without
+    // this: JUCE needs a window to draw them in, and there is no default. Without it
+    // the tooltips this plugin already set were simply never seen.
+    juce::TooltipWindow tooltips { this, 600 };
 
     //==========================================================================
     /** Only the canvas grows. The palette and the inspector are lists of fixed-
         width things, and the control strip is a row of knobs -- stretching any of
         them buys nothing, so the whole of a resize goes to the sheet. */
-    static constexpr int paletteWidth = SchematicUI::Theme::paletteWidth;
-    static constexpr int inspectorWidth = SchematicUI::Theme::inspectorWidth;
+    static constexpr int paletteWidth = Celine::Theme::paletteWidth;
+    static constexpr int inspectorWidth = Celine::Theme::inspectorWidth;
 
     // Toolbar. What a click on the sheet does -- the three are mutually
     // exclusive and the active one is lit, because with several modes it has to
@@ -198,17 +231,17 @@ private:
     juce::TextButton rebuildButton { "Rebuild" };
 
     /** The two tools, which are mutually exclusive and show it in teal. */
-    std::unique_ptr<SchematicUI::IconButton> selectToolButton, deleteToolButton;
+    std::unique_ptr<Celine::IconButton> selectToolButton, deleteToolButton;
 
     /** The file pair. */
-    std::unique_ptr<SchematicUI::IconButton> saveButton, loadButton;
+    std::unique_ptr<Celine::IconButton> saveButton, loadButton;
 
     /** Import: a second sheet dropped onto this one rather than replacing it.
 
         Next to the preset field because it belongs to the same group -- Save,
         Load and Presets are all "which drawing am I working on", and this is the
         one that answers "both of them". */
-    std::unique_ptr<SchematicUI::IconButton> importButton;
+    std::unique_ptr<Celine::IconButton> importButton;
 
     /** Where resized() put the undo/redo housing, so paint() can draw it behind
         the two frameless buttons that sit in it. */
@@ -219,19 +252,19 @@ private:
         toolbar lays them out as a group and nothing has to remember the order
         twice. */
     enum class Action { Mirror, Flip, Copy, Rotate, Undo, Redo, count };
-    std::array<std::unique_ptr<SchematicUI::IconButton>,
+    std::array<std::unique_ptr<Celine::IconButton>,
                static_cast<size_t> (Action::count)> actionButtons;
 
-    SchematicUI::IconButton& actionButton (Action a)
+    Celine::IconButton& actionButton (Action a)
     {
         return *actionButtons[static_cast<size_t> (a)];
     }
 
     /** Says which preset is loaded, not just that a menu exists. */
-    SchematicUI::PresetButton presetsButton;
+    Celine::PresetButton presetsButton;
 
     /** Built in the constructor, since it needs the icon artwork. */
-    std::unique_ptr<SchematicUI::IconButton> settingsButton;
+    std::unique_ptr<Celine::IconButton> settingsButton;
 
     /** The wordmark in the top-right corner. A DrawableComposite rather than an
         image so it stays sharp at any window size, and not a button because it
@@ -279,12 +312,12 @@ private:
 
     //==========================================================================
     // Main panels
-    SchematicUI::ElementPalette palette;
-    SchematicUI::SchematicCanvas canvas;
-    SchematicUI::ElementInspector inspector;
+    Celine::ElementPalette palette;
+    Celine::SchematicCanvas canvas;
+    Celine::ElementInspector inspector;
 
     /** Everything the last build had to say, one message per row. */
-    SchematicUI::MessageConsole console;
+    Celine::MessageConsole console;
 
     /** How much of the right-hand panel the console gets. The inspector is a
         fixed list of fields and needs a known amount; the console takes what is
@@ -294,7 +327,7 @@ private:
     //==========================================================================
     /** The knobs the circuit turned out to have. Owns its own widgets and the
         two-way traffic between them and the drawing -- see ControlStrip. */
-    SchematicUI::ControlStrip controlStrip;
+    Celine::ControlStrip controlStrip;
 
     //==========================================================================
     // Always present, not part of any circuit
@@ -304,7 +337,7 @@ private:
         and the ids are what they are for good, since renaming one breaks every
         saved automation lane that points at it. */
     juce::Label inputLabel { {}, "INPUT" }, outputLabel { {}, "OUTPUT" };
-    std::unique_ptr<SchematicUI::PowerButton> bypassButton;
+    std::unique_ptr<Celine::PowerButton> bypassButton;
     juce::ComboBox channelModeBox;
     juce::Label channelModeLabel { {}, "CHANNELS" };
 

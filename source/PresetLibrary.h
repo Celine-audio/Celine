@@ -81,7 +81,9 @@ public:
     static juce::File getSuggestedDirectory();
 
 private:
-    std::unique_ptr<juce::PropertiesFile> settings;
+    /** Where this instance's answers live. A path rather than an open file: see the
+        note above `openSettings` in the .cpp for why that matters. */
+    juce::File settingsFile;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PresetLibrary)
 };
