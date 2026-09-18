@@ -28,7 +28,7 @@
     X (element,      "Part",                "Schematic",   0xffd9d9d9)                  \
     X (selected,     "Selected",            "Schematic",   0xfffd971f)                  \
     X (cursorMark,   "Ruler cursor",        "Schematic",   0xff9761dc)                  \
-    X (pending,      "Edited, not rebuilt", "Schematic",   0xfffd971f)                  \
+    X (pending,      "Edited",              "Schematic",   0xfffd971f)                  \
                                                                                         \
     X (captionName,  "Part name",           "Captions",    0xffe6db74)                  \
     X (captionValue, "Value",               "Captions",    0xffa6e22e)                  \
@@ -44,9 +44,9 @@
     X (boxRed,       "Red",                 "Group boxes", 0xffd06666)                  \
     X (boxViolet,    "Violet",              "Group boxes", 0xffa77fd0)                  \
                                                                                         \
-    X (panel,        "The panel",           "Light panel", 0xfff9fbff)                  \
-    X (textOnPanel,  "Ink on it",           "Light panel", 0xff28262e)                  \
-    X (pill,         "A row on it",         "Light panel", 0xffdcdee4)                  \
+    X (panel,        "Panel background",    "Parts panel", 0xfff9fbff)                  \
+    X (textOnPanel,  "Text",                "Parts panel", 0xff28262e)                  \
+    X (pill,         "Element background",  "Parts panel", 0xffdcdee4)                  \
                                                                                         \
     X (notice,       "Notice",              "Messages",    0xff888791)                  \
     X (warning,      "Warning",             "Messages",    0xffe6db74)                  \

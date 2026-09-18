@@ -196,13 +196,10 @@ void PluginEditor::buildToolbar()
     saveButton->onClick       = [this] { browseForCircuit (true); };
     loadButton->onClick       = [this] { browseForCircuit (false); };
     importButton->onClick     = [this] { browseForImport(); };
-    presetsButton.setTooltip ("The circuit that is loaded, and the presets you can load. "
-                              "A dot beside the name means it has been edited since.");
+    presetsButton.setTooltip ("Preset selection list");
     presetsButton.onClick     = [this] { showPresetsMenu(); };
     settingsButton->onClick   = [this] { showSettingsMenu(); };
-    rebuildButton.setTooltip ("Hands the drawing to the audio engine. Nothing you draw is "
-                              "heard until this is pressed, which is why it turns amber "
-                              "while the sheet is ahead of what you are listening to.");
+    rebuildButton.setTooltip ("Sends the current schematic to the audio engine");
     rebuildButton.onClick     = [this] { rebuildCircuit(); };
 
     // The canvas changes tool on its own -- placing a part drops it back to
@@ -286,11 +283,8 @@ void PluginEditor::buildPanels()
 
 void PluginEditor::buildBottomBand()
 {
-    inputSlider.setTooltip ("Level into the circuit. Valves and diodes answer to how hard "
-                            "they are driven, so this sets how the circuit behaves and not "
-                            "only how loud it is.");
-    outputSlider.setTooltip ("Level out, after the circuit. Use it to match the bypassed "
-                             "level once the input has been set where you want it.");
+    inputSlider.setTooltip ("Input level");
+    outputSlider.setTooltip ("Output level");
 
     for (auto* slider : { &inputSlider, &outputSlider })
     {
@@ -310,9 +304,7 @@ void PluginEditor::buildBottomBand()
     bypassButton->setWantsKeyboardFocus (false);
     addAndMakeVisible (*bypassButton);
 
-    channelModeBox.setTooltip ("How many circuits run, and what feeds them. Stereo simulates "
-                               "the drawing twice, once per channel; the mono settings "
-                               "simulate it once, from the left, the right, or the two summed.");
+    channelModeBox.setTooltip ("Channel selector. Stereo is twice as computationally heavy.");
     channelModeBox.addItemList ({ "Stereo", "Mono L", "Mono R", "Mono L+R" }, 1);
     channelModeBox.setWantsKeyboardFocus (false);
 
