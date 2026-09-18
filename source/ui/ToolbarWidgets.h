@@ -90,7 +90,7 @@ namespace Celine
             const auto caption = content.removeFromTop (content.getHeight() * 0.5f);
 
             g.setFont (Fonts::light (11.0f));
-            g.setColour (isFactory && loaded ? Theme::violet() : Theme::comment());
+            g.setColour (isFactory && loaded ? Theme::accent() : Theme::comment());
             g.drawText (isFactory && loaded ? "FACTORY" : "PRESET", caption,
                         juce::Justification::bottomLeft, false);
 

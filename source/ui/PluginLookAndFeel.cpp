@@ -104,7 +104,7 @@ void PluginLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& 
             .withPosition(labelled ? bounds.getX() : bounds.getCentreX() - width * 0.5f,
                           bounds.getCentreY() - height * 0.5f);
 
-    g.setColour(on ? Theme::teal() : Theme::surfaceBright());
+    g.setColour(on ? Theme::accent() : Theme::surfaceBright());
     g.fillRoundedRectangle(pill, height * 0.5f);
 
     if (shouldDrawButtonAsHighlighted)

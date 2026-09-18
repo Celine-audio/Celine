@@ -59,7 +59,7 @@ void LookAndFeelBase::applyPalette()
     setColour (juce::TextButton::textColourOnId, text());
 
     setColour (juce::ToggleButton::textColourId, text());
-    setColour (juce::ToggleButton::tickColourId, teal());
+    setColour (juce::ToggleButton::tickColourId, accent());
     setColour (juce::ToggleButton::tickDisabledColourId, line());
 
     setColour (juce::Label::textColourId, text());
@@ -108,9 +108,9 @@ void LookAndFeelBase::applyPalette()
     setColour (juce::PopupMenu::highlightedBackgroundColourId, surfaceBright());
     setColour (juce::PopupMenu::highlightedTextColourId, text());
 
-    setColour (juce::Slider::rotarySliderFillColourId, teal());
+    setColour (juce::Slider::rotarySliderFillColourId, accent());
     setColour (juce::Slider::rotarySliderOutlineColourId, surfaceBright());
-    setColour (juce::Slider::thumbColourId, text());
+    setColour (juce::Slider::thumbColourId, handle());
     // The filled part of a track is the plugin's accent; the groove behind it is the
     // ground everything else sits on.
     setColour (juce::Slider::trackColourId, accent());
@@ -200,7 +200,7 @@ void LookAndFeelBase::drawRotarySlider (juce::Graphics& g, int x, int y, int wid
     const auto face = square.reduced (thickness + side * 0.07f);
     const auto capRadius = face.getWidth() * 0.5f;
 
-    g.setColour (slider.isEnabled() ? Theme::panel() : Theme::panel().withAlpha (0.4f));
+    g.setColour (slider.isEnabled() ? Theme::handle() : Theme::handle().withAlpha (0.4f));
     g.fillEllipse (face);
 
     // The pointer runs from the middle of the cap to just inside its edge, so it reads
@@ -352,7 +352,7 @@ void LookAndFeelBase::drawToggleButton (juce::Graphics& g, juce::ToggleButton& b
                           .withPosition (labelled ? bounds.getX() : bounds.getCentreX() - width * 0.5f,
                                          bounds.getCentreY() - height * 0.5f);
 
-    g.setColour (on ? Theme::teal() : Theme::surfaceBright());
+    g.setColour (on ? Theme::accent() : Theme::surfaceBright());
     g.fillRoundedRectangle (pill, height * 0.5f);
 
     if (shouldDrawButtonAsHighlighted)
@@ -386,10 +386,8 @@ void LookAndFeelBase::drawButtonBackground (juce::Graphics& g, juce::Button& but
 {
     const auto bounds = button.getLocalBounds().toFloat().reduced (Theme::borderWidth * 0.5f);
 
-    auto fill = backgroundColour;
-
-    if (shouldDrawButtonAsDown || shouldDrawButtonAsHighlighted)
-        fill = fill.overlaidWith (Theme::text().withAlpha (shouldDrawButtonAsDown ? 0.16f : 0.08f));
+    auto fill = Theme::underPointer (backgroundColour, shouldDrawButtonAsHighlighted,
+                                     shouldDrawButtonAsDown);
 
     if (! button.isEnabled())
         fill = fill.withMultipliedAlpha (0.5f);

@@ -54,10 +54,32 @@
 
         //======================================================================
 
+        //======================================================================
+        // The light panel. The house design is two-tone and says so, but the shared list
+        // carries only the dark half -- most plugins have no light surface at all. This
+        // window has two, so its ground, its ink and its rows are declared here.
+
+        /** The near-white ground: the control strip, and the panel beside the sheet. */
+        inline juce::Colour panel() { return colour (Role::panel); }
+
+        /** Ink on it, where the window's usual light-on-dark would be invisible. */
+        inline juce::Colour textOnPanel() { return colour (Role::textOnPanel); }
+
+        /** A row standing on it -- a palette entry, a listed part. A step off the panel
+            rather than a colour of its own, so a list reads as a stack of things you can
+            press instead of as text floating on a sheet. */
+        inline juce::Colour pill() { return colour (Role::pill); }
+
         /** The mildest of the three diagnostic severities, under error() and warning()
             in the shared palette. Named `notice` rather than `info` because `info()` is
             already the palette's own role table -- see ThemePalette.h. */
         inline juce::Colour notice() { return colour (Role::notice); }
+
+        /** The middle of the three diagnostic severities: worse than a notice, and not
+            the refusal that error() is. Its own role rather than the house's red for the
+            same reason the captions are three colours and not one -- a sheet full of
+            messages is unreadable if they all shout equally. */
+        inline juce::Colour warning() { return colour (Role::warning); }
 
         /** The button that throws a part away. A muted red rather than the palette's
             danger(): that one is for something going wrong, and deleting a part you

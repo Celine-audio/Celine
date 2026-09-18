@@ -5,6 +5,9 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include (PamplejuceVersion)
 include (CPM)
 include(PamplejuceMacOS)
+
+# Raised from the 10.14 the shared cmake module asks for. This is following the release of macOS 27 Golden Gate
+set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Support macOS down to Big Sur" FORCE)
 include(JUCEDefaults)
 
 # The internal name: the build target, the artefacts folder and the SharedCode

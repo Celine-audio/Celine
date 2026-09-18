@@ -56,6 +56,20 @@ namespace Celine
             Off for a button that sits inside something already drawn as its frame --
             Céline's undo and redo share one housing painted behind the pair. Such a
             button shows only its hover, inset so it stays within that housing. */
+        /** Which role fills the button when it is framed. Button unless told otherwise
+            -- and told otherwise where a button stands on a surface of its own, so that
+            re-slating one group of controls does not reach every button in the window.
+
+            A role rather than a colour, for the reason every override in this house is
+            one: paintButton runs again on every theme change and reads this afresh, so
+            a colour handed in from outside would be painted over the first time the
+            palette moved. */
+        void setFillRole (Theme::Role role)
+        {
+            fillRole = role;
+            repaint();
+        }
+
         void setDrawsFrame (bool shouldDraw)
         {
             drawsFrame = shouldDraw;
@@ -85,21 +99,25 @@ namespace Celine
             const auto bounds = getLocalBounds().toFloat().reduced (Theme::borderWidth * 0.5f);
             const bool usable = isEnabled();
 
-            if (active)
+            // The same lift every other button in the window answers a pointer with --
+            // Theme::underPointer, not a colour of its own. These used to swap to a
+            // themeable "hovered" colour instead, which meant the icon buttons were the
+            // one control whose hover had to be kept in step with everything else's by
+            // hand.
+            if (active || drawsFrame)
             {
-                g.setColour (activeColour.value_or (Theme::toolActive()));
-                g.fillRoundedRectangle (bounds, Theme::cornerRadius);
-            }
-            else if (drawsFrame)
-            {
-                g.setColour (down || highlighted ? Theme::surfaceBright() : Theme::button());
+                const auto base = active ? activeColour.value_or (Theme::accent())
+                                         : Theme::colour (fillRole);
+
+                g.setColour (Theme::underPointer (base, highlighted, down));
                 g.fillRoundedRectangle (bounds, Theme::cornerRadius);
             }
             else if (down || highlighted)
             {
-                // Frameless, so only the hover shows -- and it stays inside whatever is
-                // drawn behind it as its frame.
-                g.setColour (Theme::surfaceBright());
+                // Frameless, so there is no fill to lift -- the lift itself is the whole
+                // of what is drawn, and it stays inside whatever is behind it as its
+                // frame.
+                g.setColour (Theme::text().withAlpha (down ? 0.16f : 0.08f));
                 g.fillRoundedRectangle (bounds.reduced (1.0f), Theme::cornerRadius * 0.6f);
             }
 
@@ -111,27 +129,42 @@ namespace Celine
 
             auto drawn = icon->createCopy();
 
-            const auto idle = iconColour.has_value() ? *iconColour : Theme::textDim();
-            const auto lit = iconColour.has_value() ? iconColour->brighter (0.3f) : Theme::text();
+            // The mark's own colour, unless the button was given one. An icon in the
+            // toolbar is the same kind of thing as the logo beside it -- a white shape
+            // on the chrome -- and giving the two separate pickers meant setting one
+            // colour twice to keep them looking like they belonged together.
+            const auto idle = iconColour.value_or (Theme::headerText());
 
             Assets::tint (*drawn, ! usable                        ? Theme::textDisabled()
-                                  : active || highlighted || down ? lit
+                                  : active || highlighted || down ? idle.brighter (0.3f)
                                                                   : idle);
             drawn->drawWithin (g, bounds.reduced (bounds.getWidth() * iconInset),
                                juce::RectanglePlacement::centred, 1.0f);
         }
 
+        /** How much air to leave around the glyph, as a fraction of the button's
+            width. The default is measured off the design's toolbar, which fills about
+            twenty of a 33px button with glyph.
+
+            Worth setting where a button stands among things that are not buttons. The
+            glyph is scaled to fill whatever this leaves, so a shape that reaches the
+            corners of its own box -- an X does, a gear does not -- comes out heavier
+            than a letter of nominally the same size sitting beside it. */
+        void setIconInset (float fractionOfWidth)
+        {
+            iconInset = fractionOfWidth;
+            repaint();
+        }
+
     protected:
-        /** How far in from the button edge the glyph is drawn, as a fraction of
-            the width. Measured off the design, which fills about twenty of a 33px
-            button with glyph. */
-        static constexpr float iconInset = 0.18f;
+        float iconInset = 0.18f;
 
     private:
         std::unique_ptr<juce::Drawable> icon;
         std::optional<juce::Colour> activeColour;
         std::optional<juce::Colour> iconColour;
         bool active = false;
+        Theme::Role fillRole = Theme::Role::button;
         bool drawsFrame = true;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (IconButton)

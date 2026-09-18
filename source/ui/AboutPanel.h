@@ -44,8 +44,8 @@ private:
     // The graph's ground, carrying everything below the masthead.
     juce::Rectangle<int> panelBounds;
 
-    std::unique_ptr<juce::Drawable> vstMark, auMark, clapMark, lv2Mark;
-    juce::Rectangle<int> vstBounds, auBounds, clapBounds, lv2Bounds;
+    std::unique_ptr<juce::Drawable> vstMark, auMark, clapMark, lv2Mark, asioMark;
+    juce::Rectangle<int> vstBounds, auBounds, clapBounds, lv2Bounds, asioBounds;
 
     // The same pair the toolbar wears, drawn the same way: whose it is, then what it
     // is. The heading used to be the product name set as type, which said the right

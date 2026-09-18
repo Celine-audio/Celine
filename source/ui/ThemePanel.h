@@ -31,8 +31,12 @@ namespace Celine
         ThemePanel();
         ~ThemePanel() override;
 
-        /** Below this the group headings and the footer start crowding each other. */
-        enum { minimumWidth = 460, minimumHeight = 520 };
+        /** The width is the only width there is: three columns laid out to fit a long
+            label, a hex and a swatch, and nothing is gained by pulling them apart. The
+            height is free, because the rows scroll and a taller window is simply more
+            of them at once. */
+        enum { fixedWidth = 600, defaultHeight = 780,
+               minimumHeight = 560, maximumHeight = 1600 };
 
         void paint (juce::Graphics&) override;
         void resized() override;

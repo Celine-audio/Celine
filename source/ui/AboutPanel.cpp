@@ -136,6 +136,12 @@ AboutPanel::AboutPanel()
     clapMark = Celine::Assets::drawable ("format-clap.png");
     lv2Mark  = Celine::Assets::drawable ("format-lv2.svg");
 
+    // Last in the row, and the odd one out: the other four are plugin formats and this
+    // is a driver API, which only the standalone build ever speaks. Missing is a valid
+    // answer -- returnNull rather than the assert, so a plugin that does not ship the
+    // mark simply does not draw it.
+    asioMark = Celine::Assets::drawable ("asio-compatible.png", Assets::IfMissing::returnNull);
+
     // The identity, as artwork, and it leads the window: Apple requires the Audio
     // Units mark to be "clearly subordinate in both size and placement to the primary
     // company or product identity". Placement is the clearer half -- this pair is at
@@ -275,7 +281,8 @@ void AboutPanel::paint (juce::Graphics& g)
     for (const auto& mark : { std::pair { vstMark.get(), vstBounds },
                               std::pair { auMark.get(), auBounds },
                               std::pair { clapMark.get(), clapBounds },
-                              std::pair { lv2Mark.get(), lv2Bounds } })
+                              std::pair { lv2Mark.get(), lv2Bounds },
+                              std::pair { asioMark.get(), asioBounds } })
         if (mark.first != nullptr && ! mark.second.isEmpty())
             mark.first->drawWithin (g, mark.second.toFloat(), juce::RectanglePlacement::centred, 1.0f);
 }
@@ -306,7 +313,24 @@ void AboutPanel::resized()
         masthead.removeFromLeft (22);
 
         if (wordmark != nullptr)
-            place (wordmark, 27, wordmarkBounds);
+        {
+            // Sized by the letters rather than by the ink box, which is what the toolbar
+            // does and what the comment above has always claimed this did. Fitting the
+            // whole box to a fixed height only agrees across plugins when the words have
+            // the same shape, and they do not: "aura" is all x-height, where "gallery"
+            // and "designer" carry both an ascender and a descender. Every one of them
+            // came out in a 27px box and only aura had 27px letters in it.
+            //
+            // 20 rather than the 27 that box was: the house mark's capitals measure 37
+            // here, and lowercase at 27 stood nearly as tall as them, which read as two
+            // marks of equal rank rather than a name and the plugin it belongs to. At 20
+            // the ascenders come just under the capitals and the word sits under the
+            // mark, which is what it is.
+            const auto letters =
+                juce::roundToInt (20.0f / Celine::Assets::xHeightFraction (*wordmark));
+
+            place (wordmark, letters, wordmarkBounds);
+        }
         else
             wordmarkText.setBounds (masthead.removeFromLeft (220));
 
@@ -362,6 +386,12 @@ void AboutPanel::resized()
     place (auMark, auBounds);     row.removeFromLeft (gap);
     place (clapMark, clapBounds); row.removeFromLeft (gap);
     place (lv2Mark, lv2Bounds);
+
+    if (asioMark != nullptr)
+    {
+        row.removeFromLeft (gap);
+        place (asioMark, asioBounds);
+    }
 
     // Air enough that the notices stop well clear of the marks. They scroll, so the
     // last line visible is usually a part line -- with the footer close underneath,

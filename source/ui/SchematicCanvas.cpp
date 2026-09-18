@@ -787,10 +787,12 @@ namespace Celine
 
         const auto& view = owner.painter;
 
-        // Chrome, not sheet: the rulers belong to the window frame in the design,
+        // Frame, not sheet: the rulers belong to the window frame in the design,
         // the same aubergine as the toolbar and the inspector, so the sheet reads
-        // as something set into them rather than as running under them.
-        g.fillAll(Theme::chrome());
+        // as something set into them rather than as running under them. Which is
+        // why they take the toolbar's own role rather than the popup ground that
+        // happens to ship at the same value.
+        g.fillAll(Theme::headerBackground());
 
         // A definite edge, two pixels of it, which is what separates the frame
         // from the sheet where the two colours nearly meet.
@@ -829,7 +831,10 @@ namespace Celine
         g.setFont(Fonts::light(11.0f));
 
         const auto tickColour = Theme::line();
-        const auto labelColour = Theme::textDim();
+        // The numbers up the ruler are axis captions, which is what graphText() is for
+        // in every other plugin in the house. They were textDim(), the idle ink of a
+        // control -- near enough to read, and a role that moves for a different reason.
+        const auto labelColour = Theme::graphText();
 
         const int from = isHorizontal ? first.x : first.y;
         const int to = isHorizontal ? last.x : last.y;

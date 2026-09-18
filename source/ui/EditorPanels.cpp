@@ -69,7 +69,7 @@ namespace Celine
             // A pill per row, on the light panel. The mockup gives every row a
             // filled pill rather than the hover-only tint this had, so the list
             // reads as a stack of buttons at rest and not only under the mouse.
-            g.setColour(active            ? Theme::teal()
+            g.setColour(active            ? Theme::accent()
                         : down            ? Theme::pill().darker(0.12f)
                         : highlighted     ? Theme::pill().darker(0.05f)
                                           : Theme::pill());

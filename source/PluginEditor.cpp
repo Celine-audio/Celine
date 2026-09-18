@@ -1139,7 +1139,7 @@ namespace
             // A violet rule along the bottom, where JUCE draws a darkgoldenrod
             // one -- the bar is a piece of chrome above the toolbar, so it ends
             // the way the toolbar's own edges do.
-            g.setColour (Theme::violet());
+            g.setColour (Theme::accent());
             g.fillRect (0, getHeight() - 2, getWidth(), 2);
 
             g.setColour (Theme::text());
@@ -1264,7 +1264,7 @@ void PluginEditor::offerPresetFolderOnFirstRun()
             message.setJustificationType (juce::Justification::topLeft);
             addAndMakeVisible (message);
 
-            choose.setColour (juce::TextButton::buttonColourId, Celine::Theme::violet());
+            choose.setColour (juce::TextButton::buttonColourId, Celine::Theme::accent());
             choose.setColour (juce::TextButton::textColourOffId, Celine::Theme::text());
             addAndMakeVisible (choose);
             addAndMakeVisible (later);
@@ -1474,12 +1474,15 @@ void PluginEditor::applyColours()
     // colour it was first given.
     logo = Celine::Assets::drawable ("logo.svg");
 
+    // headerText(), which is every white mark in the chrome: this logo and the glyph in
+    // each toolbar button. They are meant to look like one another, so they are one
+    // colour rather than two that have to be set to the same value.
     if (logo != nullptr)
-        Celine::Assets::tint (*logo, Celine::Theme::text());
+        Celine::Assets::tint (*logo, Celine::Theme::headerText());
 
     // The one dropdown on a light panel, so it is coloured here rather than in the look
     // and feel the inspector's boxes share.
-    channelModeBox.setColour (juce::ComboBox::backgroundColourId, Celine::Theme::teal());
+    channelModeBox.setColour (juce::ComboBox::backgroundColourId, Celine::Theme::accent());
     channelModeBox.setColour (juce::ComboBox::textColourId, Celine::Theme::textOnPanel());
     channelModeBox.setColour (juce::ComboBox::arrowColourId, Celine::Theme::textOnPanel());
 
@@ -1523,7 +1526,13 @@ void PluginEditor::showAboutDialog()
 //==============================================================================
 void PluginEditor::paint (juce::Graphics& g)
 {
-    g.fillAll (Celine::Theme::chrome());
+    // The frame, which in this window is one colour from the toolbar down the rulers to
+    // the inspector. headerBackground() rather than chrome(): the house keeps the band a
+    // toolbar sits in apart from the ground a popup is built on, and the About sheet and
+    // the theme editor are the popups. The two ship at the same aubergine, so this is a
+    // change of name rather than of colour -- but a theme can now move the frame without
+    // taking every dialog with it.
+    g.fillAll (Celine::Theme::headerBackground());
 
     // drawWithin centres the artwork's *viewBox*, and the wordmark's ink is not
     // centred in its own -- there is far more empty space above the glyphs than

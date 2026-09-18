@@ -54,7 +54,7 @@ ThemePanel::Row::Row (Theme::Role roleToEdit, ThemePanel& panel)
 void ThemePanel::Row::applyColours()
 {
     name.setColour (juce::Label::textColourId, Theme::textDim());
-    hex.setColour (juce::TextEditor::backgroundColourId, Theme::background());
+    hex.setColour (juce::TextEditor::backgroundColourId, Theme::field());
     hex.setColour (juce::TextEditor::textColourId, Theme::textDim());
     hex.setColour (juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
     hex.setColour (juce::TextEditor::focusedOutlineColourId, juce::Colours::transparentBlack);
@@ -194,7 +194,7 @@ ThemePanel::ThemePanel()
 
     // Last, and it matters: setSize fires resized(), which lays out rows that have to
     // exist by then. See the house conventions.
-    setSize (520, 640);
+    setSize (ThemePanel::fixedWidth, ThemePanel::defaultHeight);
 }
 
 ThemePanel::~ThemePanel()
@@ -544,8 +544,13 @@ namespace
             setUsingNativeTitleBar (true);
             setResizable (true, false);
             setContentOwned (content, true);
-            setResizeLimits (ThemePanel::minimumWidth, ThemePanel::minimumHeight,
-                             ThemePanel::minimumWidth * 2, ThemePanel::minimumHeight * 2);
+
+            // Taller is useful -- the rows scroll, so height is how many you see at
+            // once. Width is not: the three columns are laid out to fit, and pulling
+            // them apart only puts distance between a label and its swatch. Equal
+            // limits is how a JUCE window is told an axis does not move.
+            setResizeLimits (ThemePanel::fixedWidth, ThemePanel::minimumHeight,
+                             ThemePanel::fixedWidth, ThemePanel::maximumHeight);
 
             if (around != nullptr)
                 centreAroundComponent (around, getWidth(), getHeight());

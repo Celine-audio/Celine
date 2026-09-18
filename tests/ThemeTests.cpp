@@ -48,6 +48,32 @@ TEST_CASE ("Every role has its own key, label and group", "[theme]")
     CHECK (keys.size() == Theme::numRoles);
 }
 
+TEST_CASE ("A group is one run, so each heading is drawn once", "[theme]")
+{
+    // The editor walks the role list in order and starts a heading wherever the group
+    // changes, which makes contiguity a requirement rather than a tidiness: a group that
+    // stops and starts again comes out as two headings with the same name and the rows
+    // split between them. That is not hypothetical -- it is what the window did when a
+    // plugin filed one of its own colours under "States" and the shared States group had
+    // already been and gone.
+    //
+    // Order the list however reads best. Just keep a group together.
+    std::set<juce::String> seen;
+    juce::String run;
+
+    for (size_t i = 0; i < Theme::numRoles; ++i)
+    {
+        const juce::String group { Theme::info()[i].group };
+
+        if (group == run)
+            continue;
+
+        INFO ("group \"" << group << "\" starts again at role " << Theme::info()[i].key);
+        CHECK (seen.insert (group).second);
+        run = group;
+    }
+}
+
 TEST_CASE ("The shipped colours are what the accessors answer", "[theme]")
 {
     ShippedPalette shipped;

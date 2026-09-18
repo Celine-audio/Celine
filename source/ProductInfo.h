@@ -14,7 +14,7 @@ namespace ProductInfo
 {
     /** One line saying what the plugin is, shown under the mark in the About window.
         Sentence case, no full stop -- it is a label, not a sentence. */
-    inline constexpr auto tagline = "Circuit designer.";
+    inline constexpr auto tagline = "Circuit simulator";
 
     /** Where the source lives. The AGPL requires that anyone given a binary can get
         the corresponding source, and this is the address that serves that right, so

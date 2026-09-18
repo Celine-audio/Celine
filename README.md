@@ -64,7 +64,7 @@ Middle-click to clone.
 ## Formats
 
 Built as **VST3®**, **AU** (macOS), **LV2**, **CLAP** and **Standalone**, on Windows,
-macOS, and Linux, plus **AAX** on Windows and macOS.
+macOS, and Linux, plus **AAX** on Windows and macOS. Minimum macOS requirements is 11, Big Sur.
 
 The AAX build is still waiting for approval from AVID, so it will not work in consumer versions as of now.
 Nothing is code-signed, so Gatekeeper and SmartScreen will warn on first run.
