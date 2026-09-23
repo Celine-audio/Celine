@@ -10,3 +10,7 @@
 	path = modules/clap-juce-extensions
 	url = https://github.com/free-audio/clap-juce-extensions.git
 	branch = main
+[submodule "modules/CelineUI"]
+	path = modules/CelineUI
+	url = https://github.com/Celine-audio/CelineUI.git
+	branch = main

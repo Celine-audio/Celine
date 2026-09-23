@@ -1,8 +1,8 @@
 #include <Schematic/Element.h>
 #include <ui/SchematicSymbols.h>
-#include <ui/EmbeddedAssets.h>
+#include <CelineUI/EmbeddedAssets.h>
 #include <ui/SymbolArtwork.h>
-#include <ui/Theme.h>
+#include <CelineUI/Theme.h>
 #include <catch2/catch_test_macros.hpp>
 
 using namespace SchematicModel;

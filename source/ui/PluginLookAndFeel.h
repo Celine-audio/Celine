@@ -1,6 +1,6 @@
 #pragma once
 
-#include "LookAndFeelBase.h"
+#include <CelineUI/LookAndFeelBase.h>
 
 /**
     Céline's look: the house one, plus the two controls this plugin draws its own way.

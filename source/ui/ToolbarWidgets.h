@@ -1,9 +1,9 @@
 #pragma once
 
-#include "EmbeddedAssets.h"
-#include "Fonts.h"
-#include "IconButton.h"
-#include "Theme.h"
+#include <CelineUI/EmbeddedAssets.h>
+#include <CelineUI/Fonts.h>
+#include <CelineUI/IconButton.h>
+#include <CelineUI/Theme.h>
 
 #include <juce_gui_basics/juce_gui_basics.h>
 

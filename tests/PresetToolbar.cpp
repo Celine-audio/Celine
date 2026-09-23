@@ -3,7 +3,7 @@
 #include <PluginEditor.h>
 #include <PresetLibrary.h>
 #include <Schematic/ExampleSchematics.h>
-#include <ui/EmbeddedAssets.h>
+#include <CelineUI/EmbeddedAssets.h>
 #include <ui/ToolbarWidgets.h>
 #include <catch2/catch_test_macros.hpp>
 

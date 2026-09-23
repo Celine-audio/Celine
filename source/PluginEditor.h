@@ -7,7 +7,7 @@
 #include "ui/ControlStrip.h"
 #include "ui/EditorPanels.h"
 #include "ui/SchematicCanvas.h"
-#include "ui/Theme.h"
+#include <CelineUI/Theme.h>
 #include "ui/ToolbarWidgets.h"
 
 // Declared rather than included: the definition lives in a header that only the
@@ -181,22 +181,14 @@ private:
 
         JUCE's standalone window draws its own title bar, which on macOS means
         no traffic lights and the wrong behaviour under Mission Control, and on
-        Windows a frame that is not the system one. */
+        Windows a frame that is not the system one.
+
+        The "audio input is muted" bar above the editor used to be re-skinned
+        here as well. It is not any more: Celine builds against its own fork of
+        JUCE, where that bar paints from the look and feel in force
+        (juce_StandaloneFilterWindow.h), so it arrives in the theme -- and every
+        plugin in the house gets that rather than each covering it by hand. */
     void adoptNativeTitleBar();
-
-    /** Standalone only: re-skins the "audio input is muted" bar JUCE puts above
-        the editor.
-
-        The bar's paint() hardcodes its colour and the class is private, so there
-        is nothing to set and no LookAndFeel hook to answer. Rather than fork
-        JUCE, an opaque child is laid over it and JUCE's own Settings button is
-        brought to the front and recoloured, so the one thing on the bar that
-        does something still works. */
-    void styleStandaloneNotification();
-
-    /** The skin, kept alive as long as the editor is. Null in a plugin, where
-        there is no such bar. */
-    std::unique_ptr<juce::Component> notificationSkin;
 
     /** Asks for a preset folder, once, the first time the plugin is opened on
         this machine. Does nothing on every run after that, whatever the answer

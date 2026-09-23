@@ -5,7 +5,7 @@
 #include <ui/ControlStrip.h>
 #include <ui/EditorPanels.h>
 #include <ui/SchematicCanvas.h>
-#include <ui/Theme.h>
+#include <CelineUI/Theme.h>
 #include <juce_dsp/juce_dsp.h>
 #include <set>
 #include <thread>

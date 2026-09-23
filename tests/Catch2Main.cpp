@@ -2,7 +2,7 @@
 
 #include "PresetLibrary.h"
 #include "juce_gui_basics/juce_gui_basics.h"
-#include <ui/ThemePalette.h>
+#include <CelineUI/ThemePalette.h>
 #include <catch2/catch_session.hpp>
 
 int main (int argc, char* argv[])

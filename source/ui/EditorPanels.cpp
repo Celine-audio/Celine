@@ -3,9 +3,9 @@
 #include <numeric>
 
 #include "PluginLookAndFeel.h"
-#include "EmbeddedAssets.h"
-#include "Fonts.h"
-#include "Theme.h"
+#include <CelineUI/EmbeddedAssets.h>
+#include <CelineUI/Fonts.h>
+#include <CelineUI/Theme.h>
 
 namespace Celine
 {

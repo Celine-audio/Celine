@@ -115,6 +115,26 @@ include(SharedCodeDefaults)
 file(GLOB_RECURSE SourceFiles CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/source/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/source/*.h")
 target_sources(SharedCode INTERFACE ${SourceFiles})
 
+# The house interface lives in its own repository, github.com/Celine-audio/CelineUI,
+# shared by every plugin. It includes this plugin's ProductInfo.h, theme fragments and
+# ui/PluginLookAndFeel.h by name, so source/ goes on the path of everything SharedCode
+# compiles.
+#
+# The submodule is what CI and a release build against. To work on the kit, point
+# CELINE_UI_DIR at a checkout beside the plugins instead: one working copy built by
+# every plugin, so a change is made once and tried everywhere.
+target_include_directories(SharedCode INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/source")
+
+set(CELINE_UI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/modules/CelineUI" CACHE PATH "The CelineUI checkout to build against")
+
+if (NOT EXISTS "${CELINE_UI_DIR}/CelineUI.cmake")
+    message(FATAL_ERROR "CelineUI not found at ${CELINE_UI_DIR}. "
+                        "Run: git submodule update --init --recursive")
+endif ()
+
+include("${CELINE_UI_DIR}/CelineUI.cmake")
+target_link_libraries(SharedCode INTERFACE CelineUI)
+
 # Embeds everything in assets/ into the binary, but only if there is anything
 # there: juce_add_binary_data refuses an empty source list, and nothing is
 # embedded at the moment. Drop a file in assets/ and it comes back on its own.
@@ -176,6 +196,11 @@ include(PamplejuceIPP)
 
 # Everything related to the tests target
 include(Tests)
+
+# The kit's own tests run in this suite, against this plugin's editor. They include
+# helpers/test_helpers.h from here, so tests/ joins their path.
+target_sources(Tests PRIVATE ${CELINE_UI_TESTS})
+target_include_directories(Tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
 
 # A separate target for Benchmarks (keeps the Tests target fast)
 include(Benchmarks)

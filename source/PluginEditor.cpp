@@ -10,9 +10,9 @@
 #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
 #include "Schematic/ExampleSchematics.h"
 
-#include "ui/EmbeddedAssets.h"
-#include "ui/AboutPanel.h"
-#include "ui/ThemePanel.h"
+#include <CelineUI/EmbeddedAssets.h>
+#include <CelineUI/AboutPanel.h>
+#include <CelineUI/ThemePanel.h>
 
 namespace
 {
@@ -1095,54 +1095,6 @@ void PluginEditor::parentHierarchyChanged()
     adoptNativeTitleBar();
 }
 
-namespace
-{
-    /** The themed cover for JUCE's muted-input bar: its yellow is painted by a
-        private class whose paint() cannot be reached, so covering it is the only
-        way to change it without forking JUCE. */
-    class NotificationSkin : public juce::Component
-    {
-       public:
-        NotificationSkin()
-        {
-            setOpaque (true);
-            setInterceptsMouseClicks (false, false);
-        }
-
-        /** Stay the size of the bar being covered.
-
-            The cover is a child JUCE knows nothing about, so its host never
-            lays it out: sized once at construction it kept the width the window
-            had then, and widening painted JUCE's yellow past that old edge.
-            parentSizeChanged() is the hook JUCE already calls for this, so
-            there is nothing to register or unregister. */
-        void parentSizeChanged() override
-        {
-            if (auto* parent = getParentComponent())
-                setBounds (parent->getLocalBounds());
-        }
-
-        void paint (juce::Graphics& g) override
-        {
-            using namespace Celine;
-
-            g.fillAll (Theme::chrome());
-
-            // A violet rule along the bottom, where JUCE draws a darkgoldenrod
-            // one -- the bar is a piece of chrome above the toolbar, so it ends
-            // the way the toolbar's own edges do.
-            g.setColour (Theme::accent());
-            g.fillRect (0, getHeight() - 2, getWidth(), 2);
-
-            g.setColour (Theme::text());
-            g.setFont (Fonts::light (14.0f));
-            g.drawText ("Audio input is muted to avoid a feedback loop.",
-                        getLocalBounds().reduced (12, 0),
-                        juce::Justification::centredLeft, true);
-        }
-    };
-} // namespace
-
 void PluginEditor::adoptNativeTitleBar()
 {
     if (nativeTitleBarChecked)
@@ -1167,8 +1119,6 @@ void PluginEditor::adoptNativeTitleBar()
 
     nativeTitleBarChecked = true;
 
-    styleStandaloneNotification();
-
     // Asked rather than assumed: the window outlives the editor, so this has to
     // cope with arriving at one that is already native.
     if (! window->isUsingNativeTitleBar())
@@ -1176,50 +1126,6 @@ void PluginEditor::adoptNativeTitleBar()
 
     // Going native collapses JUCE's Options button, so the Settings menu asks
     // StandalonePluginHolder for the audio device dialog directly.
-}
-
-void PluginEditor::styleStandaloneNotification()
-{
-    if (notificationSkin != nullptr)
-        return;
-
-    // The bar is a *sibling*: JUCE's content component holds the editor and the
-    // notification area side by side.
-    auto* content = getParentComponent();
-
-    if (content == nullptr)
-        return;
-
-    for (auto* sibling : content->getChildren())
-    {
-        // By elimination, the type being private: JUCE's content component
-        // holds exactly two children, this editor and the notification area.
-        // Not by height as well -- the bar starts zero-sized, and the cover
-        // grows with it in parentSizeChanged().
-        if (sibling == this)
-            continue;
-
-        auto skin = std::make_unique<NotificationSkin>();
-        skin->setBounds (sibling->getLocalBounds());
-        sibling->addAndMakeVisible (*skin);
-
-        // Brought in front of the cover and recoloured, which works where the
-        // bar itself does not: a TextButton's colours are settable.
-        for (auto* child : sibling->getChildren())
-        {
-            if (auto* button = dynamic_cast<juce::TextButton*> (child))
-            {
-                button->setColour (juce::TextButton::buttonColourId, Celine::Theme::surface());
-                button->setColour (juce::TextButton::textColourOffId, Celine::Theme::text());
-                button->setColour (juce::TextButton::textColourOnId, Celine::Theme::text());
-                button->setLookAndFeel (&lookAndFeel);
-                button->toFront (false);
-            }
-        }
-
-        notificationSkin = std::move (skin);
-        return;
-    }
 }
 
 void PluginEditor::offerPresetFolderOnFirstRun()
@@ -1423,6 +1329,7 @@ void PluginEditor::showSettingsMenu()
 
         juce::PopupMenu::Item audio ("Audio / MIDI settings" + ellipsis);
         audio.setAction ([holder] { holder->showAudioSettingsDialog(); });
+
         menu.addItem (audio);
     }
 
