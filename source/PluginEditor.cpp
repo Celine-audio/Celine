@@ -1308,7 +1308,7 @@ void PluginEditor::showSettingsMenu()
     const Toggle performanceToggles[] = {
         { "Model valve interelectrode capacitance",
           &SchematicModel::BuildOptions::interelectrodeCapacitance },
-        { "Model transistor junction capacitance",
+        { "Model semiconductor junction capacitance",
           &SchematicModel::BuildOptions::transistorJunctionCapacitance },
         { "Model transistor Early effect",
           &SchematicModel::BuildOptions::transistorEarlyEffect },

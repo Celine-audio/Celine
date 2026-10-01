@@ -18,14 +18,15 @@
 
     Nonlinear -- re-linearised on every Newton iteration, each described purely
     by its ports (see Ports.h):
-        Diode, Bjt, Jfet        semiconductors (Junction.h); a Diode with a
-                                breakdown voltage set is a Zener
+        Diode, Bjt, Jfet,       semiconductors (Junction.h); a Diode with a
+        Mosfet                  breakdown voltage set is a Zener
         VacuumDiode, Triode,    valves, 3/2-power space charge (SpaceCharge.h)
         Pentode
 
     An op-amp is not in that list. It is assembled out of the parts above --
     resistors, a capacitor, two controlled sources and two diodes -- rather than
-    being a device of its own. See OpAmp.h for why that matters.
+    being a device of its own. See OpAmp.h for why that matters. The LM386
+    power amplifier is built the same way; see PowerAmp.h.
 
     Neither -- states a constraint instead of describing a current, and so needs
     extra rows in the system rather than a conductance stamp:
@@ -45,9 +46,11 @@
 #include "Inductor.h"
 #include "Jfet.h"
 #include "Junction.h"
+#include "Mosfet.h"
 #include "OpAmp.h"
 #include "Pentode.h"
 #include "Potentiometer.h"
+#include "PowerAmp.h"
 #include "Resistor.h"
 #include "SpaceCharge.h"
 #include "Switch.h"

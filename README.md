@@ -37,7 +37,7 @@ Giving potentiometers the same name will link them. They keep their own resistan
 
 **Switches** — xPST and xPDT. The same naming rule applies, multiple switches with the same name will become linked together and act as one switch.
 
-**Semiconductors** — diodes, transistors (BJTs and JFETs) and op-amps.
+**Semiconductors** — diodes, transistors (BJTs, JFETs and MOSFETs), op-amps, and the LM386 power amplifier.
 
 **Valves** — triodes, pentodes and rectifiers, modelled after **Norman Koren**'s work on [triode SPICE emulation](https://www.normankoren.com/Audio/index.html), plus three triodes using the **Dempwolf–Zölzer** equations from "*[A Physically-Motivated Triode Model for Circuit Simulations](https://dafx.de/paper-archive/2011/Papers/76_e.pdf)*".
 Valves also model **interelectrode capacitance** the "Miller effect". It is a real internal action that changes the effective capacitance between grid and anode and so changes the frequency response under gain. It is on by default and can be switched off for CPU savings.

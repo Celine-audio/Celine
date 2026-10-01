@@ -847,7 +847,7 @@ TEST_CASE ("Grouping a model list never renumbers it", "[plugin][schematic]")
 
     const Expected heads[] = {
         { ElementType::Diode,       0, "1N4148" },
-        { ElementType::Diode,       1, "Germanium" },
+        { ElementType::Diode,       1, "1N34A" },
         { ElementType::Transistor,  0, "2N3904" },
         { ElementType::Transistor,  1, "2N3906" },
         { ElementType::Jfet,        0, "J201" },
@@ -1550,7 +1550,7 @@ TEST_CASE ("A real transformer has a bandwidth and blocks DC", "[schematic]")
     }
 }
 
-TEST_CASE ("Every model record has a name and a description", "[schematic]")
+TEST_CASE ("Every model record has a name", "[schematic]")
 {
     using namespace SchematicModel;
 
@@ -1577,9 +1577,10 @@ TEST_CASE ("Every model record has a name and a description", "[schematic]")
 
             INFO ("model " << model << " is \"" << name << "\" / \"" << description << "\"");
 
-            // A record with no '|' puts the whole thing in the name, which is
-            // the signature of an accidental split.
-            CHECK (description.isNotEmpty());
+            // The tail of an accidental split has no id and no name -- the
+            // whole fragment lands in the id -- so an empty name is its
+            // signature. A description may be left out on purpose: a part
+            // with one model and nothing to say shows no line for it.
 
             // Names go under the part on the drawing, so a runaway one is also
             // a sentence that got parsed as a name.

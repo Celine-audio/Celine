@@ -218,21 +218,48 @@ Circuit::ComponentId Circuit::addDiode(const juce::String& anode,
                                        const DiodeModel& model,
                                        int seriesCount)
 {
+    const int stack = std::max(1, seriesCount);
+
+    // A model with a series resistance puts it on an internal node, as SPICE
+    // does: the junction solves for the current through it, so the two cannot
+    // be folded into one exponential. Named after the diode's own index, which
+    // nothing else on the netlist can be -- sheet nets are "gnd", "in", "out"
+    // and "n<number>". A stack's resistances add, like its junction voltages.
+    juce::String junctionAnode = anode;
+
+    if (model.seriesResistance > 0.0)
+    {
+        junctionAnode = "#d" + juce::String(static_cast<int>(diodes.size())) + ".rs";
+        addResistor(anode, junctionAnode, model.seriesResistance * stack);
+    }
+
     Diode d{};
-    d.anode = getOrCreateNode(anode);
+    d.anode = getOrCreateNode(junctionAnode);
     d.cathode = getOrCreateNode(cathode);
-    d.model = model;
-    d.seriesCount = std::max(1, seriesCount);
-    d.vCrit = CircuitComponents::criticalVoltage(d.model.saturationCurrent, d.scaleVoltage());
-    // From the stack, like vCrit above and for the same reason: this is what the
-    // step limiter damps against, and a knee computed for one junction while the
-    // exponential runs on n leaves the limiter acting on every pass.
-    d.vCritBreakdown = d.model.breakdownVoltage > 0.0
-                         ? CircuitComponents::criticalVoltage(d.model.breakdownCurrent,
-                                                              d.breakdownScaleVoltage())
-                         : 0.0;
     diodes.push_back(d);
-    return static_cast<ComponentId>(diodes.size() - 1);
+
+    const auto id = static_cast<ComponentId>(diodes.size() - 1);
+    setDiodeModel(id, model, stack);
+
+    // The guard ring: a plain junction straight across the terminals, stacked
+    // the same way. Added after the main junction, so the id returned is the
+    // one setDiodeModel() and the tests mean.
+    if (model.guardRingSaturationCurrent > 0.0)
+    {
+        DiodeModel ring;
+        ring.saturationCurrent = model.guardRingSaturationCurrent;
+        ring.emissionCoefficient = model.guardRingEmission;
+        ring.thermalVoltage = model.thermalVoltage;
+        addDiode(anode, cathode, ring, stack);
+    }
+
+    // Capacitors in series divide: a stack of n has 1/n of one junction's.
+    // Topology, like a transistor's junction capacitance -- setDiodeModel()
+    // does not re-wire it, nor the resistance or the ring.
+    if (model.junctionCapacitance > 0.0)
+        addCapacitor(anode, cathode, model.junctionCapacitance / stack);
+
+    return id;
 }
 
 Circuit::ComponentId Circuit::addTransistor(const juce::String& base,
@@ -240,30 +267,46 @@ Circuit::ComponentId Circuit::addTransistor(const juce::String& base,
                                             const juce::String& emitter,
                                             const BjtModel& model)
 {
-    Bjt t{};
-    t.base = getOrCreateNode(base);
-    t.collector = getOrCreateNode(collector);
-    t.emitter = getOrCreateNode(emitter);
-    transistors.push_back(t);
+    // A Darlington is two of these: the first one's emitter is the second
+    // one's base, on an internal node named after the first one's index (see
+    // addDiode() for why that cannot collide). Both halves carry the model,
+    // flag and all, and sit next to each other in the list, which is what lets
+    // setTransistorModel() move the pair together from the first one's id.
+    const auto id = static_cast<ComponentId>(transistors.size());
+    const juce::String inner = model.darlington ? "#q" + juce::String(id) + ".e" : emitter;
 
-    const auto id = static_cast<ComponentId>(transistors.size() - 1);
+    auto addHalf = [this, &model, &collector](const juce::String& b, const juce::String& e)
+    {
+        Bjt t{};
+        t.base = getOrCreateNode(b);
+        t.collector = getOrCreateNode(collector);
+        t.emitter = getOrCreateNode(e);
+        t.model = model; // the Darlington flag has to be in place before setTransistorModel() reads it
+        transistors.push_back(t);
+
+        // The junction capacitances wire themselves, exactly as a valve's
+        // interelectrode capacitance does: ordinary capacitors between
+        // terminals the transistor already has, so the Miller multiplication of
+        // the base-collector one comes out of the nodal solve rather than any
+        // formula. Zero means "don't model it", which is how BuildOptions turns
+        // them off.
+        //
+        // Same bookkeeping caveat as addTriode(): these add capacitors, so ids
+        // handed out after this call shift. Hold what addCapacitor() returns
+        // rather than counting.
+        if (model.capBaseEmitter > 0.0)
+            addCapacitor(b, e, model.capBaseEmitter);
+
+        if (model.capBaseCollector > 0.0)
+            addCapacitor(b, collector, model.capBaseCollector);
+    };
+
+    addHalf(base, inner);
+
+    if (model.darlington)
+        addHalf(inner, emitter);
+
     setTransistorModel(id, model);
-
-    // The junction capacitances wire themselves, exactly as a valve's
-    // interelectrode capacitance does: ordinary capacitors between terminals
-    // the transistor already has, so the Miller multiplication of the
-    // base-collector one comes out of the nodal solve rather than any formula.
-    // Zero means "don't model it", which is how BuildOptions turns them off.
-    //
-    // Same bookkeeping caveat as addTriode(): these add capacitors, so ids
-    // handed out after this call shift. Hold what addCapacitor() returns
-    // rather than counting.
-    if (model.capBaseEmitter > 0.0)
-        addCapacitor(base, emitter, model.capBaseEmitter);
-
-    if (model.capBaseCollector > 0.0)
-        addCapacitor(base, collector, model.capBaseCollector);
-
     return id;
 }
 
@@ -282,6 +325,54 @@ Circuit::ComponentId Circuit::addJfet(const juce::String& drain,
     return static_cast<ComponentId>(jfets.size() - 1);
 }
 
+Circuit::ComponentId Circuit::addMosfet(const juce::String& drain,
+                                        const juce::String& gate,
+                                        const juce::String& source,
+                                        const MosfetModel& model)
+{
+    Mosfet m{};
+    m.drain = getOrCreateNode(drain);
+    m.gate = getOrCreateNode(gate);
+    m.source = getOrCreateNode(source);
+    m.model = model;
+    m.vCritBody = CircuitComponents::criticalVoltage(model.bodyDiodeSaturationCurrent,
+                                                     model.bodyDiodeScaleVoltage());
+    mosfets.push_back(m);
+
+    // The gate capacitances, wired as a transistor's junction capacitances
+    // are -- see addTransistor(), and its caveat about ids.
+    if (model.capGateSource > 0.0)
+        addCapacitor(gate, source, model.capGateSource);
+
+    if (model.capGateDrain > 0.0)
+        addCapacitor(gate, drain, model.capGateDrain);
+
+    return static_cast<ComponentId>(mosfets.size() - 1);
+}
+
+juce::String Circuit::sharedRail(double volts)
+{
+    // Rails are fixed voltages against ground, and on a real board every op-amp
+    // sharing a supply shares the same wire -- so share the node here too,
+    // keyed on the voltage itself, and create the source only for whichever
+    // part asks first.
+    //
+    // This is not just tidiness. Each rail costs an unknown node *and* a
+    // constraint row, so a second op-amp on the same supply was adding six
+    // dimensions to the system to describe voltages the first one had already
+    // pinned. Two ideal sources at the same potential also make the sharing
+    // exact rather than approximate: there is no impedance between them to lose.
+    const juce::String node = "opamp_rail_" + juce::String(volts, 6);
+    const auto nodesBefore = nodeIndices.size();
+
+    getOrCreateNode(node);
+
+    if (nodeIndices.size() != nodesBefore)
+        addVoltageSource(node, "gnd", volts);
+
+    return node;
+}
+
 Circuit::OpAmp Circuit::addOpAmp(const juce::String& name,
                                  const juce::String& inPlus,
                                  const juce::String& inMinus,
@@ -292,29 +383,7 @@ Circuit::OpAmp Circuit::addOpAmp(const juce::String& name,
     // named after it.
     const juce::String gainNode = name + "_gain";
 
-    // The rails do not. They are fixed voltages against ground, and on a real
-    // board every op-amp sharing a supply shares the same wire -- so share the
-    // node here too, keyed on the voltage itself, and create the source only for
-    // whichever op-amp asks first.
-    //
-    // This is not just tidiness. Each rail costs an unknown node *and* a
-    // constraint row, so a second op-amp on the same supply was adding six
-    // dimensions to the system to describe voltages the first one had already
-    // pinned. Two ideal sources at the same potential also make the sharing
-    // exact rather than approximate: there is no impedance between them to lose.
-    auto sharedRail = [this](double volts)
-    {
-        const juce::String node = "opamp_rail_" + juce::String(volts, 6);
-        const auto nodesBefore = nodeIndices.size();
-
-        getOrCreateNode(node);
-
-        if (nodeIndices.size() != nodesBefore)
-            addVoltageSource(node, "gnd", volts);
-
-        return node;
-    };
-
+    // The rails do not -- see sharedRail().
     OpAmp amp;
 
     // Differential input resistance -- the only thing loading the input pins.
@@ -356,6 +425,84 @@ Circuit::OpAmp Circuit::addOpAmp(const juce::String& name,
     // the gain node. Drawing from ground rather than from the gain node is what
     // makes it a buffer -- the load can't pull the gain stage about.
     amp.outputStage = addVccs("gnd", output, gainNode, output, 1.0 / model.outputResistance);
+
+    return amp;
+}
+
+Circuit::PowerAmp Circuit::addPowerAmp(const juce::String& name,
+                                       const juce::String& inPlus,
+                                       const juce::String& inMinus,
+                                       const juce::String& output,
+                                       const juce::String& gainA,
+                                       const juce::String& gainB,
+                                       const PowerAmpModel& model)
+{
+    // The datasheet's resistor network, literally: see PowerAmp.h. EA is the
+    // emitter on the inverting side; the other emitter *is* pin 1.
+    const juce::String supply = sharedRail(model.supply);
+    const juce::String mid = sharedRail(model.midpoint());
+    const juce::String bypass = name + "_bypass";
+    const juce::String emitterA = name + "_ea";
+
+    addResistor(inPlus, "gnd", model.inputResistance);
+    addResistor(inMinus, "gnd", model.inputResistance);
+
+    addResistor(supply, bypass, model.biasResistance);
+    addResistor(bypass, emitterA, model.biasResistance);
+    addResistor(emitterA, gainB, model.emitterResistance);
+    addResistor(gainB, gainA, model.gainResistance);
+    addResistor(gainA, output, model.feedbackResistance);
+
+    // Each pair emitter is held emitterOffset above its input by an ideal
+    // follower -- a nullor, so the input pin itself is loaded by nothing but
+    // its 50k -- through the emitter's own resistance. The current in that
+    // resistance is the pair transistor's current, which is what the mirror
+    // compares. The offset is a source into the follower's input, which draws
+    // no current, so it costs a row and nothing else -- less the emitter
+    // resistance's own drop at the quiescent current, so that emitterOffset is
+    // where the emitter actually sits. (That resistance is a small-signal
+    // figure; a real one drops nothing like 2.75 Vt of DC.)
+    const double re = model.effectiveEmitterResistance();
+
+    auto pairHalf = [&](const juce::String& input, const juce::String& emitter, const juce::String& tag)
+    {
+        const juce::String reference = name + "_ref" + tag;
+        const juce::String follower = name + "_x" + tag;
+
+        addVoltageSource(reference, input, model.emitterOffset - re * model.quiescentCurrent());
+        addIdealOpAmp(reference, follower, follower);
+        addResistor(emitter, follower, re);
+        return follower;
+    };
+
+    const juce::String followerA = pairHalf(inMinus, emitterA, "a");
+    const juce::String followerB = pairHalf(inPlus, gainA, "b");
+
+    // The mirror and the gain stage: current into the gain node in proportion
+    // to the inverting-side current less the non-inverting side's. More signal
+    // on in+ lifts its emitter, starves that side, and so lifts the output.
+    const juce::String gainNode = name + "_gain";
+    const double gm = model.inputTransconductance();
+
+    addVccs("gnd", gainNode, emitterA, followerA, gm);
+    addVccs(gainNode, "gnd", gainA, followerB, gm);
+
+    PowerAmp amp;
+
+    addResistor(gainNode, mid, model.gainNodeResistance);
+    amp.poleCapacitor = addCapacitor(gainNode, mid, model.poleCapacitance());
+
+    // Clamps short of each rail, a diode drop further in -- as the op-amp's.
+    constexpr double clampDiodeDrop = 0.7;
+    const juce::String highClamp = sharedRail(model.supply - model.headroomHigh - clampDiodeDrop);
+    const juce::String lowClamp = sharedRail(model.headroomLow + clampDiodeDrop);
+
+    amp.positiveClamp = addDiode(gainNode, highClamp, DiodeModel::silicon());
+    amp.negativeClamp = addDiode(lowClamp, gainNode, DiodeModel::silicon());
+
+    // The output stage: a buffer with the gain node behind it, which is what
+    // a clipping output loses into a speaker.
+    addVccs("gnd", output, gainNode, output, 1.0 / model.outputResistance);
 
     return amp;
 }
@@ -504,14 +651,29 @@ void Circuit::setDiodeModel(ComponentId id, const DiodeModel& model, int seriesC
                          ? CircuitComponents::criticalVoltage(d.model.breakdownCurrent,
                                                               d.breakdownScaleVoltage())
                          : 0.0;
+    d.transitScale = d.model.transitTime / dt;
 }
 
 void Circuit::setTransistorModel(ComponentId id, const BjtModel& model)
 {
-    auto& t = transistors[static_cast<size_t>(id)];
-    t.model = model;
-    t.vCritBe = CircuitComponents::criticalVoltage(model.saturationCurrent, model.forwardScaleVoltage());
-    t.vCritBc = CircuitComponents::criticalVoltage(model.saturationCurrent, model.reverseScaleVoltage());
+    // A Darlington's second half follows its first. The pair's shape is
+    // topology -- the internal node was wired by addTransistor() -- so a model
+    // swap can change the halves' parameters but not make one transistor two.
+    const bool pair = transistors[static_cast<size_t>(id)].model.darlington
+                      && static_cast<size_t>(id) + 1 < transistors.size();
+
+    for (auto i = static_cast<size_t>(id); i <= static_cast<size_t>(id) + (pair ? 1u : 0u); ++i)
+    {
+        auto& t = transistors[i];
+        t.model = model;
+
+        // The flag records what was *built*, not what was asked for: a single
+        // transistor given a Darlington's card stays one transistor, and must
+        // not later drag its neighbour in the list along with it.
+        t.model.darlington = pair;
+        t.vCritBe = CircuitComponents::criticalVoltage(model.saturationCurrent, model.forwardScaleVoltage());
+        t.vCritBc = CircuitComponents::criticalVoltage(model.saturationCurrent, model.reverseScaleVoltage());
+    }
 }
 
 //==========================================================================
@@ -543,6 +705,11 @@ void Circuit::prepare(double sampleRate)
     jassert(inputIndex >= 0 && outputIndex >= 0); // call setInputNode()/setOutputNode() first
 
     dt = 1.0 / sampleRate;
+
+    // A diode's stored charge is integrated over one sample, so its scale moves
+    // with the rate -- and oversampling changes the rate.
+    for (auto& d : diodes)
+        d.transitScale = d.model.transitTime / dt;
 
     const auto numNodes = nodeIndices.size();
 
@@ -639,7 +806,10 @@ void Circuit::clearState() noexcept
     }
 
     for (auto& d : diodes)
+    {
         d.vLast = 0.0;
+        d.chargeCurrentPrevious = 0.0;
+    }
 
     for (auto& t : transistors)
     {
@@ -667,6 +837,12 @@ void Circuit::clearState() noexcept
     {
         j.vGateLast = 0.0;
         j.vDrainLast = 0.0;
+    }
+
+    for (auto& m : mosfets)
+    {
+        m.vGateLast = 0.0;
+        m.vDrainLast = 0.0;
     }
 
     for (auto& s : voltageSources)

@@ -39,6 +39,54 @@ namespace CircuitComponents
         double breakdownCurrent = 5.0e-3; // Ibv, the current at Vz
         double breakdownEmission = 1.0;   // knee sharpness
 
+        //======================================================================
+        // The rest is off -- zero -- in every model that predates it, and only
+        // the parts that are *defined* by one of these carry a figure. Each is
+        // wired by Circuit::addDiode() rather than computed here, except the
+        // stored charge, which is the device's own.
+
+        /** Series resistance, ohms -- RS on a SPICE card.
+
+            On most diodes it is a fraction of an ohm and a clipping stage never
+            finds it. A small Schottky is the exception: the BAT41's is tens of
+            ohms, and at the milliamp a clipper runs at that is a tenth of a
+            volt -- the difference between its knee and a plain exponential's.
+            addDiode() puts it on an internal node, as SPICE does, since the
+            current through it is what the junction is solving for. */
+        double seriesResistance = 0.0;
+
+        /** A second junction in parallel, straight across the terminals: the
+            p-n guard ring a small-signal Schottky is built with to survive
+            static. It sits idle below a few milliamps and then takes over from
+            the Schottky, whose series resistance has run out of room -- which
+            is what bends a BAT41's curve upward past 5 mA. Zero means none. */
+        double guardRingSaturationCurrent = 0.0;
+        double guardRingEmission = 2.0;
+
+        /** Depletion capacitance, farads, as a constant across the terminals.
+
+            A real one rises into forward bias and falls with reverse, so this is
+            the figure at the bias a clipping diode spends its time near --
+            about zero. Wired as an ordinary capacitor, and switched off with the
+            other junction capacitances in BuildOptions. */
+        double junctionCapacitance = 0.0;
+
+        /** Transit time, seconds -- TT on a SPICE card.
+
+            A conducting junction stores charge in proportion to its current,
+            q = TT * i, and has to be emptied before it stops conducting. On a
+            signal diode TT is nanoseconds and nothing at audio rates can see
+            it. A rectifier is built slow on purpose: a 1N4001 stores
+            microseconds of its own current, and at 10 kHz the current that
+            charge carries is a third of the junction's own. That -- not its
+            forward voltage -- is most of what separates it from a 1N4148 in a
+            clipper.
+
+            Integrated backward-Euler inside the device (see linearise()), so it
+            costs no state variable in the matrix, and it is taken as zero while
+            the bias point is solved, where nothing moves. */
+        double transitTime = 0.0;
+
         /** N*Vt -- the exponential's scale factor, which is all the maths needs. */
         double scaleVoltage() const noexcept { return emissionCoefficient * thermalVoltage; }
 
@@ -108,6 +156,60 @@ namespace CircuitComponents
             model.breakdownEmission = breakdownVolts < 5.0 ? 4.0 : 1.5;
             return model;
         }
+
+        /** 1N4001, the 1 A general-purpose rectifier -- and the TS808-mod
+            clipping diode.
+
+            DC and transit time are Motorola's card (Rectifier Databook,
+            1991): Is 14.11 nA, N 1.984, TT 5.7 us. It lands on the Diodes Inc
+            typical curve in docs/specs at 10 mA (0.69 V against 0.70) and
+            runs 30-60 mV high by 1 A, where no clipper goes. Chosen over the
+            two other published cards because it is the only one whose low end
+            is physical: a big rectifier junction at microamps is dominated by
+            recombination, which is an emission coefficient near 2, and that is
+            where a pedal runs it -- 0.46 V at 100 uA and 0.57 V at 1 mA, a
+            softer knee than a 1N4148's. Diodes Inc's own card (N 1.45, fitted
+            at amps) puts 1 mA at 0.61 V instead; nobody publishes measurements
+            down there, so treat this end as the better-grounded guess.
+
+            Its capacitance is the Diodes Inc sheet's, about 30 pF near zero
+            bias -- seven times a 1N4148's. The stored charge is what really
+            sets it apart, though; see transitTime. */
+        static DiodeModel d1n4001() noexcept
+        {
+            DiodeModel model;
+            model.saturationCurrent = 14.11e-9;
+            model.emissionCoefficient = 1.984;
+            model.junctionCapacitance = 30.0e-12;
+            model.transitTime = 5.7e-6;
+            return model;
+        }
+
+        /** BAT41, small-signal Schottky with a p-n guard ring -- a common
+            "between germanium and silicon" clipper.
+
+            Structured as Vishay's model is (docs/specs has ST's sheet, and
+            Vishay publish the card): a Schottky junction behind its series
+            resistance, with the guard ring across the whole. Refitted to ST's
+            typical curve, which Vishay's card runs 20-75 mV under, with the
+            emission coefficients held physical. Through the engine: 0.20 V at
+            10 uA, 0.28 at 100 uA, 0.39 at 1 mA (sheet 0.4 typ), 0.69 at 10 mA
+            and 0.90 at 100 mA, within 4 mV rms of the sheet throughout.
+
+            The 35 ohm resistance is why its knee is softer than a Schottky's
+            ought to be, and why it clips at a silicon-like voltage once the
+            current gets up. 2 pF of capacitance (ST, typ at 1 V). */
+        static DiodeModel bat41() noexcept
+        {
+            DiodeModel model;
+            model.saturationCurrent = 2.74e-8;
+            model.emissionCoefficient = 1.294;
+            model.seriesResistance = 34.94;
+            model.guardRingSaturationCurrent = 1.176e-8;
+            model.guardRingEmission = 2.2;
+            model.junctionCapacitance = 2.0e-12;
+            return model;
+        }
     };
 
     //==========================================================================
@@ -137,6 +239,14 @@ namespace CircuitComponents
 
         /** The same, for the reverse breakdown knee of a Zener. */
         double vCritBreakdown = 0.0;
+
+        /** Stored charge, for a model with a transit time: TT/dt while audio
+            runs and zero while the bias point is solved, set by Circuit. */
+        double transitScale = 0.0;
+
+        /** The junction current at the end of the last sample -- the charge it
+            left behind, over TT. Updated by Circuit once a sample converges. */
+        double chargeCurrentPrevious = 0.0;
 
         /** The exponential's scale voltage for the whole series stack. */
         double scaleVoltage() const noexcept { return seriesCount * model.scaleVoltage(); }
@@ -242,8 +352,33 @@ namespace CircuitComponents
         return acted;
     }
 
+    /** The current the junction's stored charge is proportional to: the
+        forward Shockley current alone, without the breakdown or gmin terms. */
+    inline double chargeCurrent(const Diode& diode, double v) noexcept
+    {
+        const double e = fastOrExactExp(std::min(v / diode.scaleVoltage(), maxExponent));
+        return diode.model.saturationCurrent * (e - 1.0);
+    }
+
     inline void linearise(const Diode& diode, const double* v, DeviceLinearisation& out) noexcept
     {
         evaluateDiode(diode, v[0], out.current[0], out.jacobian[0]);
+
+        if (diode.transitScale <= 0.0)
+            return;
+
+        // Stored charge q = TT * i, differentiated backward-Euler:
+        // dq/dt = (TT/dt) * (i - iPrevious). Backward rather than trapezoidal
+        // because TT is shorter than a sample at any audio rate -- the charge
+        // relaxes within one step, and the trapezoidal rule rings on a time
+        // constant it cannot resolve where backward Euler just settles.
+        //
+        // The derivative is the junction's own conductance scaled up, so the
+        // Jacobian keeps its sign and Newton sees an ordinary, stiffer diode.
+        const double e = fastOrExactExp(std::min(v[0] / diode.scaleVoltage(), maxExponent));
+        const double current = diode.model.saturationCurrent * (e - 1.0);
+
+        out.current[0] += diode.transitScale * (current - diode.chargeCurrentPrevious);
+        out.jacobian[0] += diode.transitScale * diode.model.saturationCurrent * e / diode.scaleVoltage();
     }
 } // namespace CircuitComponents

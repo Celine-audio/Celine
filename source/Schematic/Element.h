@@ -78,9 +78,20 @@ namespace SchematicModel
             names to read after the solve. Two pins, so it measures across a part
             as readily as against ground. */
         Scope,
+
+        /** An enhancement MOSFET. A type of its own rather than a model of the
+            JFET, for the reason the JFET is not a BJT model: it is off at zero
+            gate voltage, its gate is insulated, and its symbol differs. */
+        Mosfet,
+
+        /** An LM386-style power amplifier: an op-amp's inputs and output plus
+            its two gain pins, 1 and 8. Not an op-amp model, because its
+            feedback is inside the package -- wired as an op-amp it would get
+            the gain wrong by a factor of twenty. */
+        PowerAmp,
     };
 
-    inline constexpr int numElementTypes = 23;
+    inline constexpr int numElementTypes = 25;
 
     /** The smallest a Rectangle may be dragged, in grid squares. Small enough to
         ring one part, large enough that a stray drag can't shrink a box to
@@ -118,8 +129,10 @@ namespace SchematicModel
         /** The models this part can be, or empty if it has no such choice.
 
             `id|Name|Description|Group` records separated by semicolons, the
-            group optional. The name goes under the part and into the dropdown;
-            the description is the sentence the inspector shows.
+            group optional. The name -- a part number -- goes under the part and
+            into the dropdown; the group is the dropdown heading, and says what
+            kind of part it is; the description is the few words the inspector
+            shows under it, or nothing.
 
             **A description must not contain a semicolon** -- it is the record
             separator, and one inside a sentence silently splits that model in
@@ -172,26 +185,33 @@ namespace SchematicModel
             {"Voltage source", 2, {{0, -2}, {0, 2}}, "V", "Voltage", 0.0, ""},
 
             {"Diode", 2, {{0, -2}, {0, 2}}, "", "", 0.0,
-             "celine:diode-1n4148|1N4148|Silicon, ~0.6 V|Signal;"
-             "celine:diode-germanium|Germanium|1N34A, ~0.33 V and a softer knee|Signal;"
-             "celine:diode-schottky|Schottky|1N5817, ~0.30 V and a hard knee|Signal;"
+             "celine:diode-1n4148|1N4148|~0.6 V|Silicon;"
+             "celine:diode-germanium|1N34A|~0.33 V, soft knee|Germanium;"
+             "celine:diode-schottky|1N5817|~0.3 V, hard knee|Schottky;"
              "celine:led-red|Red LED|~1.6 V|LED;"
              "celine:led-green|Green LED|~1.9 V|LED;"
              "celine:led-blue|Blue LED|~3.2 V|LED;"
-             "celine:zener-9v|Zener 9V|Clamps at 9 V in reverse|Zener;"
-             "celine:zener-5v1|Zener 5.1V|Clamps at 5.1 V in reverse|Zener;"
-
-             "celine:diode-1n914|1N914|Silicon, ~0.6 V. The same part as the 1N4148|Signal"},
+             "celine:zener-9v|Zener 9V|Clamps at 9 V|Zener;"
+             "celine:zener-5v1|Zener 5.1V|Clamps at 5.1 V|Zener;"
+             "celine:diode-1n914|1N914|Same as the 1N4148|Silicon;"
+             "celine:diode-bat41|BAT41|~0.4 V, soft knee|Schottky;"
+             "celine:diode-1n4001|1N4001|Rectifier, ~0.57 V, slow recovery|Silicon"},
 
             // Base, collector, emitter -- the order addTransistor() wants.
             {"BJ Transistor", 3, {{-2, 0}, {2, -2}, {2, 2}}, "", "", 0.0,
              "celine:bjt-2n3904|2N3904|Silicon|NPN;"
              "celine:bjt-2n3906|2N3906|Silicon|PNP;"
-             "celine:bjt-bc109c|BC109C|Silicon, low noise|NPN;"
+             "celine:bjt-bc109c|BC109C|Grade C, hFE 420-800. Also BC547C-550C|NPN;"
              "celine:bjt-2n2222a|2N2222A|Silicon, higher current|NPN;"
              "celine:bjt-ac127|AC127|Germanium|NPN;"
              "celine:bjt-ac128|AC128|Germanium|PNP;"
-             "celine:bjt-2n5133|2N5133|Silicon, low noise|NPN"},
+             "celine:bjt-2n5133|2N5133|Silicon, low noise|NPN;"
+             "celine:bjt-bc108a|BC108A|Grade A, hFE 110-220. Also BC547A, BC548A|NPN;"
+             "celine:bjt-bc108b|BC108B|Grade B, hFE 200-450. Also BC547B-550B|NPN;"
+             "celine:bjt-2n5088|2N5088|Low noise, hFE 300-900|NPN;"
+             "celine:bjt-2n5089|2N5089|Low noise, hFE 400-1200|NPN;"
+             "celine:bjt-mpsa18|MPSA18|Low noise, hFE 500-1500|NPN;"
+             "celine:bjt-mpsa13|MPSA13|Darlington, Vbe ~1.1 V|NPN"},
 
             // Plate, grid, cathode -- the order addTriode() wants.
             //
@@ -213,23 +233,19 @@ namespace SchematicModel
             // drawn: `value` is the positive one and the negative is ground,
             // which is how a 9 V pedal is wired.
             {"OP-Amp", 3, {{-4, -2}, {-4, 2}, {4, 0}}, "V", "Supply", 0.0,
-             "celine:opamp-tl072|TL072|JFET input, 3 MHz. In a large fraction of all pedals;"
-             "celine:opamp-jrc4558|JRC4558|The Tube Screamer op-amp, 2.8 MHz;"
-             "celine:opamp-ne5532|NE5532|Low-noise studio part, 12 MHz. Quicker and cleaner;"
-             "celine:opamp-lm308|LM308|ProCo Rat, 1 MHz. The slowness is the sound;"
-             "celine:opamp-ideal|Ideal|A nullor: no gain limit, no bandwidth, no rails, no clipping"},
+             "celine:opamp-tl072|TL071/TL072|JFET input, 3 MHz;"
+             "celine:opamp-jrc4558|JRC4558|Distortion pedal OpAmp, 2.8 MHz;"
+             "celine:opamp-ne5532|NE5532|Low noise, 12 MHz;"
+             "celine:opamp-lm308|LM308|Distortion pedal OpAmp, 1 MHz;"
+             "celine:opamp-ideal|Ideal|No gain limit, bandwidth or clipping;"
+             "celine:opamp-lm741|LM741|General purpose, 1.2 MHz"},
 
             // Primary A/B then secondary A/B, the order addTransformer() wants.
             // Two turns counts rather than one ratio: a single box cannot take
             // "1:8", and a step-up comes back out of it as "100m:1".
             {"Transformer", 4, {{-3, -3}, {-3, 3}, {3, -3}, {3, 3}}, "", "Primary turns", 0.0,
-             "celine:xfmr-ideal|Ideal|Turns ratio and nothing else. Passes DC, has no bandwidth limit and never "
-             "saturates -- put an inductor across the primary yourself for the magnetising "
-             "inductance;"
-             "celine:xfmr-real|Real|Adds magnetising inductance, leakage and winding resistance, sized from the "
-             "turns ratio against an 8 ohm secondary. Blocks DC, and rolls off gently at both "
-             "ends -- about -1 dB at 30 Hz and 9 kHz when driven from its own reflected "
-             "impedance. The bass end depends on what drives it, the treble end does not",
+             "celine:xfmr-ideal|Ideal|Turns ratio only. Passes DC;"
+             "celine:xfmr-real|Real|Adds inductance and winding losses. Blocks DC",
              "Secondary turns", 0.0},
 
             // The same, with the tap between the two secondary ends. Both
@@ -238,13 +254,8 @@ namespace SchematicModel
             // full-wave valve rectifier are both built on.
             {"Transformer (CT)", 5, {{-3, -3}, {-3, 3}, {3, -3}, {3, 0}, {3, 3}}, "",
              "Primary turns", 0.0,
-             "celine:xfmr-ct-ideal|Ideal|Turns ratio and nothing else. Passes DC, has no bandwidth limit and never "
-             "saturates -- put an inductor across the primary yourself for the magnetising "
-             "inductance;"
-             "celine:xfmr-ct-real|Real|Adds magnetising inductance, leakage and winding resistance, sized from the "
-             "turns ratio against an 8 ohm secondary. Blocks DC, and rolls off gently at both "
-             "ends -- about -1 dB at 30 Hz and 9 kHz when driven from its own reflected "
-             "impedance. The bass end depends on what drives it, the treble end does not",
+             "celine:xfmr-ct-ideal|Ideal|Turns ratio only. Passes DC;"
+             "celine:xfmr-ct-real|Real|Adds inductance and winding losses. Blocks DC",
              "Secondary turns (total)", 0.0},
 
             // Drain, gate, source -- the order addJfet() wants. Separate from
@@ -305,6 +316,20 @@ namespace SchematicModel
             // A scope probe. Two pins, no value and no model: what it reads is
             // decided by where you hang it, not by anything you type into it.
             {"Scope", 2, {{-2, 2}, {2, 2}}, "", "", 0.0, ""},
+
+            // Drain, gate, source -- the order addMosfet() wants, and the
+            // JFET's pins, so the two swap on a sheet without rewiring.
+            {"MOSFE Transistor", 3, {{2, -2}, {-2, 0}, {2, 2}}, "", "", 0.0,
+             "celine:mosfet-2n7000|2N7000|Threshold 2.1 V|N-channel;"
+             "celine:mosfet-bs170|BS170|Threshold 2.0 V, lower gain|N-channel;"
+             "celine:mosfet-bs250|BS250|Threshold -2.5 V|P-channel"},
+
+            // in+, in-, out, then pins 1 and 8 -- the order addPowerAmp()
+            // wants. The inputs and output sit where the op-amp's do; the gain
+            // pins come out of the top, pin 1 on the left. `value` is the
+            // supply, as on the op-amp, and ground is the other rail.
+            {"Power amp", 5, {{-4, -2}, {-4, 2}, {4, 0}, {-1, -4}, {0, -4}}, "V", "Supply", 0.0,
+             "celine:poweramp-lm386|LM386|"},
         };
 
         return table[static_cast<int>(type)];

@@ -20,19 +20,15 @@ namespace CircuitComponents
         ideal-region gain that leakage pulls down. On the 2N2222A card BF says
         930 where the real gain at 1 mA is nearer 105, entirely from ISE.
 
-        Junction capacitance and the forward Early voltage are here too, both
-        zero -- off -- unless a model carries a figure.
+        Junction capacitance, the forward Early voltage and the forward
+        high-injection knee are here too, all zero -- off -- unless a model
+        carries a figure.
 
         Left out, all Gummel-Poon parameters with no home here:
 
           VAR         The reverse Early effect. Only visible in reverse-active
                       operation, which an audio stage barely visits.
-          IKF / IKR   High-injection roll-off. Without it, current gain keeps
-                      climbing with collector current instead of turning over
-                      past the knee -- on the 2N2222A card that knee is 19.5 mA,
-                      and by 60 mA the gain here reads roughly double reality.
-                      A pedal stage sits near 1 mA, well below it, so this only
-                      bites if you model something that draws real current.
+          IKR         The reverse high-injection knee, for the same reason.
           RB/RE/RC    Parasitic terminal resistances, milliohms to an ohm here.
                       Ignorable next to any real circuit resistor.
           VJE/MJE     Bias dependence of the junction capacitances. A real one
@@ -97,6 +93,28 @@ namespace CircuitComponents
             load, so the gain drops about 6%: the difference between what the
             resistor ratio computes and what the stage actually does. */
         double forwardEarlyVoltage = 0.0; // VAF, volts
+
+        /** Forward high-injection knee, IKF on a SPICE card. Zero means none.
+
+            Past this collector current the base fills with carriers and the
+            transport current stops following the exponential: Gummel-Poon
+            divides it by qb = (1 + sqrt(1 + 4 If/IKF)) / 2, so gain turns over
+            instead of climbing towards BF forever. Most cards put the knee far
+            above anything a pedal draws -- 0.14 A on the BC547 family -- but
+            the low-noise, high-gain parts have it low: 15 mA on the 2N5088 and
+            2N5089, where it already trims the gain by 6% at 1 mA. Leaving it
+            out of those cards reads their gain high everywhere a fuzz runs. */
+        double forwardKneeCurrent = 0.0; // IKF, amps
+
+        /** Two of this transistor in one package, the first one's emitter
+            driving the second one's base, collectors common -- a Darlington.
+
+            The card then describes each half, not the pair: addTransistor()
+            wires two devices and the internal node between them, which is the
+            only way the pair's Vbe comes out as two junctions' worth and its
+            gain as the product of two gains that each sag at their own
+            current. A single transistor with BF = 30000 gets neither. */
+        bool darlington = false;
 
         /** +1 for NPN, -1 for PNP. Every equation below is written for an NPN;
             a PNP is the same device with every voltage and current negated. */
@@ -219,46 +237,224 @@ namespace CircuitComponents
             };
         }
 
-        /** BC109C -- low-noise silicon NPN, the high-gain C group of the
-            BC107/108/109 family. The Big Muff transistor, and the house NPN of
-            most British pedal and preamp designs.
+        //======================================================================
+        // The BC107/108/109 family, and the BC547/548/549/550 that replaced it
+        // in plastic.
+        //
+        // One die, sorted twice. The *number* is a sort for breakdown voltage
+        // and noise -- the BC107 and BC547 for 45 V, the BC109 and BC549 for a
+        // low noise figure -- and the engine models neither, so a BC108B and a
+        // BC549B are the same part here. The *letter* is a sort for gain, which
+        // the engine models exactly, so the grades are three different parts:
+        //
+        //     A   hFE 110-220 at 2 mA   typ 180,  90 at 10 uA
+        //     B   hFE 200-450           typ 290, 150 at 10 uA
+        //     C   hFE 420-800           typ 520, 270 at 10 uA
+        //
+        // (Philips's typicals, reprinted on the Comset BC107-109 sheet in
+        // docs/specs; onsemi's BC546-550 sheet gives the same windows.)
+        //
+        // Each grade is Philips's own extracted card for that grade -- IS, NF,
+        // the reverse terms, the high-injection knee and the Early voltage --
+        // with BF, ISE and NE refitted. The refit is not optional: Philips's
+        // cards keep hFE flat all the way down to 10 uA, where their datasheet
+        // says it halves, and the low-current gain is exactly what the first
+        // stage of a fuzz runs on. Through the engine's own equations each
+        // grade now gives its typical at both 10 uA and 2 mA, exactly, with
+        // Vbe 0.67 / 0.65 / 0.64 V at 2 mA against the sheet's 0.65 typ. The
+        // grade shows in the Early voltage too: a thinner base buys the gain
+        // and costs output resistance, 144 V on an A and 53 V on a C.
+        //
+        // Capacitances are the datasheet typicals, the same for every grade:
+        // Cob 3.5 pF at 10 V and Cib 9 pF (onsemi), which the BC107's 4 pF
+        // collector figure agrees with.
 
-            The C suffix is the whole point of the part: hFE is graded 420-800
-            where the plain BC109 is 200-450, so a circuit designed around one
-            of these is leaning on gain the ungraded part doesn't have.
+        /** BC108A: gain grade A. Also sold as BC107A, BC109A, BC547A, BC548A. */
+        static BjtModel npnBC108A() noexcept
+        {
+            return {
+                .polarity = Polarity::NPN,
+                .saturationCurrent = 9.677e-15,       // IS   Philips BC847A (the BC547A die)
+                .forwardBeta = 201.07,                // BF   refitted
+                .reverseBeta = 7.004,                 // BR
+                .forwardEmission = 0.9922,            // NF
+                .reverseEmission = 0.9935,            // NR
+                .thermalVoltage = 0.025852,
+                .baseEmitterLeakage = 3.8839e-13,     // ISE  refitted
+                .baseEmitterLeakageEmission = 1.7137, // NE   refitted
+                .baseCollectorLeakage = 5.236e-12,    // ISC
+                .baseCollectorLeakageEmission = 1.53, // NC
+                .capBaseEmitter = 9.0e-12,            // Cib typ
+                .capBaseCollector = 3.5e-12,          // Cob typ
+                .forwardEarlyVoltage = 143.8,         // VAF
+                .forwardKneeCurrent = 0.14,           // IKF
+            };
+        }
 
-            Provenance differs from npn2N2222A(), and it matters which you're
-            using. That one is a vendor-extracted MODPEX card, precise to six
-            figures because it was fitted to a measured part. These parameters
-            are fitted here to the published datasheet figures instead -- Vbe
-            and the hFE grading. Measured back out of the solver, that gives
-            hFE 499 at 1.2 mA and 560 at 5.4 mA, so about 520 at the 2 mA the
-            datasheet grades at, sitting mid-band in its 420-800 window, with
-            Vbe 0.63 V there. Gain falls to 406 at 200 uA and 297 at 29 uA, the
-            low-current sag a real one has and a plain Ebers-Moll model can't
-            reproduce at all.
+        /** BC108B: gain grade B. Also sold as BC107B, BC109B, BC547B, BC548B,
+            BC549B, BC550B. */
+        static BjtModel npnBC108B() noexcept
+        {
+            return {
+                .polarity = Polarity::NPN,
+                .saturationCurrent = 2.39e-14,        // IS   Philips BC547B
+                .forwardBeta = 305.68,                // BF   refitted
+                .reverseBeta = 7.946,                 // BR
+                .forwardEmission = 1.008,             // NF
+                .reverseEmission = 1.004,             // NR
+                .thermalVoltage = 0.025852,
+                .baseEmitterLeakage = 4.623e-13,      // ISE  refitted
+                .baseEmitterLeakageEmission = 1.7684, // NE   refitted
+                .baseCollectorLeakage = 6.272e-14,    // ISC
+                .baseCollectorLeakageEmission = 1.243, // NC
+                .capBaseEmitter = 9.0e-12,            // Cib typ
+                .capBaseCollector = 3.5e-12,          // Cob typ
+                .forwardEarlyVoltage = 63.2,          // VAF
+                .forwardKneeCurrent = 0.1357,         // IKF
+            };
+        }
 
-            That makes them good for designing a bias network around and honest
-            about the low-current roll-off, but they're a fit to a spec sheet
-            rather than a measurement of silicon. Drop in an extracted card if
-            you find one; nothing else has to change. */
+        /** BC109C: gain grade C. The Big Muff transistor, and the house NPN of
+            most British pedal and preamp designs. Also sold as BC107C, BC108C,
+            BC547C, BC548C, BC549C, BC550C.
+
+            This used to be a fit of its own, to Vbe and the two hFE points
+            alone, with no Early voltage, knee or input capacitance. It gave
+            hFE 239 at 10 uA and 522 at 2 mA; it now gives the datasheet's 270
+            and 520, from the same card structure as its two siblings. */
         static BjtModel npnBC109C() noexcept
         {
             return {
                 .polarity = Polarity::NPN,
-                .saturationCurrent = 5.0e-14,        // IS
-                .forwardBeta = 690.0,                // BF, the ideal-region figure
-                .reverseBeta = 5.0,                  // BR
-                .forwardEmission = 1.0,              // NF
-                .reverseEmission = 1.0,              // NR
+                .saturationCurrent = 4.679e-14,       // IS   Philips BC547C
+                .forwardBeta = 560.63,                // BF   refitted
+                .reverseBeta = 11.57,                 // BR
+                .forwardEmission = 1.01,              // NF
+                .reverseEmission = 1.019,             // NR
                 .thermalVoltage = 0.025852,
-                .baseEmitterLeakage = 8.0e-14,       // ISE
-                .baseEmitterLeakageEmission = 1.5,   // NE
-                .baseCollectorLeakage = 1.0e-13,     // ISC
-                .baseCollectorLeakageEmission = 2.0, // NC
-                // Cc 2.5 pF typ on the datasheet; input capacitance
-                // unpublished, so CJE stays off as on the 2N5133.
-                .capBaseCollector = 2.5e-12,
+                .baseEmitterLeakage = 1.6442e-13,     // ISE  refitted
+                .baseEmitterLeakageEmission = 1.6415, // NE   refitted
+                .baseCollectorLeakage = 2.337e-14,    // ISC
+                .baseCollectorLeakageEmission = 1.164, // NC
+                .capBaseEmitter = 9.0e-12,            // Cib typ
+                .capBaseCollector = 3.5e-12,          // Cob typ
+                .forwardEarlyVoltage = 52.64,         // VAF
+                .forwardKneeCurrent = 0.1371,         // IKF
+            };
+        }
+
+        //======================================================================
+        // Fairchild's process 07: the 2N5088, 2N5089 and MPSA18 are one
+        // low-noise, high-gain die sorted by gain -- 2N5088 300-900, 2N5089
+        // 400-1200, MPSA18 500-1500 at 100 uA -- which, unlike the BC family's
+        // sorts, the engine can tell apart.
+
+        /** 2N5088. The Fairchild datasheet's own SPICE card, verbatim for
+            everything this model has a field for. Through the engine: hFE 487
+            at 100 uA, 650 at 1 mA and 554 at 10 mA against the sheet's minima
+            of 300, 350 and 300, with Vbe 0.74 V at 10 mA (0.8 max). The 15 mA
+            knee is why the gain has already turned over by 10 mA. */
+        static BjtModel npn2N5088() noexcept
+        {
+            return {
+                .polarity = Polarity::NPN,
+                .saturationCurrent = 5.911e-15,       // IS
+                .forwardBeta = 1122.0,                // BF
+                .reverseBeta = 1.271,                 // BR
+                .forwardEmission = 1.0,               // NF
+                .reverseEmission = 1.0,               // NR
+                .thermalVoltage = 0.025852,
+                .baseEmitterLeakage = 5.911e-15,      // ISE
+                .baseEmitterLeakageEmission = 1.394,  // NE
+                .baseCollectorLeakage = 0.0,          // ISC
+                .baseCollectorLeakageEmission = 2.0,  // NC
+                .capBaseEmitter = 4.973e-12,          // CJE
+                .capBaseCollector = 4.017e-12,        // CJC
+                .forwardEarlyVoltage = 62.37,         // VAF
+                .forwardKneeCurrent = 14.92e-3,       // IKF
+            };
+        }
+
+        /** 2N5089, the higher-gain sort of the same die. Fairchild's card
+            again: hFE 651 at 100 uA, 870 at 1 mA, 742 at 10 mA (sheet minima
+            400, 450, 400). The Big Muff's later transistor. */
+        static BjtModel npn2N5089() noexcept
+        {
+            auto m = npn2N5088();
+            m.forwardBeta = 1434.0;               // BF
+            m.reverseBeta = 1.262;                // BR
+            m.baseEmitterLeakageEmission = 1.421; // NE
+            m.forwardKneeCurrent = 15.4e-3;       // IKF
+            return m;
+        }
+
+        /** MPSA18, the highest-gain sort. Fitted here to onsemi's typicals
+            (docs/specs is Central's sheet, which only has minima): hFE 580 at
+            10 uA, 850 at 100 uA, 1100 at 1 mA and 1150 at 10 mA, and Vbe 0.60 V
+            at 1 mA -- all five reproduced exactly by the engine, the last point
+            by the knee. Capacitances are onsemi's typicals too, Ccb 1.7 pF and
+            Ceb 5.6 pF.
+
+            Neither sheet gives an Early voltage or a reverse gain, so those two
+            are process 07's, from the 2N5088 card: a stated borrowing, since
+            onsemi's part is a different fab's. */
+        static BjtModel npnMPSA18() noexcept
+        {
+            return {
+                .polarity = Polarity::NPN,
+                .saturationCurrent = 7.8336e-14,      // IS
+                .forwardBeta = 1522.9,                // BF
+                .reverseBeta = 1.271,                 // BR   process 07
+                .forwardEmission = 1.0,               // NF
+                .reverseEmission = 1.0,               // NR
+                .thermalVoltage = 0.025852,
+                .baseEmitterLeakage = 2.2366e-14,     // ISE
+                .baseEmitterLeakageEmission = 1.4167, // NE
+                .baseCollectorLeakage = 0.0,          // ISC
+                .baseCollectorLeakageEmission = 2.0,  // NC
+                .capBaseEmitter = 5.6e-12,            // Ceb typ
+                .capBaseCollector = 1.7e-12,          // Ccb typ
+                .forwardEarlyVoltage = 62.37,         // VAF  process 07
+                .forwardKneeCurrent = 0.056884,       // IKF
+            };
+        }
+
+        /** MPSA13, an NPN Darlington: two transistors, the first one's
+            emitter driving the second one's base. This card describes each
+            half; addTransistor() builds the pair.
+
+            onsemi publish one set of typical curves for the MPSA13 and its
+            higher-gain sort the MPSA14, and the halves are fitted to those:
+            the pair gives hFE 27k at 5 mA, 36k at 10 mA, 50k at 30 mA and 59k
+            at 100 mA (sheet 27k, 37k, 49k, 59k) and Vbe 1.12 / 1.15 / 1.30 V
+            at 5 / 10 / 100 mA (sheet 1.12, 1.15, 1.30). The MPSA13 is only
+            guaranteed 5000 at 10 mA, so a real one can have far less gain
+            than this typical -- lower BF to model a poor specimen.
+
+            The reverse terms and the Early voltage are the process-05 card
+            LTspice ships under the MPSA14's name; the capacitances are chosen
+            so the pair presents onsemi's Cibo 10 pF and Cobo 7 pF at the few
+            volts a pedal biases it to. Below 5 mA -- most of where a pedal
+            runs one -- the curves stop, and this is extrapolation. */
+        static BjtModel npnMPSA13() noexcept
+        {
+            return {
+                .polarity = Polarity::NPN,
+                .saturationCurrent = 1.1113e-13,      // IS
+                .forwardBeta = 4071.9,                // BF
+                .reverseBeta = 0.657,                 // BR   process 05
+                .forwardEmission = 1.0,               // NF
+                .reverseEmission = 1.0,               // NR
+                .thermalVoltage = 0.025852,
+                .baseEmitterLeakage = 2.9047e-13,     // ISE
+                .baseEmitterLeakageEmission = 1.3967, // NE
+                .baseCollectorLeakage = 9.0e-13,      // ISC  process 05
+                .baseCollectorLeakageEmission = 2.0,  // NC
+                .capBaseEmitter = 20.0e-12,           // per half
+                .capBaseCollector = 4.0e-12,          // per half
+                .forwardEarlyVoltage = 136.7,         // VAF  process 05
+                .forwardKneeCurrent = 0.044779,       // IKF
+                .darlington = true,
             };
         }
 
@@ -439,8 +635,6 @@ namespace CircuitComponents
             earlySlope = raw > 1.0e-3 ? 1.0 / model.forwardEarlyVoltage : 0.0;
         }
 
-        const double iCt = transport * earlyScale;
-
         double gBe = (is / (model.forwardBeta * vteF)) * ef + gmin;
         double gBc = (is / (model.reverseBeta * vteR)) * er + gmin;
         const double gIf = (is / vteF) * ef;  //  d(transport)/d(vBe)
@@ -448,8 +642,26 @@ namespace CircuitComponents
 
         // The scaled transport current's two slopes, shared by the Jacobian
         // below: d(iCt)/d(vBe) and -d(iCt)/d(vBc).
-        const double gIfE = gIf * earlyScale + transport * earlySlope;
-        const double gIrE = gIr * earlyScale + transport * earlySlope;
+        double gIfE = gIf * earlyScale + transport * earlySlope;
+        double gIrE = gIr * earlyScale + transport * earlySlope;
+
+        double iCt = transport * earlyScale;
+
+        // High injection: the transport current over qb, which depends on the
+        // forward current alone (IKR is not modelled), so only the vBe slope
+        // picks up a term of its own. With no knee qb is exactly 1 and all of
+        // this is skipped.
+        if (model.forwardKneeCurrent > 0.0)
+        {
+            const double q2 = is * (ef - 1.0) / model.forwardKneeCurrent;
+            const double root = std::sqrt(std::max(1.0 + 4.0 * q2, 1.0e-12));
+            const double qb = 0.5 * (1.0 + root);
+            const double dQbdVbe = gIf / (model.forwardKneeCurrent * root);
+
+            iCt /= qb;
+            gIfE = gIfE / qb - iCt * dQbdVbe / qb;
+            gIrE /= qb;
+        }
 
         // Recombination leakage. It adds to the base current only -- the
         // transport current, and so everything the collector does, is untouched.

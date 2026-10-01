@@ -22,8 +22,8 @@ namespace Celine
             ElementType::Resistor,      ElementType::Capacitor,   ElementType::Inductor,
             ElementType::Potentiometer, ElementType::Switch,      ElementType::Spdt,      ElementType::VoltageSource,
             ElementType::Transformer,   ElementType::CenterTapTransformer,
-            ElementType::Diode,         ElementType::Transistor,  ElementType::Jfet,
-            ElementType::OpAmp,
+            ElementType::Diode,         ElementType::Transistor,  ElementType::Jfet,       ElementType::Mosfet,
+            ElementType::OpAmp,         ElementType::PowerAmp,
             ElementType::Triode,        ElementType::Pentode,     ElementType::VacuumDiode,
             ElementType::Text,          ElementType::Rectangle,
             ElementType::Scope,
@@ -602,7 +602,9 @@ namespace Celine
         modelCaption.setText(isBox ? "Colour" : "Model", juce::dontSendNotification);
         modelCaption.setVisible(models);
         modelBox.setVisible(models);
-        modelDescription.setVisible(models);
+
+        // A part with one model and nothing to say about it gets no line.
+        modelDescription.setVisible(models && modelDescription.getText().isNotEmpty());
         taperCaption.setVisible(isPot);
         taperBox.setVisible(isPot);
         labelCaption.setText(has && element->type == ElementType::Text     ? "Text"

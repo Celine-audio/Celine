@@ -272,12 +272,24 @@ between notes, which no analogue circuit is.
 
 `OpAmp` models finite gain, one dominant pole, and rails it clips against. It
 does not model slew limiting. On the slow parts that matters: a JRC4558 slews
-at 2.2 V/µs and an LM308 (the ProCo Rat) far slower, and on a fast transient
-that rounds the waveform in a way the frequency response alone does not
-capture. `OpAmpModel::jrc4558()` documents this at its definition.
+at 2.2 V/µs, an LM308 (the ProCo Rat) far slower, and an LM741 at 0.5 V/µs —
+a 7 V swing takes it 14 µs — and on a fast transient that rounds the waveform
+in a way the frequency response alone does not capture. `OpAmpModel::jrc4558()`
+and `lm741()` document this at their definitions.
 
-Also absent: input bias and offset current, CMRR, PSRR, and the higher-order
-poles a real part has.
+Also absent: input bias and offset current, CMRR, PSRR, the input common-mode
+range (an LM741 on a 9 V pedal runs out of it before its output does, and a
+real one turns that into early, gritty clipping), and the higher-order poles a
+real part has.
+
+The **LM386** (`PowerAmp.h`) is built the same way and shares the gaps, plus
+its own: no crossover distortion from its class-AB output stage, no current
+limit (it swings 8 Ω the way the datasheet says, but a 4 Ω load swings wider
+than the datasheet's 3.5 V), and no bypass pin, since the supply here is ideal
+and has no ripple to reject. Its frequency response is fitted to the datasheet's
+curves at 6 V and follows the supply from there by the physics of its bias
+network; it is −3 dB at 260 kHz at gain 20 where the datasheet says 300, which
+is all ultrasonic.
 
 ### Transformer: no core saturation, and it passes DC
 
@@ -319,13 +331,32 @@ it stays perfectly linear however hard you hit it.
   stage driven through 100k they put the pole at 7.5 kHz where the estimate
   said 8.7. The capacitances are fixed values — a real junction's falls off
   with reverse bias (VJE/MJE/VJC/MJC stay out) — and with no transit time
-  (TF/TR) fT still doesn't degrade with current. High-level injection
-  (IKF/IKR) is still out too, so gain keeps climbing past the knee a real part
-  has (on the 2N2222A card, 19.5 mA); terminal resistances and the reverse
-  Early effect as well.
+  (TF/TR) fT still doesn't degrade with current. The forward high-injection
+  knee (IKF) is modelled for the cards that carry one — the BC107-109 family,
+  the 2N5088/2N5089, the MPSA18 and MPSA13 — but not for the older models
+  whose cards were entered without it (the 2N2222A's knee is 19.5 mA, so its
+  gain keeps climbing past it); the reverse knee (IKR), terminal resistances
+  and the reverse Early effect are out everywhere.
+- **Darlingtons** (the MPSA13) are two transistors on an internal node, so the
+  pair's Vbe and gain come out right, but a real Darlington's gain below a few
+  milliamps is extrapolated: onsemi's curves start at 5 mA.
 - **JFET (Shichman-Hodges):** simple square law, no capacitances.
-- **Diodes:** no junction capacitance, no reverse recovery. Negligible for
-  audio-rate clipping; slightly wrong for a rectifier.
+- **MOSFET** (`Mosfet.h`): a square law smoothed through threshold into an
+  exponential below it, so the moderate inversion a pedal biases one in is
+  continuous. The subthreshold slope is an assumption (n = 1.5; no datasheet
+  publishes it), which sets the gain below about half a milliamp. No drain or
+  source resistance, no mobility degradation (both matter at amps, not
+  milliamps), and the gate capacitances are constants evaluated at a pedal's
+  bias rather than the steeply voltage-dependent things they are. The threshold
+  spread on a real part (0.8 to 3 V on all three models) dwarfs every one of
+  these; the models are the typical part.
+- **Diodes:** the 1N4001 and the BAT41 carry junction capacitance, and the
+  1N4001 its stored charge (transit time, 5.7 µs), integrated backward-Euler
+  inside the device; the BAT41 its series resistance and guard ring. The older
+  models carry none of these. The capacitance is a constant — a real one rises
+  into forward bias — and the stored charge relaxes within one sample at any
+  audio rate, so what it models is the charge a clipping edge has to move, not
+  the shape of the recovery, which is over in microseconds.
 - **Capacitors:** ESR is modelled. Dielectric absorption, ESL, and the large
   voltage-dependence of Class 2 ceramics are not — a ceramic can lose half its
   capacitance under DC bias, which is a real effect in a real pedal.

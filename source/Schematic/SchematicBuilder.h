@@ -264,9 +264,14 @@ namespace SchematicModel
             choose to go without. */
         bool interelectrodeCapacitance = true;
 
-        /** Whether transistors wire in their junction capacitances (CJE/CJC).
-            Miller multiplies the base-collector one by the stage's gain, which
-            is what darkens a high-gain stage driven through a large resistance.
+        /** Whether semiconductors wire in their junction capacitances: a BJT's
+            CJE/CJC, a MOSFET's gate capacitances and a diode's depletion
+            capacitance. Miller multiplies a transistor's base-collector (or
+            gate-drain) one by the stage's gain, which is what darkens a
+            high-gain stage driven through a large resistance.
+
+            The name says transistor because it predates the other two, and it
+            is also the key a saved sheet carries, so it stays.
 
             On by default like the rest: the CPU is opt-out rather than the
             physics opt-in. A sheet drawn before this existed does sound slightly

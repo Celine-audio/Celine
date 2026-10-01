@@ -20,6 +20,8 @@ namespace SchematicModel
                 // name, not because it differs: ON Semi publish it and the
                 // 1N4148 on one datasheet line. Same model, deliberately.
                 case 8: return Circuit::DiodeModel::d1n4148();
+                case 9: return Circuit::DiodeModel::bat41();
+                case 10: return Circuit::DiodeModel::d1n4001();
 
                 default: return Circuit::DiodeModel::d1n4148();
             }
@@ -35,6 +37,12 @@ namespace SchematicModel
                 case 4: return Circuit::BjtModel::npnGermanium();
                 case 5: return Circuit::BjtModel::pnpGermanium();
                 case 6: return Circuit::BjtModel::npn2N5133();
+                case 7: return Circuit::BjtModel::npnBC108A();
+                case 8: return Circuit::BjtModel::npnBC108B();
+                case 9: return Circuit::BjtModel::npn2N5088();
+                case 10: return Circuit::BjtModel::npn2N5089();
+                case 11: return Circuit::BjtModel::npnMPSA18();
+                case 12: return Circuit::BjtModel::npnMPSA13();
                 default: return Circuit::BjtModel::npnSilicon();
             }
         }
@@ -63,6 +71,16 @@ namespace SchematicModel
                 case 3: return Circuit::JfetModel::p2n5460();
                 case 4: return Circuit::JfetModel::n2n5952();
                 default: return Circuit::JfetModel::j201();
+            }
+        }
+
+        Circuit::MosfetModel mosfetModelFor(int index)
+        {
+            switch (index)
+            {
+                case 1: return Circuit::MosfetModel::nBS170();
+                case 2: return Circuit::MosfetModel::pBS250();
+                default: return Circuit::MosfetModel::n2N7000();
             }
         }
 
@@ -101,6 +119,25 @@ namespace SchematicModel
             return model;
         }
 
+        /** The other semiconductors' junction capacitances go with the
+            transistors': one switch, "junction capacitance", for every part
+            whose capacitance is a junction's. */
+        Circuit::DiodeModel withOptions(Circuit::DiodeModel model, const BuildOptions& options)
+        {
+            if (! options.transistorJunctionCapacitance)
+                model.junctionCapacitance = 0.0;
+
+            return model;
+        }
+
+        Circuit::MosfetModel withOptions(Circuit::MosfetModel model, const BuildOptions& options)
+        {
+            if (! options.transistorJunctionCapacitance)
+                model.capGateSource = model.capGateDrain = 0.0;
+
+            return model;
+        }
+
         Circuit::PentodeModel pentodeModelFor(int index)
         {
             switch (index)
@@ -121,6 +158,7 @@ namespace SchematicModel
                 case 1: return Circuit::OpAmpModel::jrc4558();
                 case 2: return Circuit::OpAmpModel::ne5532();
                 case 3: return Circuit::OpAmpModel::lm308();
+                case 5: return Circuit::OpAmpModel::lm741();
                 default: return Circuit::OpAmpModel::tl072();
             }
         }
@@ -387,6 +425,12 @@ namespace SchematicModel
                         if (nets.netOfPin[e][static_cast<size_t>(pin)] != net)
                             continue;
 
+                        // A power amp's gain pins are open in its commonest
+                        // wiring -- that is what gain 20 is -- so an open one
+                        // is a choice, not a wire that stopped short.
+                        if (elements[e].type == ElementType::PowerAmp && pin >= 3)
+                            continue;
+
                         const auto at = elements[e].getPinPosition(pin);
 
                         result.add(Diagnostic::Severity::Warning,
@@ -626,7 +670,7 @@ namespace SchematicModel
                     break;
 
                 case ElementType::Diode:
-                    circuit.addDiode(net(0), net(1), diodeModelFor(element.modelIndex));
+                    circuit.addDiode(net(0), net(1), withOptions(diodeModelFor(element.modelIndex), options));
                     break;
 
                 case ElementType::Transistor:
@@ -636,6 +680,18 @@ namespace SchematicModel
 
                 case ElementType::Jfet:
                     circuit.addJfet(net(0), net(1), net(2), jfetModelFor(element.modelIndex));
+                    break;
+
+                case ElementType::Mosfet:
+                    circuit.addMosfet(net(0), net(1), net(2),
+                                      withOptions(mosfetModelFor(element.modelIndex), options));
+                    break;
+
+                case ElementType::PowerAmp:
+                    // One model so far; the supply is the part's value. The
+                    // name must be unique on the sheet, as the op-amp's.
+                    circuit.addPowerAmp("A" + juce::String(element.id), net(0), net(1), net(2), net(3), net(4),
+                                        Circuit::PowerAmpModel::lm386().withSupply(element.value));
                     break;
 
                 case ElementType::Triode:
