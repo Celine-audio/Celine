@@ -1,5 +1,6 @@
 #pragma once
 
+#include "dsp/BypassFade.h"
 #include "dsp/PartitionedConvolver.h"
 #include "Schematic/SchematicBuilder.h"
 
@@ -60,7 +61,10 @@ public:
     void setStateInformation (const void* data, int sizeInBytes) override;
 
     /** Hands the host a real bypass control rather than making it fade around
-        the plugin. */
+        the plugin. Without it the host makes a second bypass of its own, which
+        neither lights the power button nor goes through the crossfade -- two
+        switches that could disagree about whether the plugin was on. With it
+        there is one, wherever it is pressed from. */
     juce::AudioProcessorParameter* getBypassParameter() const override { return bypassParameter; }
 
     //==========================================================================
@@ -313,6 +317,14 @@ public:
         sessions and host automation are untouched. Lowering it is not. */
     static constexpr int maxLiveControls = 16;
 
+    /** The most latency the oversampler reports at any factor, which the
+        bypass's dry path is sized for once, in prepareToPlay. Not the latency
+        of the factor in force: that changes from the message thread while
+        audio runs, and the delay line cannot grow then. 4x reports a handful
+        of samples; this leaves room for a longer filter, and a test holds the
+        real figure under it. */
+    static constexpr int maximumOversamplingLatency = 64;
+
     /** Parameter id for live control `index`. */
     static juce::String getControlParameterId (int index) { return "knob" + juce::String (index + 1); }
 
@@ -327,6 +339,13 @@ private:
     int preparedBlockSize = 512;
 
     void prepareOversampler();
+
+    /** Bypass, faded rather than switched, against a copy of the input delayed
+        by the latency the host is compensating for. At the host's rate, after
+        the cabinet, because the cabinet is part of what bypass takes away and
+        a copy of the input is the only dry signal there is out here -- see
+        processBlock. */
+    BypassFade bypassFade;
 
     SchematicModel::Schematic schematic;
 

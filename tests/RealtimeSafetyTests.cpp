@@ -78,6 +78,29 @@ TEST_CASE ("processBlock never allocates", "[realtime]")
         CHECK (worstOver (20) == 0);
     }
 
+    SECTION ("while the bypass is fading")
+    {
+        // A 512-sample block is shorter than the 30 ms fade, so toggling every
+        // block keeps it moving -- the one state where the dry copy and the
+        // circuit are both being blended per sample.
+        auto* bypass = plugin.getBypassParameter();
+        REQUIRE (bypass != nullptr);
+
+        std::size_t worst = 0;
+
+        for (int b = 0; b < 20; ++b)
+        {
+            bypass->setValueNotifyingHost ((float) (b % 2));
+            fillNoise (buffer, random);
+
+            RealtimeGuard guard;
+            plugin.processBlock (buffer, midi);
+            worst = juce::jmax (worst, guard.allocations());
+        }
+
+        CHECK (worst == 0);
+    }
+
     SECTION ("fed silence, where anything decaying goes denormal")
     {
         for (int b = 0; b < 200; ++b)

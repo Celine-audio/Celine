@@ -159,6 +159,11 @@ TEST_CASE ("Bypass passes the input through untouched", "[plugin]")
 
     setParameter (plugin, "bypass", 1.0f);
 
+    // Bypass is a crossfade rather than a switch -- see BypassFade -- so the
+    // signal is untouched once the fade has landed, not in the block it starts.
+    // Four blocks is 43 ms against a 30 ms fade.
+    for (int block = 0; block < 4; ++block) { fillSine (buffer, phase, 440.0, 0.5f); plugin.processBlock (buffer, midi); }
+
     juce::AudioBuffer<float> expected (2, 512);
     for (int block = 0; block < 5; ++block)
     {
