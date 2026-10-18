@@ -276,6 +276,10 @@ void PluginEditor::buildPanels()
 
     inspector.onCabChanged = [this] { applyCabinetChange(); };
     inspector.onCabFileRequested = [this] { browseForCabinetFile(); };
+
+    inspector.filePlayer = &processorRef.getInputFilePlayer();
+    inspector.onInputFileRequested = [this] { browseForInputFile(); };
+    reportedInputFileLoads = processorRef.getInputFilePlayer().getStatus().loadsFinished;
     inspector.onRotateRequested = [this] { canvas.rotate(); };
     inspector.onFlipRequested = [this] { canvas.flip(); };
     inspector.onDeleteRequested = [this] { canvas.deleteSelection(); };
@@ -632,6 +636,7 @@ void PluginEditor::timerCallback()
     // Not gated on that: they are small, they decline in a line when nothing is
     // selected, and a part's current is live on sheets with no scope at all.
     inspector.repaintReadouts();
+    reportInputFileLoads();
 }
 
 //==============================================================================
@@ -833,6 +838,71 @@ void PluginEditor::browseForCabinetFile()
         inspector.setElement (selected);
         applyCabinetChange();
     });
+}
+
+void PluginEditor::browseForInputFile()
+{
+    auto& player = processorRef.getInputFilePlayer();
+    const auto current = player.getStatus().file;
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+
+    fileChooser = std::make_unique<juce::FileChooser> (
+        "Choose an audio file to play through the circuit",
+        current != juce::File{} ? current
+                                : juce::File::getSpecialLocation (juce::File::userMusicDirectory),
+        formats.getWildcardForAllFormats());
+
+    fileChooser->launchAsync (juce::FileBrowserComponent::openMode
+                                  | juce::FileBrowserComponent::canSelectFiles,
+                              [this] (const juce::FileChooser& chooser)
+    {
+        const auto file = chooser.getResult();
+
+        if (file == juce::File{})
+            return; // cancelled
+
+        // Choosing a file arms file input, as choosing an impulse response arms
+        // the cab: nobody goes looking for a take in order to keep listening to
+        // the guitar. It plays when Play is pressed, not before.
+        auto& filePlayer = processorRef.getInputFilePlayer();
+        filePlayer.load (file);
+        filePlayer.setFileMode (true);
+
+        setStatus ("Loading " + file.getFileName() + "...", false);
+    });
+}
+
+void PluginEditor::reportInputFileLoads()
+{
+    const auto status = processorRef.getInputFilePlayer().getStatus();
+
+    if (status.loadsFinished == reportedInputFileLoads)
+        return;
+
+    reportedInputFileLoads = status.loadsFinished;
+
+    if (status.problem.isNotEmpty())
+    {
+        setStatus (status.problem, true);
+        return;
+    }
+
+    auto message = "Loaded " + status.file.getFileName() + ": "
+                 + juce::String ((double) status.length / juce::jmax (1.0, status.sampleRate), 1) + " s";
+
+    // Said, because resampling is the one thing between the file and the
+    // circuit, and a bench that compares two takes wants to know whether
+    // either went through it.
+    if (! juce::exactlyEqual (status.sourceRate, status.sampleRate))
+        message << ", resampled from " << juce::String (status.sourceRate / 1000.0, 1)
+                << " to " << juce::String (status.sampleRate / 1000.0, 1) << " kHz";
+
+    if (status.truncated)
+        message << ", cut to the first " << juce::String ((int) InputFilePlayer::maximumSeconds) << " s";
+
+    setStatus (message + ".", false);
 }
 
 void PluginEditor::applyCabinetChange()

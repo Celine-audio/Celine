@@ -101,6 +101,35 @@ TEST_CASE ("processBlock never allocates", "[realtime]")
         CHECK (worst == 0);
     }
 
+    SECTION ("playing a file, looping, across its end")
+    {
+        // A short file, so forty blocks wrap it several times: the loop's
+        // turnaround is the one branch here that a long file would never reach.
+        juce::TemporaryFile wav (".wav");
+        {
+            juce::AudioBuffer<float> take (2, 3000);
+            fillNoise (take, random);
+
+            juce::WavAudioFormat format;
+            std::unique_ptr<juce::OutputStream> stream (wav.getFile().createOutputStream());
+            auto writer = format.createWriterFor (stream, juce::AudioFormatWriterOptions{}
+                                                              .withSampleRate (48000.0)
+                                                              .withNumChannels (2)
+                                                              .withBitsPerSample (24));
+            REQUIRE (writer != nullptr);
+            writer->writeFromAudioSampleBuffer (take, 0, take.getNumSamples());
+        }
+
+        auto& player = plugin.getInputFilePlayer();
+        player.load (wav.getFile());
+        REQUIRE (player.waitUntilLoaded (10000));
+        player.setLooping (true);
+        player.play();
+
+        CHECK (worstOver (40) == 0);
+        CHECK (player.isPlaying());
+    }
+
     SECTION ("fed silence, where anything decaying goes denormal")
     {
         for (int b = 0; b < 200; ++b)

@@ -30,6 +30,8 @@ to learn more about the current known limitations of the engine.
 
 **Terminals** — Ground, Input, Output, and Node. The input and output are where the audio will be sent and where it will be probed. They are purely sending audio and don't represent any load or have any bundled electrical component. Nodes carrying the same label are the same point in the circuit however far apart they are drawn.
 
+**Playing a file** — select the Input terminal to feed the circuit from an audio file instead of the live input, for benching: the same take through two versions of a sheet. Choose a file, switch Loop on or off, then Play and Stop. The file is never saved with the sheet or the session. A file at the session's rate reaches the circuit bit-exact; any other rate is resampled once, when loaded. Bypass gives back the file itself.
+
 **Passives** — Resistor, Capacitor, Inductor, and Transformers.
 
 **Potentiometers** — three tapers: linear, logarithmic, and reverse logarithmic.

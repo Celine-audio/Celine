@@ -400,6 +400,32 @@ TEST_CASE ("Oversampling cost")
     }
 }
 
+TEST_CASE ("File input resampling")
+{
+    // What loading a take at a foreign rate costs the worker thread, per ten
+    // seconds of stereo. Off the audio thread and off the message thread, so
+    // what this decides is how long "Loading..." shows, not whether anything
+    // drops out. A file at the session rate skips all of it.
+    struct Case { double from, to; const char* name; };
+
+    for (const auto& c : { Case { 44100.0, 48000.0, "10 s stereo, 44.1 to 48 kHz" },
+                           Case { 96000.0, 48000.0, "10 s stereo, 96 to 48 kHz" },
+                           Case { 48000.0, 96000.0, "10 s stereo, 48 to 96 kHz" } })
+    {
+        juce::AudioBuffer<float> take (2, (int) (c.from * 10.0));
+        juce::Random random { 3 };
+
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < take.getNumSamples(); ++i)
+                take.setSample (ch, i, random.nextFloat() - 0.5f);
+
+        BENCHMARK (c.name)
+        {
+            return InputFilePlayer::resample (take, c.from, c.to).getNumSamples();
+        };
+    }
+}
+
 TEST_CASE ("Drawing performance")
 {
     using namespace SchematicModel;

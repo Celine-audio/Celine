@@ -398,6 +398,10 @@ void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     loadedCabinetFile = juce::File{};
     cabinetLength.store (0);
 
+    // A file loaded at another rate is dropped and resampled again, in the
+    // background, before it plays at the wrong pitch.
+    inputFile.prepare (sampleRate);
+
     prepareOversampler();
     rebuild();
 
@@ -932,6 +936,14 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear (i, 0, buffer.getNumSamples());
+
+    // The file, when there is one, *is* the input: written over the host's before
+    // anything reads it -- the bypass's dry copy included, so bypass gives back
+    // the file -- and before the try-lock below, so a block that misses the lock
+    // passes the file through rather than letting the live input slip out.
+    // Over every channel, not just the inputs: a standalone with no input
+    // device still plays a file.
+    inputFile.render (buffer.getArrayOfWritePointers(), buffer.getNumChannels(), buffer.getNumSamples());
 
     // Never wait. A rebuild holds the lock only long enough to move a few
     // pointers, so failing to get it costs one dry block -- better than a stall

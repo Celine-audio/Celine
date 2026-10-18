@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dsp/BypassFade.h"
+#include "dsp/InputFilePlayer.h"
 #include "dsp/PartitionedConvolver.h"
 #include "Schematic/SchematicBuilder.h"
 
@@ -136,6 +137,17 @@ public:
         must not be the one that finds out the buffers were cut for 48. */
     static constexpr int maximumCabinetSamples =
         (int) (cabinetImpulseSamples * 192000.0 / cabinetReferenceRate);
+
+    /** The audio file the Input terminal can play in place of the host's
+        input, for benching. Its own object, with its own threading, because
+        none of it is part of the sheet -- see InputFilePlayer for why it is
+        deliberately left out of the document and the host's state alike.
+
+        Played **before everything**, the bypass's dry copy included, so that
+        bypassing while a file plays gives the file back untouched: the A/B a
+        bench is for. The input gain still applies, since that is what sets how
+        hard any source hits the circuit. */
+    InputFilePlayer& getInputFilePlayer() noexcept { return inputFile; }
 
     //==========================================================================
     /** One scope's picture, written by the audio thread and read by the UI.
@@ -397,6 +409,9 @@ private:
         measured at about 275 blocks, a second and a half, before a cabinet
         became audible. */
     PartitionedConvolver cabinet;
+
+    /** See getInputFilePlayer(). */
+    InputFilePlayer inputFile;
 
     /** The length of the response in the convolver, since the engine does not
         keep one. Message thread writes it, the editor reads it. */
