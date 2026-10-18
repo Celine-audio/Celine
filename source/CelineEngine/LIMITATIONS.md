@@ -380,13 +380,24 @@ it stays perfectly linear however hard you hit it.
 - **JFET (Shichman-Hodges):** simple square law, no capacitances.
 - **MOSFET** (`Mosfet.h`): a square law smoothed through threshold into an
   exponential below it, so the moderate inversion a pedal biases one in is
-  continuous. The subthreshold slope is an assumption (n = 1.5; no datasheet
-  publishes it), which sets the gain below about half a milliamp. No drain or
-  source resistance, no mobility degradation (both matter at amps, not
-  milliamps), and the gate capacitances are constants evaluated at a pedal's
-  bias rather than the steeply voltage-dependent things they are. The threshold
-  spread on a real part (0.8 to 3 V on all three models) dwarfs every one of
-  these; the models are the typical part.
+  continuous, with a source resistance solved inside the device that bends it
+  straight as the current rises — 45% more CPU on a clipping one-MOSFET stage,
+  about 2.5% of a core per channel at 48 kHz, after warm-starting the solve
+  (cold, it was 3.1 times). Both cards are fitted to Vishay's sheets, and the
+  2N7000's covers the BS170, which Vishay make from the same die. The
+  subthreshold slope is fitted only for the 2N7000 (n = 2.0, from Vishay's two
+  threshold points); the BS250's sheet resolves nothing below about 30 mA, so
+  its pedal region is that n extrapolated, landing 1 mA at 3.2 V inside the
+  sheet's 1–3.5 V window. One resistance cannot bend the BS250's family
+  everywhere: the middle runs 7–20% under the curves. No drain resistance and
+  no mobility degradation as such, and the gate capacitances are constants
+  read at a pedal's bias rather than the steeply voltage-dependent things they
+  are — the gate-drain one doubles between 5 V and 1 V. And the part number is
+  not the die: onsemi's 2N7000 carries 1.6 times Vishay's current above 3 V,
+  onsemi's BS170 is a different, weaker die, and General Semiconductor's BS250
+  has three times Vishay's input capacitance. The threshold spread on a real
+  part (0.8 to 3 V; 1 to 3.5 V on the BS250) dwarfs every one of these; the
+  models are Vishay's typical part.
 - **Diodes:** the 1N4001 and the BAT41 carry junction capacitance, and the
   1N4001 its stored charge (transit time, 5.7 µs), integrated backward-Euler
   inside the device; the BAT41 its series resistance and guard ring. The older

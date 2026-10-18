@@ -843,6 +843,8 @@ void Circuit::clearState() noexcept
     {
         m.vGateLast = 0.0;
         m.vDrainLast = 0.0;
+        m.channelCurrentLast = 0.0;
+        m.vgsLast = m.vdsLast = m.slopeGateLast = m.slopeDrainLast = 0.0;
     }
 
     for (auto& s : voltageSources)

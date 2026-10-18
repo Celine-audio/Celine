@@ -163,6 +163,44 @@ TEST_CASE ("Circuit engine performance")
         });
     };
 
+    // A MOSFET drain-feedback stage driven into clipping, with and without the
+    // 2N7000's source resistance. The difference is the cost of solving it
+    // inside the device -- a few Newton steps on one scalar per evaluation.
+    for (const bool withSourceResistance : { true, false })
+    {
+        const auto* label = withSourceResistance ? "2N7000 stage, 512 samples (clipping) -- with Rs"
+                                                 : "2N7000 stage, 512 samples (clipping) -- Rs = 0";
+
+        BENCHMARK_ADVANCED (label)
+        (Catch::Benchmark::Chronometer meter)
+        {
+            auto model = Circuit::MosfetModel::n2N7000();
+
+            if (! withSourceResistance)
+                model.sourceResistance = 0.0;
+
+            Circuit stage;
+            stage.addVoltageSource ("rail", "gnd", 9.0);
+            stage.addResistor ("rail", "d", 10000.0);
+            stage.addResistor ("d", "g", 1.0e6);
+            stage.addResistor ("g", "gnd", 1.0e6);
+            stage.addCapacitor ("in", "g", 1.0e-6);
+            stage.addMosfet ("d", "g", "gnd", model);
+            stage.setInputNode ("in");
+            stage.setOutputNode ("d");
+            stage.prepare (benchmarkSampleRate);
+
+            auto block = makeBlock (1.5f);
+            std::vector<float> scratch (blockSize);
+
+            meter.measure ([&] (int) {
+                std::copy (block.begin(), block.end(), scratch.begin());
+                stage.process (scratch.data(), blockSize);
+                return scratch[0];
+            });
+        };
+    }
+
     // The same circuit solved both ways. DK eliminates the linear part once and
     // iterates on the 4 ports; full Newton stamps the devices into the whole
     // 10x10 and re-factorises every iteration. The gap here is what the method

@@ -325,9 +325,8 @@ namespace SchematicModel
             // Drain, gate, source -- the order addMosfet() wants, and the
             // JFET's pins, so the two swap on a sheet without rewiring.
             {"MOSFE Transistor", 3, {{2, -2}, {-2, 0}, {2, 2}}, "", "", 0.0,
-             "celine:mosfet-2n7000|2N7000|Threshold 2.1 V|N-channel;"
-             "celine:mosfet-bs170|BS170|Threshold 2.0 V, lower gain|N-channel;"
-             "celine:mosfet-bs250|BS250|Threshold -2.5 V|P-channel"},
+             "celine:mosfet-2n7000|2N7000|Threshold 2.1 V. Also BS170|N-channel;"
+             "celine:mosfet-bs250|BS250|Threshold -3.2 V|P-channel"},
 
             // in+, in-, out, then pins 1 and 8 -- the order addPowerAmp()
             // wants. The inputs and output sit where the op-amp's do; the gain

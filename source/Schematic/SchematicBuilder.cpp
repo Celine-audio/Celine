@@ -82,8 +82,7 @@ namespace SchematicModel
         {
             switch (index)
             {
-                case 1: return Circuit::MosfetModel::nBS170();
-                case 2: return Circuit::MosfetModel::pBS250();
+                case 1: return Circuit::MosfetModel::pBS250();
                 default: return Circuit::MosfetModel::n2N7000();
             }
         }

@@ -851,36 +851,185 @@ TEST_CASE("A BAT41 clips between a germanium diode and a 1N4148", "[diode][model
 // MOSFETs
 //==============================================================================
 
-TEST_CASE("The MOSFET models reproduce their datasheets", "[mosfet][model]")
+namespace
 {
-    // Vgs(th) is the datasheet's gate voltage for 1 mA with the drain strapped
-    // to the gate: 2.1 V typ (2N7000), 2.0 (BS170), and the BS250's from
-    // Philips's model, 2.53.
-    CHECK(thresholdAt(MosfetModel::n2N7000(), 1.0e-3) == Catch::Approx(2.10).margin(0.01));
-    CHECK(thresholdAt(MosfetModel::nBS170(), 1.0e-3) == Catch::Approx(2.00).margin(0.01));
-    CHECK(thresholdAt(MosfetModel::pBS250(), 1.0e-3) == Catch::Approx(2.53).margin(0.01));
+    /** Vds that carries `id` at `vgs` -- on-resistance is this over id. As a
+        magnitude, for either polarity. */
+    double drainVoltageFor(const MosfetModel& model, double vgs, double id)
+    {
+        const double p = model.polaritySign();
+        double lo = 0.0, hi = 60.0;
 
-    // Typical transconductance at 200 mA, Vds 10 V. The BS250's is the one
-    // figure its sheet gives and is fitted exactly; the N-channel parts are
-    // fitted to their whole output curves and land under the typical.
-    CHECK(transconductanceAt(MosfetModel::pBS250(), 0.2, 10.0) == Catch::Approx(0.150).epsilon(0.02));
-    CHECK(transconductanceAt(MosfetModel::n2N7000(), 0.2, 10.0) == Catch::Approx(0.320).epsilon(0.2));
-    CHECK(transconductanceAt(MosfetModel::nBS170(), 0.25, 10.0) == Catch::Approx(0.200).epsilon(0.25));
+        for (int i = 0; i < 200; ++i)
+        {
+            const double mid = 0.5 * (lo + hi);
+            (p * drainCurrent(model, p * vgs, p * mid) < id ? lo : hi) = mid;
+        }
 
-    // Typical output curves, in saturation.
-    const auto n7000 = MosfetModel::n2N7000();
-    CHECK(drainCurrent(n7000, 3.0, 5.0) == Catch::Approx(0.070).epsilon(0.2));
-    CHECK(drainCurrent(n7000, 4.0, 5.0) == Catch::Approx(0.395).epsilon(0.2));
-    CHECK(drainCurrent(n7000, 5.0, 5.0) == Catch::Approx(0.820).epsilon(0.1));
+        return lo;
+    }
 
-    const auto bs170 = MosfetModel::nBS170();
-    CHECK(drainCurrent(bs170, 4.0, 10.0) == Catch::Approx(0.115).epsilon(0.25));
-    CHECK(drainCurrent(bs170, 5.0, 10.0) == Catch::Approx(0.300).epsilon(0.05));
-    CHECK(drainCurrent(bs170, 6.0, 10.0) == Catch::Approx(0.580).epsilon(0.15));
-    CHECK(drainCurrent(bs170, 8.0, 10.0) == Catch::Approx(1.210).epsilon(0.1));
+    /** The body diode's forward voltage at `current`, gate at the source -- the
+        datasheet's source-drain diode test. */
+    double bodyDiodeVoltageAt(const MosfetModel& model, double current)
+    {
+        const double p = model.polaritySign();
+        double lo = 0.0, hi = 2.0;
 
-    // And the two N-channel parts really are different parts.
-    CHECK(transconductanceAt(bs170, 1.0e-3, 5.0) < 0.8 * transconductanceAt(n7000, 1.0e-3, 5.0));
+        for (int i = 0; i < 200; ++i)
+        {
+            const double mid = 0.5 * (lo + hi);
+            (-p * drainCurrent(model, 0.0, -p * mid) < current ? lo : hi) = mid;
+        }
+
+        return lo;
+    }
+}
+
+TEST_CASE("The 2N7000 reproduces Vishay's sheet", "[mosfet][model]")
+{
+    // Vishay Siliconix document 70226, typical column and typical curves, read
+    // from the PDF's own vector paths.
+    const auto m = MosfetModel::n2N7000();
+
+    // Vgs(th) with the drain strapped to the gate: 2.1 V at 1 mA, 2.0 V at
+    // 0.25 mA. The pair is what fixes n.
+    CHECK(thresholdAt(m, 1.0e-3) == Catch::Approx(2.10).margin(0.005));
+    CHECK(thresholdAt(m, 0.25e-3) == Catch::Approx(2.00).margin(0.005));
+
+    // Output characteristics, Vds 4.5 V, Vgs 3 to 7 V.
+    const std::pair<double, double> output[] = { { 3.0, 0.072 }, { 4.0, 0.241 }, { 5.0, 0.500 },
+                                                 { 6.0, 0.789 }, { 7.0, 1.078 } };
+
+    for (const auto& [vgs, id] : output)
+    {
+        INFO("Vgs " << vgs << ": " << drainCurrent(m, vgs, 4.5) << " A");
+        CHECK(drainCurrent(m, vgs, 4.5) == Catch::Approx(id).epsilon(0.07));
+    }
+
+    // In the triode region too, which is where the source resistance shows.
+    CHECK(drainCurrent(m, 5.0, 1.0) == Catch::Approx(0.296).epsilon(0.1));
+    CHECK(drainCurrent(m, 7.0, 1.0) == Catch::Approx(0.386).epsilon(0.05));
+
+    // rDS(on): 2.21 ohm at Vgs 10 V and 0.1 A, 3.2 at Vgs 5 V and 50 mA. With
+    // no source resistance the first came out 0.79.
+    CHECK(drainVoltageFor(m, 10.0, 0.1) / 0.1 == Catch::Approx(2.21).epsilon(0.1));
+    CHECK(drainVoltageFor(m, 5.0, 0.05) / 0.05 == Catch::Approx(3.20).epsilon(0.02));
+
+    // gfs 100 mS minimum for both numbers, at Vds 10 V and 0.2 A.
+    CHECK(transconductanceAt(m, 0.2, 10.0) > 0.100);
+
+    // gos 0.5 mS typ at Vds 5 V, 50 mA.
+    const double vgs50 = [&m]
+    {
+        double lo = 0.0, hi = 10.0;
+        for (int i = 0; i < 200; ++i)
+        {
+            const double mid = 0.5 * (lo + hi);
+            (drainCurrent(m, mid, 5.0) < 0.05 ? lo : hi) = mid;
+        }
+        return lo;
+    }();
+    const double gos = (drainCurrent(m, vgs50, 5.0 + 1.0e-4) - drainCurrent(m, vgs50, 5.0 - 1.0e-4)) / 2.0e-4;
+    CHECK(gos == Catch::Approx(0.5e-3).epsilon(0.05));
+
+    // Source-drain diode, 25 C curve: 0.597 / 0.666 / 0.754 V at 1 / 10 / 100 mA.
+    CHECK(bodyDiodeVoltageAt(m, 1.0e-3) == Catch::Approx(0.597).margin(0.008));
+    CHECK(bodyDiodeVoltageAt(m, 10.0e-3) == Catch::Approx(0.666).margin(0.008));
+    CHECK(bodyDiodeVoltageAt(m, 100.0e-3) == Catch::Approx(0.754).margin(0.008));
+
+    // Capacitance curve at Vdg 2.4 V, gate at the source: Ciss 26.5, Crss 6.3.
+    CHECK(m.capGateDrain == Catch::Approx(6.3e-12).epsilon(0.02));
+    CHECK(m.capGateSource + m.capGateDrain == Catch::Approx(26.5e-12).epsilon(0.02));
+}
+
+TEST_CASE("The BS250 reproduces Vishay's sheet", "[mosfet][model]")
+{
+    // Vishay Siliconix document 70209 (TP0610L/T, VP0610L/T, BS250), typical
+    // curves. Its typical column is the TP0610L's, so only the curves are held.
+    const auto m = MosfetModel::pBS250();
+    REQUIRE(m.channel == MosfetModel::Channel::P);
+
+    auto magnitude = [&m](double vgs, double vds) { return -drainCurrent(m, -vgs, -vds); };
+
+    // Transfer characteristic, 25 C, from where the line can be read.
+    const std::pair<double, double> transfer[] = { { 4.0, 0.0645 }, { 4.5, 0.156 }, { 5.0, 0.276 },
+                                                   { 6.0, 0.573 }, { 7.0, 0.879 } };
+
+    for (const auto& [vgs, id] : transfer)
+    {
+        INFO("-Vgs " << vgs << ": " << magnitude(vgs, 10.0) << " A");
+        CHECK(magnitude(vgs, 10.0) == Catch::Approx(id).epsilon(0.22));
+    }
+
+    // Output characteristics at -Vds 4.5 V: the model runs 7-20% under the
+    // middle of the family and on it at either end, which is the most one
+    // source resistance bends a square law.
+    const std::pair<double, double> output[] = { { 4.0, 0.064 }, { 5.0, 0.270 }, { 6.0, 0.551 },
+                                                 { 7.0, 0.796 }, { 8.0, 0.943 } };
+
+    for (const auto& [vgs, id] : output)
+    {
+        INFO("-Vgs " << vgs << ": " << magnitude(vgs, 4.5) << " A");
+        CHECK(magnitude(vgs, 4.5) == Catch::Approx(id).epsilon(0.21));
+    }
+
+    // rDS(on) at -Vgs 10 V: 2.88 ohm at 0.2 A off the curve (14 max).
+    CHECK(drainVoltageFor(m, 10.0, 0.2) / 0.2 == Catch::Approx(2.88).epsilon(0.06));
+    CHECK(drainVoltageFor(m, 10.0, 0.2) / 0.2 < 14.0);
+
+    // Inside the BS250's threshold window, -1 to -3.5 V, where 1 mA flows.
+    CHECK(thresholdAt(m, 1.0e-3) > 1.0);
+    CHECK(thresholdAt(m, 1.0e-3) < 3.5);
+
+    // Source-drain diode: 0.644 / 0.717 / 0.831 V at 1 / 10 / 100 mA.
+    CHECK(bodyDiodeVoltageAt(m, 1.0e-3) == Catch::Approx(0.644).margin(0.012));
+    CHECK(bodyDiodeVoltageAt(m, 10.0e-3) == Catch::Approx(0.717).margin(0.012));
+    CHECK(bodyDiodeVoltageAt(m, 100.0e-3) == Catch::Approx(0.831).margin(0.012));
+
+    // Capacitance curve at Vdg 1.5 V: Ciss 26.0, Crss 14.2.
+    CHECK(m.capGateDrain == Catch::Approx(14.2e-12).epsilon(0.02));
+    CHECK(m.capGateSource + m.capGateDrain == Catch::Approx(26.0e-12).epsilon(0.02));
+}
+
+TEST_CASE("A MOSFET's source resistance solves its own equation", "[mosfet][model]")
+{
+    // What the device stamps has to be the root of I = f(Vgs - I Rs, Vds - I Rs),
+    // with f the bare channel -- in every region and in both directions.
+    auto withRs = MosfetModel::n2N7000();
+    auto bare = withRs;
+    bare.sourceResistance = 0.0;
+
+    for (const double vgs : { 1.5, 2.1, 3.0, 6.0, 12.0 })
+        for (const double vds : { -0.5, -0.05, 0.02, 0.4, 5.0 })
+        {
+            double i = 0.0, g = 0.0, d = 0.0;
+            evaluateMosfetTerminals(withRs, vgs, vds, i, g, d);
+
+            const double rs = withRs.sourceResistance;
+            double f = 0.0;
+            evaluateMosfetChannelEitherWay(bare, vgs - i * rs, vds - i * rs, f, g, d);
+
+            INFO("Vgs " << vgs << ", Vds " << vds << ": " << i << " A against " << f);
+            CHECK(i == Catch::Approx(f).epsilon(1.0e-10).margin(1.0e-15));
+        }
+
+    // No resistance is no change at all, bit for bit.
+    for (const double vgs : { 1.9, 2.4, 5.0 })
+        for (const double vds : { -0.3, 0.1, 5.0 })
+        {
+            double a = 0.0, ag = 0.0, ad = 0.0, b = 0.0, bg = 0.0, bd = 0.0;
+            evaluateMosfetTerminals(bare, vgs, vds, a, ag, ad);
+            evaluateMosfetChannelEitherWay(bare, vgs, vds, b, bg, bd);
+            CHECK(juce::exactlyEqual(a, b));
+            CHECK(juce::exactlyEqual(ag, bg));
+            CHECK(juce::exactlyEqual(ad, bd));
+        }
+
+    // And it is what bends the curve: at a milliamp it barely moves anything,
+    // at half an amp it takes a third of the current away.
+    CHECK(drainCurrent(withRs, 2.1, 5.0) == Catch::Approx(drainCurrent(bare, 2.1, 5.0)).epsilon(0.03));
+    CHECK(drainCurrent(withRs, 5.0, 5.0) < 0.75 * drainCurrent(bare, 5.0, 5.0));
 }
 
 TEST_CASE("A MOSFET is off at zero gate voltage and exponential below threshold", "[mosfet][model]")
@@ -897,9 +1046,12 @@ TEST_CASE("A MOSFET is off at zero gate voltage and exponential below threshold"
 TEST_CASE("A MOSFET channel is symmetric and smooth through Vds = 0", "[mosfet][model]")
 {
     // The channel alone: the body diode is deliberately one-sided, and by
-    // -0.5 V it is already carrying tens of microamps.
+    // -0.5 V it is already carrying tens of microamps. So is the source
+    // resistance, which sits at one end only -- a real part is not symmetric
+    // either -- so it goes too, and its own smoothness is checked below.
     auto m = MosfetModel::n2N7000();
     m.bodyDiodeSaturationCurrent = 0.0;
+    m.sourceResistance = 0.0;
 
     // Swapping drain and source negates the current.
     for (const double vgs : { 1.8, 2.2, 3.0 })
@@ -914,11 +1066,17 @@ TEST_CASE("A MOSFET channel is symmetric and smooth through Vds = 0", "[mosfet][
     // The slope just either side of zero agrees, as the JFET's does.
     auto slope = [&m](double vds) { return (drainCurrent(m, 2.5, vds + 1.0e-9) - drainCurrent(m, 2.5, vds - 1.0e-9)) / 2.0e-9; };
     CHECK(slope(-1.0e-6) == Catch::Approx(slope(1.0e-6)).epsilon(1.0e-3));
+
+    // With the source resistance back, still smooth through zero.
+    auto full = MosfetModel::n2N7000();
+    full.bodyDiodeSaturationCurrent = 0.0;
+    auto fullSlope = [&full](double vds) { return (drainCurrent(full, 2.5, vds + 1.0e-9) - drainCurrent(full, 2.5, vds - 1.0e-9)) / 2.0e-9; };
+    CHECK(fullSlope(-1.0e-6) == Catch::Approx(fullSlope(1.0e-6)).epsilon(1.0e-3));
 }
 
 TEST_CASE("The MOSFET Jacobian is the derivative of what it stamps", "[mosfet][model]")
 {
-    for (const auto& model : { MosfetModel::n2N7000(), MosfetModel::nBS170(), MosfetModel::pBS250() })
+    for (const auto& model : { MosfetModel::n2N7000(), MosfetModel::pBS250() })
     {
         Mosfet m {};
         m.model = model;
@@ -926,7 +1084,9 @@ TEST_CASE("The MOSFET Jacobian is the derivative of what it stamps", "[mosfet][m
 
         // Subthreshold, moderate and strong inversion; triode, saturation,
         // reverse, and the body diode conducting.
-        for (const double vgs : { 0.5, 1.9, 2.1, 2.4, 4.0 })
+        // Strong inversion runs up to 10 V, where the source resistance is
+        // doing most of the work and its implicit slopes are most exposed.
+        for (const double vgs : { 0.5, 1.9, 2.1, 2.4, 3.3, 4.0, 6.0, 10.0 })
             for (const double vds : { -0.7, -0.2, 0.05, 0.3, 5.0 })
                 checkJacobian(m, p * vgs, p * vds);
     }
@@ -985,7 +1145,10 @@ TEST_CASE("A MOSFET stage biases itself and amplifies", "[circuit][mosfet]")
     // The gate is insulated, so the divider is exactly a divider.
     CHECK(circuit.getNodeVoltage("g") == Catch::Approx(0.5 * vd).epsilon(1.0e-6));
 
-    // About gm * 10k, inverting: gm near 8.5 mS at half a milliamp.
+    // About gm * 10k, inverting: gm near 6.5 mS at half a milliamp. It was
+    // 8.5 before n was fitted -- Vishay's two threshold points put it at 2.0,
+    // not the 1.5 that had been assumed, and a gentler subthreshold slope is
+    // less gain per milliamp at the bottom of the curve. Measured 63.8.
     circuit.setOutputOffsetToOperatingPoint();
     const float gain = amplitudeOf(circuit, 1000.0, 1.0e-3f, sampleRate, 0.5) / 1.0e-3f;
     INFO("gain " << gain);
@@ -999,12 +1162,15 @@ TEST_CASE("A P-channel MOSFET stage mirrors an N-channel one", "[circuit][mosfet
     auto circuit = makeMosfetStage(MosfetModel::pBS250(), Circuit::SolverStrategy::Auto);
     REQUIRE(circuit.foundOperatingPoint());
 
-    // The drain hangs below the rail by as much as the N stage's sits above
-    // ground, give or take the BS250's higher threshold.
+    // The same stage upside down, so the drain hangs below the rail -- but by
+    // twice the gate's drive, and the BS250 needs a good deal more drive than
+    // the 2N7000 for the same current: about 3.1 V at 0.3 mA against 2.05 V.
+    // So the drain sits about 6.2 V under the rail, at about 2.8 V, where the
+    // N stage's sits 4.1 V over ground.
     const double vd = circuit.getNodeVoltage("d");
     INFO("drain at " << vd << " V");
-    CHECK(vd > 3.6);
-    CHECK(vd < 5.4);
+    CHECK(vd > 2.3);
+    CHECK(vd < 3.3);
 
     circuit.setOutputOffsetToOperatingPoint();
     CHECK(amplitudeOf(circuit, 1000.0, 1.0e-3f, sampleRate, 0.5) > 20.0e-3f);
@@ -1012,8 +1178,8 @@ TEST_CASE("A P-channel MOSFET stage mirrors an N-channel one", "[circuit][mosfet
 
 TEST_CASE("DK and full Newton agree on a MOSFET stage", "[circuit][mosfet][dk]")
 {
-    auto dk = makeMosfetStage(MosfetModel::nBS170(), Circuit::SolverStrategy::DiscreteK);
-    auto full = makeMosfetStage(MosfetModel::nBS170(), Circuit::SolverStrategy::FullNewton);
+    auto dk = makeMosfetStage(MosfetModel::n2N7000(), Circuit::SolverStrategy::DiscreteK);
+    auto full = makeMosfetStage(MosfetModel::n2N7000(), Circuit::SolverStrategy::FullNewton);
 
     const double step = 2.0 * std::numbers::pi * 700.0 / sampleRate;
     double worst = 0.0;
@@ -1302,8 +1468,11 @@ TEST_CASE("The junction capacitance option reaches the MOSFET", "[plugin][schema
     const float on = probeStage(ElementType::Mosfet, 0, with, 10000.0);
     const float off = probeStage(ElementType::Mosfet, 0, without, 10000.0);
 
+    // 8.5% down at 10 kHz with Vishay's 6.3 pF gate-drain, which is half
+    // what the card used to carry -- the test is that the option reaches the
+    // part, not how much there is to reach.
     INFO("10 kHz: " << on << " with the capacitances, " << off << " without");
-    CHECK(on < 0.9f * off);
+    CHECK(on < 0.95f * off);
 
     // And at a low frequency they agree: it is only the capacitance.
     CHECK(probeStage(ElementType::Mosfet, 0, with, 100.0)
