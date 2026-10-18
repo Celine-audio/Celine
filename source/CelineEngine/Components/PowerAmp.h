@@ -124,6 +124,18 @@ namespace CircuitComponents
 
         double midpoint() const noexcept { return 0.5 * supply; }
 
+        /** As the op-amp's: each clamp rail sits this much inside its headroom. */
+        static constexpr double clampDiodeDrop = 0.7;
+
+        /** The span the output can move in, as OpAmpModel::outputRange(). Zero
+            or less and the clamps overlap and pin the output. That also covers
+            the bias network running dry -- quiescentCurrent() reaching zero at
+            emitterOffset -- which happens at a lower supply still. */
+        double outputRange() const noexcept
+        {
+            return supply - headroomHigh - headroomLow - 2.0 * clampDiodeDrop;
+        }
+
         /** The pair transistors' quiescent current: the bias network's current
             with the emitters at emitterOffset. */
         double quiescentCurrent() const noexcept

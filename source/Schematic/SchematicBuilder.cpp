@@ -411,6 +411,43 @@ namespace SchematicModel
                 return juce::String(unset) + (unset == 1 ? " part has" : " parts have")
                      + " no value yet.";
 
+            // A supply an amplifier's model cannot run on. Below it the two clamp
+            // diodes overlap, both conduct at rest, and the output sits at one
+            // level whatever goes in -- which builds, solves and plays, so without
+            // this it reads as a broken circuit rather than a starved part. The
+            // limit is the model's, not the datasheet's: starving a part is a
+            // sound worth having, right down to where the model stops meaning
+            // anything.
+            int starved = 0;
+
+            for (const auto& element : schematic.getElements())
+            {
+                double range = 1.0;
+
+                if (element.type == ElementType::OpAmp && element.modelIndex != idealOpAmpIndex)
+                    range = opAmpModelFor(element.modelIndex).withRails(element.value, 0.0).outputRange();
+                else if (element.type == ElementType::PowerAmp)
+                    range = Circuit::PowerAmpModel::lm386().withSupply(element.value).outputRange();
+
+                if (range > 0.0)
+                    continue;
+
+                const auto models = getModelChoices(element.type);
+                const auto name = juce::isPositiveAndBelow(element.modelIndex, models.size())
+                                    ? models[element.modelIndex]
+                                    : juce::String("part");
+
+                result.add(Severity::Error,
+                           "Supply too low for the " + name + ": it needs more than "
+                               + juce::String(element.value - range, 1) + " V.",
+                           {}, &element);
+                ++starved;
+            }
+
+            if (starved > 0)
+                return juce::String(starved) + (starved == 1 ? " amplifier has" : " amplifiers have")
+                     + " too low a supply to run.";
+
             return {};
         }
 

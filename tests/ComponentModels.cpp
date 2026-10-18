@@ -1508,6 +1508,69 @@ namespace
         REQUIRE(std::isfinite(peak));
         return peak;
     }
+
+    /** A non-inverting op-amp stage with a gain of 101, drawn, on a single 9 V
+        supply with its input at ground -- so the output rests on the low clamp
+        and swings up from it. Driven at 10 kHz hard enough to clip, which puts
+        both the gain-bandwidth product (the closed loop's corner is GBW / 101,
+        a few times 10 kHz) and the output headroom into the answer. Returns
+        the settled amplitude at the output. */
+    float probeOpAmpStage(int modelIndex)
+    {
+        Schematic schematic;
+
+        const auto amp = schematic.addElement(ElementType::OpAmp, 0, 0);
+        schematic.findElement(amp)->modelIndex = modelIndex;
+        schematic.findElement(amp)->value = 9.0;
+
+        auto pin = [&schematic](int id, int index) { return schematic.findElement(id)->getPinPosition(index); };
+
+        auto label = [&schematic](juce::Point<int> at, const char* name, int dx)
+        {
+            const auto id = schematic.addElement(ElementType::Node, at.x + dx - 2, at.y);
+            schematic.findElement(id)->label = name;
+
+            if (dx != 0)
+                schematic.addWire(at, { at.x + dx, at.y });
+        };
+
+        // In+, in-, out.
+        label(pin(amp, 0), "src", -4);
+        label(pin(amp, 1), "fb", -4);
+        label(pin(amp, 2), "amp", 4);
+
+        const auto ground = schematic.addElement(ElementType::Ground, 50, 22);
+        label(pin(ground, 0), "com", 0);
+
+        auto resistor = [&](int x, const char* top, const char* bottom, double ohms)
+        {
+            const auto r = schematic.addElement(ElementType::Resistor, x, 40);
+            schematic.findElement(r)->value = ohms;
+            label(pin(r, 0), top, -4);
+            label(pin(r, 1), bottom, -4);
+        };
+
+        resistor(10, "amp", "fb", 100000.0);
+        resistor(20, "fb", "com", 1000.0);
+
+        const auto input = schematic.addElement(ElementType::Input, -40, 60);
+        label(pin(input, 0), "src", 4);
+
+        const auto output = schematic.addElement(ElementType::Output, 0, 80);
+        label(pin(output, 0), "amp", -4);
+
+        auto result = buildCircuits(schematic, sampleRate, 1);
+        INFO(result.error);
+        REQUIRE(result.isValid());
+
+        auto& circuit = *result.circuits[0];
+        REQUIRE(circuit.foundOperatingPoint());
+        circuit.setOutputOffsetToOperatingPoint();
+
+        const float peak = amplitudeOf(circuit, 10000.0, 0.05f, sampleRate, 0.2);
+        REQUIRE(std::isfinite(peak));
+        return peak;
+    }
 }
 
 TEST_CASE("Every transistor and MOSFET model in the palette reaches the engine", "[plugin][schematic]")
@@ -1527,6 +1590,78 @@ TEST_CASE("Every transistor and MOSFET model in the palette reaches the engine",
             INFO(getElementInfo(type).name << " model " << i << " (" << choices[i] << ") behaves as model 0");
             CHECK(std::abs(probeStage(type, i) - first) > 1.0e-6f);
         }
+    }
+}
+
+TEST_CASE("Every op-amp model in the palette reaches the engine", "[plugin][schematic]")
+{
+    // The op-amp switch ends in `default:` like the others, so an index it
+    // forgot builds as the TL072 -- still an op-amp, still a sound, and nothing
+    // on the sheet to say so. The ideal one is built by a different call
+    // altogether, and is in the loop to show that branch is reached as well.
+    const auto choices = getModelChoices(ElementType::OpAmp);
+    REQUIRE(choices.size() > 1);
+
+    const float first = probeOpAmpStage(0);
+
+    for (int i = 1; i < choices.size(); ++i)
+    {
+        INFO("op-amp model " << i << " (" << choices[i] << ") behaves as model 0");
+        CHECK(std::abs(probeOpAmpStage(i) - first) > 1.0e-6f);
+    }
+}
+
+TEST_CASE("An amplifier with too low a supply is refused by name", "[plugin][schematic]")
+{
+    // Below its model's limit the two clamps overlap and pin the output, which
+    // builds and plays as a fixed level. Refused, naming the part, instead.
+    const auto stage = [](ElementType type, double supply)
+    {
+        Schematic schematic;
+
+        const auto amp = schematic.addElement(type, 0, 0);
+        schematic.findElement(amp)->value = supply;
+
+        auto pin = [&schematic](int id, int index) { return schematic.findElement(id)->getPinPosition(index); };
+
+        auto label = [&schematic](juce::Point<int> at, const char* name, int dx)
+        {
+            const auto id = schematic.addElement(ElementType::Node, at.x + dx - 2, at.y);
+            schematic.findElement(id)->label = name;
+
+            if (dx != 0)
+                schematic.addWire(at, { at.x + dx, at.y });
+        };
+
+        label(pin(amp, 0), "src", -4);
+        label(pin(amp, 1), "com", -4);
+        label(pin(amp, 2), "amp", 4);
+
+        const auto ground = schematic.addElement(ElementType::Ground, 50, 22);
+        label(pin(ground, 0), "com", 0);
+
+        const auto input = schematic.addElement(ElementType::Input, -40, 60);
+        label(pin(input, 0), "src", 4);
+
+        const auto output = schematic.addElement(ElementType::Output, 0, 80);
+        label(pin(output, 0), "amp", -4);
+
+        return std::make_pair(buildCircuits(schematic, sampleRate, 1), amp);
+    };
+
+    for (const auto type : { ElementType::OpAmp, ElementType::PowerAmp })
+    {
+        INFO(getElementInfo(type).name);
+
+        const auto [starved, id] = stage(type, 2.0);
+        CHECK_FALSE(starved.isValid());
+
+        const auto named = std::find_if(starved.diagnostics.begin(), starved.diagnostics.end(),
+                                        [id](const Diagnostic& d)
+                                        { return d.isError() && d.elementId == id && d.text.contains("Supply too low"); });
+        CHECK(named != starved.diagnostics.end());
+
+        CHECK(stage(type, 9.0).first.isValid());
     }
 }
 

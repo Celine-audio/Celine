@@ -205,6 +205,78 @@ void PluginProcessor::changeProgramName (int index, const juce::String& newName)
 
 SchematicModel::BuildResult PluginProcessor::rebuild()
 {
+    return rebuildAt (oversamplingFactor, nullptr);
+}
+
+PluginProcessor::PreparedOversampler PluginProcessor::makeOversampler (int factor) const
+{
+    PreparedOversampler prepared;
+
+    if (factor > 1)
+    {
+        // Polyphase IIR halfband: much cheaper than an equiripple FIR and the
+        // phase distortion it trades for that is irrelevant in front of a guitar
+        // amp, which is a minimum-phase device from end to end anyway.
+        const auto stages = static_cast<size_t> (juce::findHighestSetBit (static_cast<juce::uint32> (factor)));
+
+        prepared.filters = std::make_unique<juce::dsp::Oversampling<float>> (
+            2, stages, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true, false);
+
+        prepared.filters->initProcessing (static_cast<size_t> (preparedBlockSize));
+        prepared.filters->reset();
+
+        prepared.latency = juce::roundToInt (prepared.filters->getLatencyInSamples());
+    }
+
+    return prepared;
+}
+
+void PluginProcessor::installOversamplerNow (PreparedOversampler& fresh, int factor)
+{
+    // The swap itself is the only part the audio thread has to be kept out of.
+    // Assigning straight over `oversampler` without this destroyed the object
+    // the audio thread was in the middle of calling -- a use-after-free that
+    // crashed Ableton the moment the oversampling factor was changed during
+    // playback. `fresh` leaves holding the old one, which then destructs with
+    // it, off-lock.
+    {
+        const juce::SpinLock::ScopedLockType lock (circuitLock);
+
+        // A circuit fading out on the shared filters keeps them to the end of
+        // its fade, rather than changing rate partway down.
+        if (fadeOutRemaining > 0 && ! fadingOwnOversampler)
+        {
+            fadingOversampler = std::move (oversampler);
+            fadingOwnOversampler = true;
+        }
+
+        fresh.filters.swap (oversampler);
+    }
+
+    oversamplingFactor = factor;
+
+    // After the swap, so the host is never told about a latency the running
+    // filter chain doesn't have.
+    setLatencySamples (fresh.latency);
+}
+
+void PluginProcessor::cancelRebuildFade()
+{
+    std::vector<std::unique_ptr<Circuit>> stale;
+    std::unique_ptr<juce::dsp::Oversampling<float>> staleFilters;
+
+    {
+        const juce::SpinLock::ScopedLockType lock (circuitLock);
+        stale.swap (fadingCircuits);
+        staleFilters.swap (fadingOversampler);
+        fadingOwnOversampler = false;
+        fadeOutRemaining = 0;
+        fadeInRemaining = 0;
+    }
+}
+
+SchematicModel::BuildResult PluginProcessor::rebuildAt (int factor, PreparedOversampler* fresh)
+{
     const auto channelCount = juce::jmax (1, getTotalNumOutputChannels());
 
     // The expensive part -- stamping, factorising, and a Newton solve for the
@@ -213,9 +285,8 @@ SchematicModel::BuildResult PluginProcessor::rebuild()
     // The circuit runs at the oversampled rate, which is the only place the
     // factor enters the engine at all -- everything downstream just sees a
     // higher sample rate.
-    auto result = SchematicModel::buildCircuits (schematic,
-                                                 currentSampleRate * oversamplingFactor,
-                                                 channelCount, buildOptions);
+    const double rate = currentSampleRate * factor;
+    auto result = SchematicModel::buildCircuits (schematic, rate, channelCount, buildOptions);
 
     // A load can substitute a model it could not find, and that has to reach the
     // console -- which listens to the build, and a load is always followed by
@@ -242,7 +313,15 @@ SchematicModel::BuildResult PluginProcessor::rebuild()
     }
 
     if (! result.isValid())
-        return result; // leave whatever was running alone
+    {
+        // Leave whatever was running alone. A new oversampler still goes in, as
+        // it always has: the factor is the setting asked for, and a sheet that
+        // does not build at it is reported rather than allowed to veto it.
+        if (fresh != nullptr)
+            installOversamplerNow (*fresh, factor);
+
+        return result;
+    }
 
     // Copied here, off-lock, because a copy allocates: every LiveControl owns a
     // vector and a string, and so does every probe. The lock below is for
@@ -252,18 +331,81 @@ SchematicModel::BuildResult PluginProcessor::rebuild()
     auto incomingProbes = result.probes;
     auto incomingCurrentProbes = result.currentProbes;
 
-    // Holds whatever was running until the lock is released. Destroying a
+    // Holds whatever is being let go until the lock is released. Destroying a
     // Circuit frees a dozen vectors and two solvers, and doing that inside the
     // lock is the same mistake as building inside it: every microsecond held is
     // another chance the audio thread gives up and passes a block dry.
-    std::vector<std::unique_ptr<Circuit>> outgoingCircuits;
+    std::vector<std::unique_ptr<Circuit>> outgoingCircuits, finishedCircuits;
+    std::unique_ptr<juce::dsp::Oversampling<float>> outgoingFilters, finishedFilters;
 
-    // And this is the only part the audio thread has to be kept out of: four
-    // swaps, no allocation, no destructor.
+    // At the host's rate: the fade is applied after the circuit comes back down.
+    const int fadeLength = juce::jmax (1, juce::roundToInt (rebuildFadeSeconds * currentSampleRate));
+
+    // And this is the only part the audio thread has to be kept out of: a few
+    // swaps and moves, no allocation, no destructor.
     {
         const juce::SpinLock::ScopedLockType lock (circuitLock);
-        outgoingCircuits.swap (circuits);
-        circuits.swap (result.circuits);
+        rebuildFadeLength = fadeLength;
+
+        if (circuits.empty())
+        {
+            // Nothing playing, so nothing to fade out of: the first build, or
+            // the first since one failed.
+            circuits.swap (result.circuits);
+
+            if (fresh != nullptr)
+            {
+                outgoingFilters = std::move (oversampler);
+                oversampler = std::move (fresh->filters);
+            }
+        }
+        else if (fadeOutRemaining > 0)
+        {
+            // Already fading out of an older circuit. That carries on to the
+            // silence it was heading for; what was waiting to fade in has not
+            // been heard, so it goes and this one waits in its place.
+            outgoingCircuits.swap (circuits);
+            circuits.swap (result.circuits);
+
+            if (fresh != nullptr)
+            {
+                // The circuit fading out keeps the filters it was running on.
+                if (fadingOwnOversampler)
+                    outgoingFilters = std::move (oversampler);
+                else
+                    fadingOversampler = std::move (oversampler);
+
+                fadingOwnOversampler = true;
+                oversampler = std::move (fresh->filters);
+            }
+        }
+        else
+        {
+            // Start the fade out, from wherever the level stands: all the way
+            // up, or partway up a fade in that this rebuild interrupts, so it
+            // turns round without a step.
+            finishedCircuits.swap (fadingCircuits);
+            finishedFilters = std::move (fadingOversampler);
+
+            fadingCircuits.swap (circuits);
+            circuits.swap (result.circuits);
+
+            // A new factor: the old circuit fades out on the filters it was
+            // discretised with, and the new one comes in on its own. The same
+            // factor: one set of filters, used by each in turn.
+            fadingOwnOversampler = fresh != nullptr;
+
+            if (fresh != nullptr)
+            {
+                fadingOversampler = std::move (oversampler);
+                oversampler = std::move (fresh->filters);
+            }
+
+            fadeOutRemaining = juce::jmax (1, fadeLength - fadeInRemaining);
+            fadeInRemaining = 0;
+            rebuildFadeFinished.store (false);
+        }
+
         controls.swap (incomingControls);
 
         // In step with the circuits, and for the same reason: a probe's node
@@ -272,9 +414,19 @@ SchematicModel::BuildResult PluginProcessor::rebuild()
         currentProbes.swap (incomingCurrentProbes);
     }
 
-    // outgoingCircuits and the three incoming* locals now hold the old contents,
-    // and destruct on the way out of this function -- off-lock, which was the
-    // whole point.
+    // outgoing*, finished* and the three incoming* locals now hold the old
+    // contents, and destruct on the way out of this function -- off-lock, which
+    // was the whole point.
+
+    if (fresh != nullptr)
+    {
+        oversamplingFactor = factor;
+
+        // The host hears the new latency at once, while the old circuit is
+        // still fading out at the old one -- under a fade on its way to
+        // silence, where a few samples' shift cannot be heard.
+        setLatencySamples (fresh->latency);
+    }
 
     prepareScopes();
 
@@ -312,6 +464,28 @@ SchematicModel::BuildResult PluginProcessor::rebuild()
     return result;
 }
 
+void PluginProcessor::releaseFadedCircuits()
+{
+    if (! rebuildFadeFinished.exchange (false))
+        return;
+
+    std::vector<std::unique_ptr<Circuit>> finished;
+    std::unique_ptr<juce::dsp::Oversampling<float>> finishedFilters;
+
+    {
+        const juce::SpinLock::ScopedLockType lock (circuitLock);
+
+        // A rebuild since the flag was set may have started another fade out,
+        // and what is in there now is that one's.
+        if (fadeOutRemaining == 0)
+        {
+            finished.swap (fadingCircuits);
+            finishedFilters.swap (fadingOversampler);
+            fadingOwnOversampler = false;
+        }
+    }
+}
+
 std::vector<SchematicModel::LiveControl> PluginProcessor::getLiveControls() const
 {
     const juce::SpinLock::ScopedLockType lock (circuitLock);
@@ -319,46 +493,6 @@ std::vector<SchematicModel::LiveControl> PluginProcessor::getLiveControls() cons
 }
 
 //==============================================================================
-void PluginProcessor::prepareOversampler()
-{
-    // Built here, off-lock, exactly like rebuild() builds its circuits: this
-    // allocates and designs filters, and none of that may happen while the audio
-    // thread is held up.
-    std::unique_ptr<juce::dsp::Oversampling<float>> prepared;
-    int latency = 0;
-
-    if (oversamplingFactor > 1)
-    {
-        // Polyphase IIR halfband: much cheaper than an equiripple FIR and the
-        // phase distortion it trades for that is irrelevant in front of a guitar
-        // amp, which is a minimum-phase device from end to end anyway.
-        const auto stages = static_cast<size_t> (juce::findHighestSetBit (static_cast<juce::uint32> (oversamplingFactor)));
-
-        prepared = std::make_unique<juce::dsp::Oversampling<float>> (
-            2, stages, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true, false);
-
-        prepared->initProcessing (static_cast<size_t> (preparedBlockSize));
-        prepared->reset();
-
-        latency = juce::roundToInt (prepared->getLatencyInSamples());
-    }
-
-    // The swap itself is the only part the audio thread has to be kept out of.
-    // Assigning straight over `oversampler` without this destroyed the object
-    // the audio thread was in the middle of calling -- a use-after-free that
-    // crashed Ableton the moment the oversampling factor was changed during
-    // playback. `prepared` leaves holding the old one, which then destructs
-    // below, off-lock.
-    {
-        const juce::SpinLock::ScopedLockType lock (circuitLock);
-        prepared.swap (oversampler);
-    }
-
-    // After the swap, so the host is never told about a latency the running
-    // filter chain doesn't have.
-    setLatencySamples (latency);
-}
-
 // A power of two up to the maximum, never 3 or 12: the filter chain only comes
 // in powers of two, so anything between -- reachable from a hand-edited
 // document -- would prepare the circuits at one rate and the halfbands at
@@ -372,12 +506,14 @@ static int normaliseOversamplingFactor (int factor) noexcept
 
 SchematicModel::BuildResult PluginProcessor::setOversamplingFactor (int factor)
 {
-    oversamplingFactor = normaliseOversamplingFactor (factor);
-    prepareOversampler();
+    factor = normaliseOversamplingFactor (factor);
 
     // The circuits have to be re-prepared: the DK discretisation is built around
-    // a fixed timestep, so running four times as fast is a different matrix.
-    return rebuild();
+    // a fixed timestep, so running four times as fast is a different matrix. The
+    // filters and the circuits go in together, through the same fade as any
+    // rebuild -- the old circuit out on the old filters, the new in on the new.
+    auto filters = makeOversampler (factor);
+    return rebuildAt (factor, &filters);
 }
 
 void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
@@ -402,8 +538,16 @@ void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     // background, before it plays at the wrong pitch.
     inputFile.prepare (sampleRate);
 
-    prepareOversampler();
+    // Straight in, with no fade. The audio is stopped, so there is nothing to
+    // fade out of: what the old circuit was in the middle of is not what plays
+    // next, and it was built for a rate and a block size that may both be gone.
+    {
+        auto filters = makeOversampler (oversamplingFactor);
+        installOversamplerNow (filters, oversamplingFactor);
+    }
+
     rebuild();
+    cancelRebuildFade();
 
     // After rebuild(), which is what fills `probes` -- and again here because
     // the column width follows the sample rate we have just been handed.
@@ -845,23 +989,29 @@ bool PluginProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
   #endif
 }
 
-void PluginProcessor::runStereo (float* left, float* right, int count, const BlockState& state)
+void PluginProcessor::runStereo (std::vector<std::unique_ptr<Circuit>>& set, bool live,
+                                 float* left, float* right, int count, const BlockState& state)
 {
     float* channels[2] = { left, right };
 
     for (int channel = 0; channel < 2; ++channel)
     {
-        if (channels[channel] == nullptr || static_cast<size_t> (channel) >= circuits.size())
+        if (channels[channel] == nullptr || static_cast<size_t> (channel) >= set.size())
             continue;
 
-        auto& circuit = *circuits[static_cast<size_t> (channel)];
+        auto& circuit = *set[static_cast<size_t> (channel)];
         auto* samples = channels[channel];
-        applyControls (circuit, state);
+
+        // The controls and the probes were built for the live circuit. One
+        // fading out after a rebuild keeps the settings it already has, and is
+        // not measured: its nodes are not the ones the probes name.
+        if (live)
+            applyControls (circuit, state);
 
         // Everything measured is measured on the left only: both sides run the
         // same drawing, so twice would be the same numbers at twice the cost --
         // and for the running averages it would count each window twice.
-        const bool measured = channel == 0;
+        const bool measured = live && channel == 0;
         const bool probed = measured && ! probes.empty();
 
         for (int s = 0; s < count; ++s)
@@ -883,10 +1033,17 @@ void PluginProcessor::runStereo (float* left, float* right, int count, const Blo
     }
 }
 
-void PluginProcessor::runMono (float* left, float* right, int count, const BlockState& state)
+void PluginProcessor::runMono (std::vector<std::unique_ptr<Circuit>>& set, bool live,
+                               float* left, float* right, int count, const BlockState& state)
 {
-    auto& circuit = *circuits[0];
-    applyControls (circuit, state);
+    if (set.empty())
+        return;
+
+    auto& circuit = *set[0];
+
+    // See runStereo.
+    if (live)
+        applyControls (circuit, state);
 
     const bool haveTwoInputs = right != nullptr;
 
@@ -903,10 +1060,13 @@ void PluginProcessor::runMono (float* left, float* right, int count, const Block
 
         const float wet = circuit.process (source * state.inputGain) * state.outputGain;
 
-        if (! probes.empty())
-            sampleScopes (circuit);
+        if (live)
+        {
+            if (! probes.empty())
+                sampleScopes (circuit);
 
-        sampleInspectedCurrent (circuit);
+            sampleInspectedCurrent (circuit);
+        }
 
         // Written whatever the bypass says. Bypass stays a true bypass --
         // whatever arrived, untouched, stereo image and all -- because the
@@ -916,6 +1076,45 @@ void PluginProcessor::runMono (float* left, float* right, int count, const Block
 
         if (right != nullptr)
             right[s] = wet;
+    }
+}
+
+void PluginProcessor::applyRebuildFade (juce::AudioBuffer<float>& piece, bool outgoing) noexcept
+{
+    const auto numSamples = piece.getNumSamples();
+    const auto channels = piece.getNumChannels();
+    const auto length = (float) rebuildFadeLength;
+
+    if (outgoing)
+    {
+        // Down to silence. The piece was cut to end exactly where this does.
+        for (int i = 0; i < numSamples && fadeOutRemaining > 0; ++i, --fadeOutRemaining)
+        {
+            const auto gain = (float) fadeOutRemaining / length;
+
+            for (int c = 0; c < channels; ++c)
+                piece.setSample (c, i, piece.getSample (c, i) * gain);
+        }
+
+        // Silent: the new circuit comes in from here, and the old one is done
+        // with -- for the message thread to free, which it is told.
+        if (fadeOutRemaining == 0)
+        {
+            fadeInRemaining = rebuildFadeLength;
+            rebuildFadeFinished.store (true);
+        }
+
+        return;
+    }
+
+    // Up from silence. One gain per sample for every channel, so the image
+    // does not lean while it rises.
+    for (int i = 0; i < numSamples && fadeInRemaining > 0; ++i, --fadeInRemaining)
+    {
+        const auto gain = 1.0f - (float) fadeInRemaining / length;
+
+        for (int c = 0; c < channels; ++c)
+            piece.setSample (c, i, piece.getSample (c, i) * gain);
     }
 }
 
@@ -947,38 +1146,42 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     // Never wait. A rebuild holds the lock only long enough to move a few
     // pointers, so failing to get it costs one dry block -- better than a stall
-    // and better than silence.
+    // and better than silence. Dry through the bypass fade, though, not by
+    // returning early: that would send the input out undelayed, a jump by the
+    // latency, and leave the dry delay line a block behind.
     const juce::SpinLock::ScopedTryLockType lock (circuitLock);
-
-    if (! lock.isLocked() || circuits.empty())
-        return;
+    const bool circuitReady = lock.isLocked() && ! circuits.empty();
 
     BlockState state;
-    state.mode = static_cast<ChannelMode> (channelModeParameter->getIndex());
     state.bypassed = bypassValue->load() > 0.5f;
-    state.inputGain = juce::Decibels::decibelsToGain (inputGainValue->load());
-    state.outputGain = juce::Decibels::decibelsToGain (outputGainValue->load());
 
-    // Read once per block: moving a knob re-stamps and re-factorises the matrix,
-    // and costs nothing when nothing moved, Circuit only dirtying on a change.
-    //
-    // Through the cached cells rather than by id: the ids were built here, and
-    // building one allocates.
-    for (int i = 0; i < maxLiveControls; ++i)
-        state.controls[i] = controlValues[(size_t) i]->load();
-
-    state.controlCount = juce::jmin (static_cast<int> (controls.size()), maxLiveControls);
-
-    // Coming back to stereo, the right-hand circuit has been idle and its
-    // capacitors still hold the charge they had when it stopped. Clearing costs
-    // one bias solve, on a user action, and saves a thump.
-    if (state.mode != lastChannelMode)
+    if (circuitReady)
     {
-        if (state.mode == ChannelMode::Stereo)
-            for (size_t c = 1; c < circuits.size(); ++c)
-                circuits[c]->reset();
+        state.mode = static_cast<ChannelMode> (channelModeParameter->getIndex());
+        state.inputGain = juce::Decibels::decibelsToGain (inputGainValue->load());
+        state.outputGain = juce::Decibels::decibelsToGain (outputGainValue->load());
 
-        lastChannelMode = state.mode;
+        // Read once per block: moving a knob re-stamps and re-factorises the matrix,
+        // and costs nothing when nothing moved, Circuit only dirtying on a change.
+        //
+        // Through the cached cells rather than by id: the ids were built here, and
+        // building one allocates.
+        for (int i = 0; i < maxLiveControls; ++i)
+            state.controls[i] = controlValues[(size_t) i]->load();
+
+        state.controlCount = juce::jmin (static_cast<int> (controls.size()), maxLiveControls);
+
+        // Coming back to stereo, the right-hand circuit has been idle and its
+        // capacitors still hold the charge they had when it stopped. Clearing costs
+        // one bias solve, on a user action, and saves a thump.
+        if (state.mode != lastChannelMode)
+        {
+            if (state.mode == ChannelMode::Stereo)
+                for (size_t c = 1; c < circuits.size(); ++c)
+                    circuits[c]->reset();
+
+            lastChannelMode = state.mode;
+        }
     }
 
     // Everything below was sized in prepareToPlay for the block the host
@@ -995,9 +1198,18 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // to match.
     const auto latency = getLatencySamples();
 
-    for (int start = 0; start < numSamples; start += preparedBlockSize)
+    for (int start = 0, count = 0; start < numSamples; start += count)
     {
-        const int count = juce::jmin (preparedBlockSize, numSamples - start);
+        // A rebuild's fade out, while one runs: the old circuit, on its own
+        // filters if the factor changed, cut so the piece ends exactly where
+        // the silence does and the new circuit can start on the next sample.
+        const bool outgoing = circuitReady && fadeOutRemaining > 0;
+
+        count = juce::jmin (preparedBlockSize, numSamples - start);
+
+        if (outgoing)
+            count = juce::jmin (count, fadeOutRemaining);
+
         auto piece = whole.getSubBlock (static_cast<size_t> (start), static_cast<size_t> (count));
 
         // A view onto the piece rather than a copy of it, for the two things
@@ -1014,27 +1226,41 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         // latency, is the whole of what bypass gives back.
         bypassFade.pushDry (view, latency);
 
+        if (! circuitReady)
+        {
+            bypassFade.substituteDry (view, state.bypassed);
+            continue;
+        }
+
+        auto& set = outgoing ? fadingCircuits : circuits;
+        auto* filters = outgoing && fadingOwnOversampler ? fadingOversampler.get() : oversampler.get();
+
         auto run = [&] (juce::dsp::AudioBlock<float>& block, int samples)
         {
             auto* left = block.getChannelPointer (0);
             auto* right = block.getNumChannels() > 1 ? block.getChannelPointer (1) : nullptr;
 
             if (state.mode == ChannelMode::Stereo)
-                runStereo (left, right, samples, state);
+                runStereo (set, ! outgoing, left, right, samples, state);
             else
-                runMono (left, right, samples, state);
+                runMono (set, ! outgoing, left, right, samples, state);
         };
 
-        if (oversampler == nullptr)
+        if (filters == nullptr)
         {
             run (piece, count);
         }
         else
         {
-            auto upsampled = oversampler->processSamplesUp (piece);
+            auto upsampled = filters->processSamplesUp (piece);
             run (upsampled, static_cast<int> (upsampled.getNumSamples()));
-            oversampler->processSamplesDown (piece);
+            filters->processSamplesDown (piece);
         }
+
+        // Before the cabinet, so its tail carries on smoothly through the dip
+        // rather than being cut along with it.
+        if (outgoing || fadeInRemaining > 0)
+            applyRebuildFade (view, outgoing);
 
         // The cabinet last, at the host's own rate -- see the member for why it
         // sits outside the oversampled section. Run whatever the bypass says, as
@@ -1131,8 +1357,8 @@ bool PluginProcessor::restoreDocument (const juce::ValueTree& document)
 
     // Set before the rebuild below, so the circuits are prepared at the right
     // rate first time rather than being built and immediately rebuilt.
-    oversamplingFactor = normaliseOversamplingFactor (static_cast<int> (document.getProperty ("oversampling", 1)));
-    prepareOversampler();
+    const int documentFactor = normaliseOversamplingFactor (static_cast<int> (document.getProperty ("oversampling", 1)));
+    auto documentFilters = makeOversampler (documentFactor);
 
     if (const auto parameters = document.getChildWithName (apvts.state.getType()); parameters.isValid())
         apvts.replaceState (parameters);
@@ -1159,7 +1385,10 @@ bool PluginProcessor::restoreDocument (const juce::ValueTree& document)
     const auto saved = document.getProperty (documentVersionProperty, "").toString();
     documentFromNewerBuild = saved.isNotEmpty() && compareVersions (saved, getBuildVersion()) > 0;
 
-    rebuild();
+    // At the document's factor, filters and circuits together, through the
+    // same fade as any rebuild: a host restoring a session while audio runs
+    // gets a dip, not a pop.
+    rebuildAt (documentFactor, &documentFilters);
 
     for (const auto& warning : pending)
         schematic.addLoadWarning (warning);

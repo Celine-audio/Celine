@@ -372,6 +372,38 @@ TEST_CASE ("A file that will not load leaves the last one playing and says why",
     CHECK (player.getStatus().length == 500);
 }
 
+TEST_CASE ("Choosing a file switches to it only once it has read", "[file input]")
+{
+    // Switched on up front, a file that fails -- with nothing loaded before it
+    // -- leaves the circuit listening to silence.
+    Scratch scratch;
+    const auto bad = scratch / "not-audio.wav";
+    bad.replaceWithText ("This is a schematic, honest.");
+
+    InputFilePlayer player;
+    player.prepare (48000.0);
+
+    player.load (bad, true);
+    REQUIRE (player.waitUntilLoaded (10000));
+    CHECK_FALSE (player.isFileMode());
+
+    bool replaced = true;
+    renderBlock (player, 2, 64, replaced);
+    CHECK_FALSE (replaced);
+
+    player.load (writeWav (scratch / "good.wav", ramp (1, 500), 48000.0), true);
+    REQUIRE (player.waitUntilLoaded (10000));
+    CHECK (player.isFileMode());
+
+    // Going back to live while a load is still on its way is the later word.
+    player.setFileMode (false);
+    player.load (writeWav (scratch / "other.wav", ramp (1, 300), 48000.0), true);
+    player.setFileMode (false);
+    REQUIRE (player.waitUntilLoaded (10000));
+    CHECK_FALSE (player.isFileMode());
+    CHECK (player.getStatus().length == 300);
+}
+
 TEST_CASE ("A new session rate resamples the file rather than playing it at the wrong pitch", "[file input]")
 {
     Scratch scratch;

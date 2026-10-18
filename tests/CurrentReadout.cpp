@@ -204,10 +204,13 @@ TEST_CASE ("A part's current is its voltage over its resistance", "[current]")
     const int scope = addScopeAcross (sheet, *resistor);
     REQUIRE (scope != 0);
 
-    plugin.prepareToPlay (48000.0, 512);
+    // Built before preparing rather than after: prepareToPlay builds and swaps
+    // straight in, where a rebuild after it would dip through silence first --
+    // and this compares two averages whose windows have to start together.
     const auto result = plugin.rebuild();
     INFO (result.error);
     REQUIRE (result.isValid());
+    plugin.prepareToPlay (48000.0, 512);
 
     plugin.setInspectedElement (elementId);
 

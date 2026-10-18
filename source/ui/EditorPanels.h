@@ -293,8 +293,14 @@ namespace Celine
         TransportView transportView{*this};
 
         /** Brings the player's controls into line with what it says. Cheap when
-            nothing changed, so it can run on every timer tick. */
+            nothing changed, so it can run on every timer tick: one read of the
+            player, and a repaint of the transport only when something it draws
+            has moved. */
         void syncFilePlayer();
+
+        /** What the player said at the last sync, which the transport draws
+            from rather than asking again. */
+        InputFilePlayer::Status fileStatus;
 
         juce::ToggleButton cabButton{"Cab"};
         juce::Label cabFileCaption;

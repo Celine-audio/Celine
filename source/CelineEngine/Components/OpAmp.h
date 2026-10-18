@@ -78,6 +78,21 @@ namespace CircuitComponents
 
         double midpoint() const noexcept { return 0.5 * (positiveRail + negativeRail); }
 
+        /** How far past its clamp rail the gain node goes before a clamp diode
+            conducts. addOpAmp() sets each clamp rail this much further in than
+            railHeadroom, so the output stops where railHeadroom says. */
+        static constexpr double clampDiodeDrop = 0.7;
+
+        /** The span the output can actually move in: the rails, less the
+            headroom and the clamp offset at each end. Zero or less and the two
+            clamps overlap -- each holds the gain node past the other's rail, so
+            both conduct at rest and the output sits at a fixed level whatever
+            the input. A supply too low for the part, then, not a sound. */
+        double outputRange() const noexcept
+        {
+            return positiveRail - negativeRail - 2.0 * (railHeadroom + clampDiodeDrop);
+        }
+
         /** Transconductance of the input stage: gain divided by the gain node's
             impedance, so that the two multiply back to the open-loop gain. */
         double inputTransconductance() const noexcept

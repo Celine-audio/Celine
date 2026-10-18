@@ -56,8 +56,14 @@ public:
 
     /** Decodes `file` in the background and, if it reads, replaces whatever
         was loaded, stopped and at the start. A file that fails leaves the
-        previous one in place and says why in getStatus(). */
-    void load (const juce::File& file);
+        previous one in place and says why in getStatus().
+
+        `switchToFileWhenLoaded` turns file input on once the file has read,
+        and only then. Turned on up front, a file that fails to read -- with
+        nothing loaded before it -- would leave the circuit listening to
+        silence. A setFileMode() in the meantime is the later word, and cancels
+        the switch. */
+    void load (const juce::File& file, bool switchToFileWhenLoaded = false);
 
     /** The rate render() will be called at. A loaded file at any other rate is
         dropped -- played as it stands it would come out at the wrong pitch --
@@ -146,7 +152,10 @@ private:
     void startJob();
 
     /** Swaps `fresh` in, stopped and at the start. Returns the old buffer, so
-        it is freed outside the lock. */
+        it is freed outside the lock. Called with `stateLock` held, so the swap
+        and the installed* fields that describe it change together: otherwise a
+        prepare() landing between the two could keep a buffer at the old rate
+        or throw away one at the new. */
     std::unique_ptr<juce::AudioBuffer<float>> install (std::unique_ptr<juce::AudioBuffer<float>> fresh);
 
     //==========================================================================
@@ -184,6 +193,9 @@ private:
     std::atomic<int> jobsPending { 0 };
 
     std::atomic<bool> cancelled { false };
+
+    /** A load asked to turn file input on when it reads. See load(). */
+    std::atomic<bool> switchToFileOnLoad { false };
 
     /** Made on first use: see the class comment. Last, so it is destroyed
         first, waiting for its job while everything that job touches still

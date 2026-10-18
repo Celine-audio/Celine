@@ -236,6 +236,7 @@ Circuit::ComponentId Circuit::addDiode(const juce::String& anode,
     Diode d{};
     d.anode = getOrCreateNode(junctionAnode);
     d.cathode = getOrCreateNode(cathode);
+    d.model = model; // what was wired, for setDiodeModel() to check against
     diodes.push_back(d);
 
     const auto id = static_cast<ComponentId>(diodes.size() - 1);
@@ -413,7 +414,7 @@ Circuit::OpAmp Circuit::addOpAmp(const juce::String& name,
     // them -- without the offset, every op-amp would swing a volt wider than its
     // railHeadroom said. The clamp stays soft either way, which is what a real
     // output stage does as it runs out of room.
-    constexpr double clampDiodeDrop = 0.7;
+    constexpr double clampDiodeDrop = OpAmpModel::clampDiodeDrop;
 
     const juce::String highClamp = sharedRail(model.positiveRail - model.railHeadroom - clampDiodeDrop);
     const juce::String lowClamp = sharedRail(model.negativeRail + model.railHeadroom + clampDiodeDrop);
@@ -493,7 +494,7 @@ Circuit::PowerAmp Circuit::addPowerAmp(const juce::String& name,
     amp.poleCapacitor = addCapacitor(gainNode, mid, model.poleCapacitance());
 
     // Clamps short of each rail, a diode drop further in -- as the op-amp's.
-    constexpr double clampDiodeDrop = 0.7;
+    constexpr double clampDiodeDrop = PowerAmpModel::clampDiodeDrop;
     const juce::String highClamp = sharedRail(model.supply - model.headroomHigh - clampDiodeDrop);
     const juce::String lowClamp = sharedRail(model.headroomLow + clampDiodeDrop);
 
@@ -641,6 +642,18 @@ void Circuit::setVoltage(ComponentId id, double volts)
 void Circuit::setDiodeModel(ComponentId id, const DiodeModel& model, int seriesCount)
 {
     auto& d = diodes[static_cast<size_t>(id)];
+
+    // The series resistance, the guard ring and the junction capacitance were
+    // wired by addDiode() as parts of their own, and this changes the junction
+    // alone. A model that differs in any of the three would be quietly built as
+    // some other diode -- a BAT41 swapped in here is a bare Schottky, with no
+    // 35 ohms and no ring -- so build that one with addDiode() instead.
+    jassert(juce::exactlyEqual(model.seriesResistance, d.model.seriesResistance)
+            && juce::exactlyEqual(model.guardRingSaturationCurrent, d.model.guardRingSaturationCurrent)
+            && (model.guardRingSaturationCurrent <= 0.0
+                || juce::exactlyEqual(model.guardRingEmission, d.model.guardRingEmission))
+            && juce::exactlyEqual(model.junctionCapacitance, d.model.junctionCapacitance));
+
     d.model = model;
     d.seriesCount = std::max(1, seriesCount);
     d.vCrit = CircuitComponents::criticalVoltage(d.model.saturationCurrent, d.scaleVoltage());
