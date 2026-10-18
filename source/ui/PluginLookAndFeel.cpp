@@ -70,6 +70,20 @@ void PluginLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int wi
     cap->drawWithin(g, face, juce::RectanglePlacement::centred, 1.0f);
 }
 
+juce::Label* PluginLookAndFeel::createSliderTextBox(juce::Slider& slider)
+{
+    auto* label = LookAndFeelBase::createSliderTextBox(slider);
+
+    if (slider.getProperties().contains(panelReadoutProperty))
+    {
+        label->setColour(juce::Label::textColourId, Theme::textOnPanel());
+        label->setColour(juce::TextEditor::textColourId, Theme::textOnPanel());
+        label->setFont(Fonts::light(13.0f));
+    }
+
+    return label;
+}
+
 void PluginLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
                                          bool shouldDrawButtonAsHighlighted,
                                          bool shouldDrawButtonAsDown)

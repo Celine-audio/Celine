@@ -27,6 +27,12 @@
     fail silently -- the knob would simply come out looking like all the others. */
 inline constexpr const char* digitalGainProperty = "celineDigitalGain";
 
+/** Marks a Slider whose value box stands on the light panel of the bottom band, so the
+    box takes the panel's ink rather than the chrome's. Asked for when the box is made,
+    and a theme change makes it again -- Slider::lookAndFeelChanged rebuilds the box --
+    so the colour is never a snapshot. */
+inline constexpr const char* panelReadoutProperty = "celinePanelReadout";
+
 class PluginLookAndFeel : public LookAndFeelBase
 {
 public:
@@ -39,6 +45,8 @@ public:
     void drawRotarySlider(juce::Graphics&, int x, int y, int width, int height,
                           float sliderPosProportional, float rotaryStartAngle,
                           float rotaryEndAngle, juce::Slider&) override;
+
+    juce::Label* createSliderTextBox(juce::Slider&) override;
 
     void drawToggleButton(juce::Graphics&, juce::ToggleButton&,
                           bool shouldDrawButtonAsHighlighted,

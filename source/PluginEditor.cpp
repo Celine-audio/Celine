@@ -297,7 +297,6 @@ void PluginEditor::buildBottomBand()
         // Drawn differently from the drawn circuit's own knobs, which share this
         // band; deaf to the wheel, as those are.
         slider->getProperties().set (digitalGainProperty, true);
-        slider->setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
         slider->setScrollWheelEnabled (false);
 
         addAndMakeVisible (slider);
@@ -330,6 +329,12 @@ void PluginEditor::buildBottomBand()
 
     inputAttachment  = std::make_unique<SliderAttachment> (processorRef.apvts, "input",  inputSlider);
     outputAttachment = std::make_unique<SliderAttachment> (processorRef.apvts, "output", outputSlider);
+
+    // After the attachments, which install the parameters' own text ("3.0", no
+    // unit) and would replace these. Typed back with or without the "dB".
+    for (auto* slider : { &inputSlider, &outputSlider })
+        Celine::ControlStrip::showValueBelow (*slider, Celine::ControlStrip::formatDecibels,
+                                              [] (const juce::String& text) { return text.getDoubleValue(); });
     bypassAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
         processorRef.apvts, "bypass", *bypassButton);
     channelModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
@@ -1661,8 +1666,8 @@ void PluginEditor::layOutPanels (juce::Rectangle<int> area)
 
     auto placeKnob = [] (juce::Rectangle<int> cell, juce::Slider& knob, juce::Label& label)
     {
-        knob.setBounds (Strip::layOutCell (cell, &label, Strip::knobSize)
-                            .withSizeKeepingCentre (Strip::knobSize, Strip::knobSize));
+        knob.setBounds (Strip::layOutCell (cell, &label, Strip::knobSize + Strip::valueHeight)
+                            .withSizeKeepingCentre (Strip::cellWidth - 4, Strip::knobSize + Strip::valueHeight));
     };
 
     // INPUT hard left, VOLUME hard right, the circuit's own knobs between: it
