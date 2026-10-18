@@ -179,6 +179,18 @@ and the model cannot be both.
 curves at low plate voltage where secondary electrons flow backwards. Not
 modelled, and it sits exactly where a power stage goes when clipping hard.
 
+**Koren's knee is too soft, and his plate curves too flat.** One arctangent sets
+both the knee and the plate resistance, so fitting Ri at the operating point
+fixes KVB near 50 V on every pentode here, and the knee goes with it. The KT88
+sheet, whose plate family was digitised to check this, shows it plainly: at
+Ua 50 V, Ug1 −15 V the sheet has 162 mA and the model 117; above 300 V the real
+curves keep rising (−30 V: 74 mA at 250 V, 87 at 400) while the arctangent has
+flattened (64 and 68). The first is where a clipping output stage spends its
+time. Multiplying the plate term by (1 + Ua/VA) frees KVB to sharpen the knee
+while VA carries Ri: tried on the KT88, it takes the family from 39 mA rms
+over Ua ≥ 30 V to 9 mA, with every operating-point figure still within about
+2%. Not adopted, since it changes the form every pentode here is fitted in.
+
 **Rectifiers are pure 3/2-power, which is too steep at low current.** Real
 rectifiers conduct more than Child-Langmuir predicts near the origin, where
 initial electron velocity matters and space charge doesn't yet dominate. Fitted
@@ -323,7 +335,8 @@ it stays perfectly linear however hard you hit it.
 
 - **BJT (Ebers-Moll):** the Early effect (VAF) and junction capacitances
   (CJE/CJC) are modelled for the parts whose cards publish them — the silicon
-  small-signal pair exactly, datasheet Cobo for the 2N2222A/2N5133/BC109C —
+  small-signal pair exactly, datasheet Cobo for the 2N2222A/2N5133/BC109C,
+  the NTE102/103 and the 2SC2240 —
   and both are **on by default**, like everything else here — turn them off
   under Settings → Performance if you need the CPU back. VAF
   reads as an output resistance ro = VAF/Ic, a few percent of a stage's gain;
@@ -333,10 +346,15 @@ it stays perfectly linear however hard you hit it.
   with reverse bias (VJE/MJE/VJC/MJC stay out) — and with no transit time
   (TF/TR) fT still doesn't degrade with current. The forward high-injection
   knee (IKF) is modelled for the cards that carry one — the BC107-109 family,
-  the 2N5088/2N5089, the MPSA18 and MPSA13 — but not for the older models
+  the 2N5088/2N5089, the MPSA18 and MPSA13, the NTE102/103 and the
+  2SC2240 — but not for the older models
   whose cards were entered without it (the 2N2222A's knee is 19.5 mA, so its
-  gain keeps climbing past it); the reverse knee (IKR), terminal resistances
-  and the reverse Early effect are out everywhere.
+  gain keeps climbing past it). One knee cannot draw every roll-off: the
+  2SC2240's gain is flat to 30 mA and a quarter of that by 200 mA, and the
+  fit, made for the audio end, is 15% high at its 100 mA rating. The reverse
+  knee (IKR), terminal resistances and the reverse Early effect are out
+  everywhere, and so is base-width modulation of the base current, which is
+  what a datasheet's hre measures — 8e-4 on the NTE102/103, 4e-5 here.
 - **Darlingtons** (the MPSA13) are two transistors on an internal node, so the
   pair's Vbe and gain come out right, but a real Darlington's gain below a few
   milliamps is extrapolated: onsemi's curves start at 5 mA.
@@ -362,7 +380,9 @@ it stays perfectly linear however hard you hit it.
   capacitance under DC bias, which is a real effect in a real pedal.
 - **Everything is at a fixed 300 K.** `thermalVoltage = 0.025852` throughout,
   no self-heating and no drift. Germanium parts in particular are noticeably
-  temperature-dependent in reality.
+  temperature-dependent in reality: the NTE102/103 sheet puts ICBO at 0.8 µA
+  at 25 °C and 20 µA at 80 °C, and that leakage is what a germanium fuzz's
+  bias rests on.
 - **Valves:** no warm-up, no heater dynamics, no cathode depletion. Grid
   conduction uses a plausible perveance rather than a fitted one (published
   grid-current data barely exists), and the pentode's screen current is

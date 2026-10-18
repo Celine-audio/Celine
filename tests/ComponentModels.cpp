@@ -90,6 +90,116 @@ namespace
         return { lo, -circuit.getSourceCurrent(supply) / -circuit.getSourceCurrent(drive) };
     }
 
+    /** All three terminal currents of an NPN at (Vbe, Vbc), from the device's
+        own linearisation: base and collector currents in, emitter current out. */
+    struct BjtTerminals
+    {
+        double base, collector, emitter;
+    };
+
+    BjtTerminals npnTerminals(const BjtModel& model, double vbe, double vbc)
+    {
+        Bjt t {};
+        t.model = model;
+
+        DeviceLinearisation out {};
+        const double v[2] = { vbe, vbc };
+        linearise(t, v, out);
+
+        return { out.current[0] + out.current[1], -out.current[1], out.current[0] };
+    }
+
+    /** Bisects for the zero of a function that rises through it on [lo, hi]. */
+    template <typename Function>
+    double risingRoot(Function&& f, double lo, double hi)
+    {
+        for (int i = 0; i < 200; ++i)
+        {
+            const double mid = 0.5 * (lo + hi);
+            (f(mid) < 0.0 ? lo : hi) = mid;
+        }
+
+        return 0.5 * (lo + hi);
+    }
+
+    /** Common-emitter h-parameters at a Vce and an emitter current, the way a
+        datasheet quotes them: hie and hfe with the collector voltage held,
+        hoe with the base current held. */
+    struct HParameters
+    {
+        double hie, hfe, hoe;
+    };
+
+    HParameters smallSignalAt(const BjtModel& model, double vce, double emitterCurrent)
+    {
+        const double vbe = risingRoot([&](double v) { return npnTerminals(model, v, v - vce).emitter - emitterCurrent; },
+                                      -0.5, 1.5);
+        const double h = 1.0e-6;
+
+        const auto vbeUp = npnTerminals(model, vbe + h, vbe + h - vce);
+        const auto vbeDown = npnTerminals(model, vbe - h, vbe - h - vce);
+        const auto vceUp = npnTerminals(model, vbe, vbe - vce - h);
+        const auto vceDown = npnTerminals(model, vbe, vbe - vce + h);
+
+        const double gBase = (vbeUp.base - vbeDown.base) / (2.0 * h);
+        const double gCollector = (vbeUp.collector - vbeDown.collector) / (2.0 * h);
+        const double baseVsVce = (vceUp.base - vceDown.base) / (2.0 * h);
+        const double collectorVsVce = (vceUp.collector - vceDown.collector) / (2.0 * h);
+
+        const double hfe = gCollector / gBase;
+        return { 1.0 / gBase, hfe, collectorVsVce - hfe * baseVsVce };
+    }
+
+    /** Vbe and Vce with both the collector and base currents forced -- the
+        datasheet's saturation test. For a trial Vbe, the Vbc that carries the
+        collector current; then the Vbe whose base current is the forced one. */
+    std::pair<double, double> saturationAt(const BjtModel& model, double ic, double ib)
+    {
+        const auto vbcFor = [&](double vbe)
+        { return risingRoot([&](double vbc) { return ic - npnTerminals(model, vbe, vbc).collector; }, vbe - 20.0, vbe + 0.3); };
+
+        // Starting from the active-region Vbe, where the base takes less than
+        // it is being given.
+        const double active = npnAt(model, ic).vbe;
+        const double vbe = risingRoot([&](double v) { return npnTerminals(model, v, vbcFor(v)).base - ib; },
+                                      active, active + 0.4);
+
+        return { vbe, vbe - vbcFor(vbe) };
+    }
+
+    /** Collector-base cutoff current: emitter open, collector `vcb` above the base. */
+    double icboAt(const BjtModel& model, double vcb)
+    {
+        const double vbe = risingRoot([&](double v) { return npnTerminals(model, v, -vcb).emitter; }, -2.0, 1.0);
+        return npnTerminals(model, vbe, -vcb).collector;
+    }
+
+    /** Emitter-base cutoff current: collector open, emitter `veb` above the base. */
+    double ieboAt(const BjtModel& model, double veb)
+    {
+        const double vbc = risingRoot([&](double v) { return -npnTerminals(model, -veb, v).collector; }, -2.0, 1.0);
+        return -npnTerminals(model, -veb, vbc).emitter;
+    }
+
+    //==========================================================================
+    // Pentodes
+
+    struct PentodeCurrents
+    {
+        double plate, screen;
+    };
+
+    PentodeCurrents pentodeAt(const PentodeModel& model, double vg1, double vg2, double va)
+    {
+        Pentode p {};
+        p.model = model;
+
+        DeviceLinearisation out {};
+        double v[3] = { vg1, vg2, va };
+        linearise(p, v, out);
+        return { out.current[2], out.current[1] };
+    }
+
     //==========================================================================
     // MOSFETs
 
@@ -408,6 +518,157 @@ TEST_CASE("The high-injection knee turns the gain over and keeps its Jacobian ex
     for (const double vbe : { 0.3, 0.55, 0.65, 0.72, 0.8 })
         for (const double vce : { 0.05, 0.3, 5.0 })
             checkJacobian(t, vbe, vbe - vce);
+}
+
+TEST_CASE("The NTE102 and NTE103 reproduce NTE's sheet", "[bjt][model][germanium]")
+{
+    // Every typical on the sheet, at the sheet's own test conditions.
+    const auto m = BjtModel::npnNTE103();
+
+    // hFE 80 at Vce 0.15 V, 12 mA, and 90 at 0.2 V, 24 mA (30 and 24 min).
+    CHECK(npnAt(m, 12.0e-3, 0.15).hfe == Catch::Approx(80.0).epsilon(0.02));
+    CHECK(npnAt(m, 24.0e-3, 0.20).hfe == Catch::Approx(90.0).epsilon(0.02));
+
+    // h-parameters at Vce 6 V, Ie 1 mA: hfe 135, hie 3.6k, hoe 50 uS. hie
+    // is allowed more, since the sheet's includes a base spreading resistance
+    // the engine has no terminal for.
+    const auto h = smallSignalAt(m, 6.0, 1.0e-3);
+    INFO("hfe " << h.hfe << ", hie " << h.hie << ", hoe " << h.hoe);
+    CHECK(h.hfe == Catch::Approx(135.0).epsilon(0.01));
+    CHECK(h.hoe == Catch::Approx(50.0e-6).epsilon(0.01));
+    CHECK(h.hie == Catch::Approx(3600.0).epsilon(0.05));
+
+    // Saturation: Vce(sat) 0.09 typ at both points (0.15 / 0.20 max), Vbe(sat)
+    // 0.27 and 0.30 typ (0.35 / 0.40 max).
+    const auto [vbe12, vce12] = saturationAt(m, 12.0e-3, 0.4e-3);
+    const auto [vbe24, vce24] = saturationAt(m, 24.0e-3, 1.0e-3);
+    INFO("sat: " << vbe12 << " / " << vce12 << " V at 12 mA, " << vbe24 << " / " << vce24 << " V at 24 mA");
+    CHECK(vce12 == Catch::Approx(0.09).margin(0.003));
+    CHECK(vce24 == Catch::Approx(0.09).margin(0.003));
+    CHECK(vbe12 == Catch::Approx(0.27).margin(0.003));
+    CHECK(vbe24 == Catch::Approx(0.30).margin(0.003));
+
+    // Cutoff: ICBO 0.8 uA at Vcb 12 V, IEBO 0.5 uA at Veb 2.5 V -- the
+    // ideal junctions' own leakage, with no ISC to help.
+    CHECK(icboAt(m, 12.0) == Catch::Approx(0.8e-6).epsilon(0.01));
+    CHECK(ieboAt(m, 2.5) == Catch::Approx(0.5e-6).epsilon(0.01));
+    CHECK(m.baseCollectorLeakage == 0.0);
+
+    // Germanium: a fifth of a volt where silicon needs two thirds.
+    CHECK(npnAt(m, 1.0e-3, 6.0).vbe < 0.2);
+
+    // The PNP is the same card in the other polarity, current for current.
+    Bjt npn {}, pnp {};
+    npn.model = m;
+    pnp.model = BjtModel::pnpNTE102();
+    REQUIRE(pnp.model.polarity == BjtModel::Polarity::PNP);
+
+    for (const double vbe : { 0.1, 0.2, 0.3 })
+    {
+        DeviceLinearisation n {}, p {};
+        const double vn[2] = { vbe, vbe - 6.0 };
+        const double vp[2] = { -vbe, 6.0 - vbe };
+        linearise(npn, vn, n);
+        linearise(pnp, vp, p);
+
+        CHECK(p.current[0] == Catch::Approx(-n.current[0]).epsilon(1.0e-12));
+        CHECK(p.current[1] == Catch::Approx(-n.current[1]).epsilon(1.0e-12));
+    }
+}
+
+TEST_CASE("The 2SC2240 grades reproduce Toshiba's sheet", "[bjt][model]")
+{
+    const auto gr = BjtModel::npn2SC2240GR();
+    const auto bl = BjtModel::npn2SC2240BL();
+
+    // The typical specimen's hFE curve at Vce 6 V, 25 C.
+    const std::pair<double, double> curve[] = { { 0.3e-3, 272.0 }, { 1.0e-3, 300.0 },
+                                                { 3.0e-3, 313.0 }, { 10.0e-3, 316.0 } };
+
+    for (const auto& [ic, hfe] : curve)
+    {
+        INFO("GR at " << ic << " A: hFE " << npnAt(gr, ic, 6.0).hfe);
+        CHECK(npnAt(gr, ic, 6.0).hfe == Catch::Approx(hfe).epsilon(0.03));
+    }
+
+    // VBE 0.65 V typ at Vce 6 V, 2 mA.
+    CHECK(npnAt(gr, 2.0e-3, 6.0).vbe == Catch::Approx(0.65).margin(0.002));
+
+    // The sorts, at the point they are sorted at: GR 200-400, BL 350-700, the
+    // BL at the geometric middle of its window.
+    const double grGain = npnAt(gr, 2.0e-3, 6.0).hfe;
+    const double blGain = npnAt(bl, 2.0e-3, 6.0).hfe;
+    CHECK(grGain > 200.0);
+    CHECK(grGain < 400.0);
+    CHECK(blGain == Catch::Approx(495.0).epsilon(0.005));
+
+    // Vce(sat) at Ic / Ib = 10: 0.078 V at 1 mA and 0.063 V at 10 mA.
+    CHECK(saturationAt(gr, 1.0e-3, 0.1e-3).second == Catch::Approx(0.078).margin(0.004));
+    CHECK(saturationAt(gr, 10.0e-3, 1.0e-3).second == Catch::Approx(0.063).margin(0.004));
+
+    // The sheet's h-parameters put hie at hfe Vt / Ic, i.e. NF = 1 and no
+    // visible base resistance. The model has to agree.
+    const auto h = smallSignalAt(gr, 6.0, 1.0e-3);
+    CHECK(h.hie == Catch::Approx(h.hfe * gr.thermalVoltage / 1.0e-3).epsilon(0.02));
+
+    // Leakage under the sheet's 0.1 uA maxima, at its test voltages.
+    CHECK(icboAt(gr, 120.0) < 0.1e-6);
+    CHECK(ieboAt(gr, 5.0) < 0.1e-6);
+
+    // A thinner base: more gain, less Vbe, less output resistance.
+    CHECK(npnAt(bl, 2.0e-3, 6.0).vbe < npnAt(gr, 2.0e-3, 6.0).vbe);
+    CHECK(bl.forwardEarlyVoltage < gr.forwardEarlyVoltage);
+}
+
+//==============================================================================
+// Valves
+//==============================================================================
+
+TEST_CASE("The KT88 reproduces the JJ sheet", "[valve][model]")
+{
+    const auto m = PentodeModel::kt88();
+    const double h = 1.0e-3;
+
+    // Ua = Ug2 = 250 V, Ug1 -15 V: Ia 140 mA, Ig2 7 mA, S 11.5 mA/V, Ri 12k.
+    const auto at = pentodeAt(m, -15.0, 250.0, 250.0);
+    const double s = (pentodeAt(m, -15.0 + h, 250.0, 250.0).plate - pentodeAt(m, -15.0 - h, 250.0, 250.0).plate) / (2.0 * h);
+    const double ri = 2.0 * h / (pentodeAt(m, -15.0, 250.0, 250.0 + h).plate - pentodeAt(m, -15.0, 250.0, 250.0 - h).plate);
+
+    CHECK(at.plate == Catch::Approx(140.0e-3).epsilon(1.0e-4));
+    CHECK(at.screen == Catch::Approx(7.0e-3).epsilon(1.0e-4));
+    CHECK(s == Catch::Approx(11.5e-3).epsilon(1.0e-4));
+    CHECK(ri == Catch::Approx(12000.0).epsilon(1.0e-4));
+
+    // Triode-connected, same voltages: Ia+g2 147 mA, S 12 mA/V, Ri 670.
+    const auto cathode = [&m](double vg1, double v)
+    {
+        const auto c = pentodeAt(m, vg1, v, v);
+        return c.plate + c.screen;
+    };
+
+    const double triodeS = (cathode(-15.0 + h, 250.0) - cathode(-15.0 - h, 250.0)) / (2.0 * h);
+    const double triodeRi = 2.0 * h / (cathode(-15.0, 250.0 + h) - cathode(-15.0, 250.0 - h));
+
+    CHECK(cathode(-15.0, 250.0) == Catch::Approx(147.0e-3).epsilon(1.0e-4));
+    CHECK(triodeRi == Catch::Approx(670.0).epsilon(1.0e-3));
+    CHECK(triodeS == Catch::Approx(12.0e-3).epsilon(0.01));
+
+    // The plate characteristics, at Ug2 = 300 V and Ua 250 V -- held out of
+    // everything but the split of MU against KP. Read off the sheet.
+    const std::pair<double, double> family[] = { { -5.0, 351.0e-3 }, { -10.0, 269.9e-3 }, { -15.0, 194.9e-3 },
+                                                 { -20.0, 145.8e-3 }, { -25.0, 108.6e-3 }, { -30.0, 73.8e-3 },
+                                                 { -35.0, 38.7e-3 } };
+    double squares = 0.0;
+
+    for (const auto& [vg1, sheet] : family)
+    {
+        const double model = pentodeAt(m, vg1, 300.0, 250.0).plate;
+        INFO("Ug1 " << vg1 << ": sheet " << sheet * 1e3 << " mA, model " << model * 1e3);
+        CHECK(model == Catch::Approx(sheet).epsilon(0.15));
+        squares += (model - sheet) * (model - sheet);
+    }
+
+    CHECK(std::sqrt(squares / std::size(family)) < 10.0e-3);
 }
 
 //==============================================================================

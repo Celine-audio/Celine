@@ -43,6 +43,10 @@ namespace SchematicModel
                 case 10: return Circuit::BjtModel::npn2N5089();
                 case 11: return Circuit::BjtModel::npnMPSA18();
                 case 12: return Circuit::BjtModel::npnMPSA13();
+                case 13: return Circuit::BjtModel::npnNTE103();
+                case 14: return Circuit::BjtModel::pnpNTE102();
+                case 15: return Circuit::BjtModel::npn2SC2240GR();
+                case 16: return Circuit::BjtModel::npn2SC2240BL();
                 default: return Circuit::BjtModel::npnSilicon();
             }
         }
@@ -147,6 +151,7 @@ namespace SchematicModel
                 case 3: return Circuit::PentodeModel::kt66();
                 case 4: return Circuit::PentodeModel::kt77();
                 case 5: return Circuit::PentodeModel::u6v6();
+                case 6: return Circuit::PentodeModel::kt88();
                 default: return Circuit::PentodeModel::el34();
             }
         }

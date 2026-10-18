@@ -211,7 +211,11 @@ namespace SchematicModel
              "celine:bjt-2n5088|2N5088|Low noise, hFE 300-900|NPN;"
              "celine:bjt-2n5089|2N5089|Low noise, hFE 400-1200|NPN;"
              "celine:bjt-mpsa18|MPSA18|Low noise, hFE 500-1500|NPN;"
-             "celine:bjt-mpsa13|MPSA13|Darlington, Vbe ~1.1 V|NPN"},
+             "celine:bjt-mpsa13|MPSA13|Darlington, Vbe ~1.1 V|NPN;"
+             "celine:bjt-nte103|NTE103|Germanium, hFE ~95 at 1 mA|NPN;"
+             "celine:bjt-nte102|NTE102|Germanium, hFE ~95 at 1 mA|PNP;"
+             "celine:bjt-2sc2240gr|2SC2240GR|Low noise, hFE 200-400|NPN;"
+             "celine:bjt-2sc2240bl|2SC2240BL|Low noise, hFE 350-700|NPN"},
 
             // Plate, grid, cathode -- the order addTriode() wants.
             //
@@ -285,7 +289,8 @@ namespace SchematicModel
              "celine:pentode-el84-jj|EL84 JJ|Pentode|Koren;"
              "celine:pentode-kt66-jj|KT66 JJ|Beam tetrode|Koren;"
              "celine:pentode-kt77-jj|KT77 JJ|Pentode|Koren;"
-             "celine:pentode-6v6s-jj|6V6S JJ|Beam tetrode|Koren"},
+             "celine:pentode-6v6s-jj|6V6S JJ|Beam tetrode|Koren;"
+             "celine:pentode-kt88-jj|KT88 JJ|Beam tetrode|Koren"},
 
             // No pins: an annotation. `label` is the text itself.
             {"Text", 0, {}, "", "", 0.0, ""},

@@ -65,8 +65,9 @@ namespace CircuitComponents
         double capPlateCathode = 10.0e-12; // Ca
 
         //======================================================================
-        // Models, all five fitted here to the JJ datasheets. Method and the
-        // reason EX is held at 1.35 are in the note further down.
+        // Models, all fitted here to the JJ datasheets. Method and the reason
+        // EX is held at 1.35 are in the note further down; the KT88, at the
+        // end, is the one whose sheet says enough to fit EX as well.
         //
         // Koren's published sets were badly out on plate resistance -- they gave
         // 40k, 98k and 237k where the datasheets say 15k, 22.5k and 40k, so the
@@ -198,6 +199,58 @@ namespace CircuitComponents
         {
             PentodeModel m{9.8, 1.35, 2109.7, 13453.7, 45.03, 40.22, 1.0e-3};
             m.capGridCathode = 9.0e-12; m.capGridPlate = 0.7e-12; m.capPlateCathode = 8.5e-12;
+            return m;
+        }
+
+        /** KT88. The big beam tetrode -- the SVT, the Marshall Major, and the
+            100 W hi-fi amps. The most current of any valve here at the same
+            voltages, and the most transconductance, a shade over the EL34's.
+
+            Fitted to the JJ datasheet at Ua = Ug2 = 250 V, Ug1 -15 V, where it
+            reproduces every figure the sheet prints:
+
+                pentode   Ia 140 mA  Ig2 7 mA   S 11.5 mA/V  Ri 12k     exact
+                triode    Ik 147 mA             S 12.08      Ri 670     sheet: 147, 12, 670
+
+            The sheet calls Ig2 "max. 7 mA". Its triode-connected column, at the
+            same voltages, puts Ia + Ig2 at 147 -- and strapping the screen to
+            the plate changes no voltage there -- so 7 is the typical too.
+
+            Two things differ from the fits above, both because this sheet says
+            more than theirs do.
+
+            **EX is not 1.35.** With Ia, Ig2, S and Ri fixed, the triode-connected
+            Ri depends on EX alone -- 624 ohms at 1.35, against the sheet's 670 --
+            so the sheet pins it, at 1.164. The KT77's EX was held at 1.35
+            because a free EX tracked its plate curves worse; this one is not
+            free, and it tracks them better (below).
+
+            **MU is not the sheet's 8.** That 8 is the triode-mode figure
+            (S x Ri = 12 x 0.67): with the plate's own 12k in parallel, the
+            triode figures imply a grid-to-screen mu of 8.5, and the model's is
+            8.57 at the operating point. MU the *parameter* only trades against
+            KP once EX is fixed -- the cutoff's sharpness against its position --
+            and was set to 10.54 from the sheet's plate characteristics, which
+            are at Ug2 = 300 V and so otherwise held out of the fit:
+
+                Ug1      -5    -10    -15    -20    -25    -30    -35    -40
+                sheet   351    270    195    146    109     74     39     13    Ia at Ua 250, mA
+                model   357    280    211    150    101     64     39     22
+
+            10.7 mA rms over Ua >= 100 V, against 15.2 for EX 1.35 and MU 8.
+
+            Koren's form is the limit, not the fit. Its arctangent knee is too
+            soft for a beam tetrode -- at Ua 50 V, Ug1 -15 the sheet shows 162 mA
+            and the model 117 -- and its plate curves flatten above 300 V where
+            the real ones keep climbing, so a hard-driven stage swings into the
+            knee earlier than the valve does. The sheet's ultralinear chart reads
+            10-20% above the model, but that chart disagrees with the plate
+            characteristics by 8% where the two coincide, and labels its screen
+            axis 355 V where the taps put 335; it was not used. */
+        static PentodeModel kt88() noexcept
+        {
+            PentodeModel m{10.5373, 1.16446, 310.332, 4556.69, 33.1604, 52.946, 1.0e-3};
+            m.capGridCathode = 16.5e-12; m.capGridPlate = 2.3e-12; m.capPlateCathode = 10.0e-12;
             return m;
         }
     };

@@ -523,6 +523,170 @@ namespace CircuitComponents
                 .baseCollectorLeakageEmission = 2.0
             };
         }
+
+        //======================================================================
+        /** NTE103, germanium NPN, and its complement the NTE102. NTE publish
+            the pair on one sheet with one set of figures, so they are one card
+            in two polarities -- the germanium pair above with a datasheet
+            behind it instead of a guess.
+
+            Fitted here to every typical the sheet prints (docs/specs/nte102):
+
+                                                  sheet      model
+                hfe   Vce 6 V, Ie 1 mA            135        135.0
+                hie                               3.6k       3.70k
+                hoe                               50 uS      50.0
+                hFE   Vce 0.15 V, Ic 12 mA         80        80.6
+                      Vce 0.20 V, Ic 24 mA         90        89.2
+                Vce(sat)  12 mA / 0.4 mA         0.09        0.091
+                           24 mA / 1 mA          0.09        0.091
+                Vbe(sat)  12 mA / 0.4 mA         0.27        0.271
+                           24 mA / 1 mA          0.30        0.299
+                ICBO  Vcb 12 V                   0.8 uA      0.80
+                IEBO  Veb 2.5 V                  0.5 uA      0.50
+
+            What falls out of that is worth knowing.
+
+            The leakage is the ideal junctions' own -- no ISC is needed. The
+            ratio of the two cutoff currents is mostly the reverse gain (it is
+            alpha-F over alpha-R), and together with the saturation voltages it
+            puts BR at 1.0: alloy-junction germanium is nearly symmetrical,
+            which is what that says. IS follows from the leakage at 0.67 uA, so
+            Vbe is 0.18 V at 1 mA -- germanium, unmistakably.
+
+            The Early voltage is 14 V, off hoe, and it matters: hFE at 6 V is
+            40% above hFE at 0.15 V for that alone, which is how a part rated
+            80 at the edge of saturation shows 135 in a fuzz biased at half the
+            rail. It also means the gain tracks the collector swing.
+
+            Open-base leakage is ICBO multiplied up by the gain at that current:
+            13 uA at 6 V here. Not on the sheet, and the figure a two-transistor
+            fuzz's bias leans on.
+
+            BF is not pinned by the sheet. Anything from 300 to 10000 lands
+            every figure above within 2% (hie within 5%) and the gain from 1 to
+            24 mA within 10%; 500 was taken because it puts NE at 1.8, the
+            middle of the textbook range. At 6 V the gain runs 94 / 128 / 155 /
+            147 at 1 / 3 / 10 / 24 mA, turning over on the 13.5 mA knee. Below
+            a milliamp the sheet says nothing and the choice shows: hFE at
+            0.1 mA is 51 here, and anywhere from 47 to 70 across that BF range.
+
+            Read the h-parameters at 1 kHz: the sheet's test-condition cell
+            for them says 1 MHz, which an hfe of 135 with a 25 MHz alpha cutoff
+            cannot be. Not modelled: hre (8e-4 on the sheet, ~4e-5 here -- the
+            base current does not see the Early effect), and the input
+            capacitance, which is diffusion charge -- roughly 250 pF at 1 mA,
+            proportional to current, and a pole above 150 kHz behind any source
+            a guitar presents. Cob 8 pF typ (20 max) at Vcb 6 V. And all at
+            25 C: the sheet's ICBO is 25 times higher at 80 C, which is the
+            whole story of germanium in a hot room, and none of it is here. */
+        static BjtModel npnNTE103() noexcept
+        {
+            return {
+                .polarity = Polarity::NPN,
+                .saturationCurrent = 6.650e-7,        // IS   from ICBO and IEBO
+                .forwardBeta = 500.0,                 // BF   not pinned; see above
+                .reverseBeta = 1.011,                 // BR   from ICBO / IEBO
+                .forwardEmission = 1.0,               // NF   hie agrees within 3%
+                .reverseEmission = 1.145,             // NR   from Vce(sat)
+                .thermalVoltage = 0.025852,
+                .baseEmitterLeakage = 2.015e-7,       // ISE
+                .baseEmitterLeakageEmission = 1.794,  // NE
+                .capBaseCollector = 8.0e-12,          // Cob typ
+                .forwardEarlyVoltage = 13.78,         // VAF  from hoe
+                .forwardKneeCurrent = 13.5e-3,        // IKF
+            };
+        }
+
+        /** NTE102, the PNP half of the pair. See npnNTE103(). */
+        static BjtModel pnpNTE102() noexcept
+        {
+            auto m = npnNTE103();
+            m.polarity = Polarity::PNP;
+            return m;
+        }
+
+        //======================================================================
+        // Toshiba's 2SC2240: a low-noise NPN for phono and tape preamps, which
+        // is what put it in the Japanese pedals of the same years. One die,
+        // sorted for gain at Vce 6 V, Ic 2 mA -- GR 200-400 and BL 350-700 --
+        // and the engine models gain, so the two sorts are two parts.
+        //
+        // The sheet (docs/specs/2SC2240.pdf) prints one typical and curves of
+        // one typical specimen, which is a GR: hFE 300 at 1 mA and flat to
+        // 30 mA. That specimen is fitted, and is the GR. The BL is the same die
+        // with a thinner base, which raises IS and BF together and lowers VAF
+        // by the same factor -- the trade the BC107-109 grades show above, whose
+        // Vbe falls with grade as this predicts -- so the BL is the GR scaled
+        // to 495 at 2 mA, the geometric middle of its window. Its Vbe comes out
+        // 12 mV lower, which nothing on this sheet confirms.
+
+        /** 2SC2240GR. Against the sheet's 25 C curves:
+
+                hFE, Vce 6 V   0.3   1     3     10    30    50 mA
+                    sheet      272   300   313   316   313   297
+                    model      270   303   318   317   296   276
+                Vbe 0.650 V at 2 mA (0.65 typ)
+                Vce(sat), Ic/Ib 10   0.086 / 0.078 / 0.071 / 0.065 V at
+                                     0.3 / 1 / 3 / 10 mA (sheet 0.090 / 0.078
+                                     / 0.066 / 0.063)
+
+            The high-current roll-off is past what Gummel-Poon's knee can
+            follow: the sheet's gain is flat to 30 mA and down to 78 by 200 mA,
+            and one IKF cannot do both. Fitted to the audio end, the gain is 7%
+            low at 50 mA and 15% high at 100, the rated maximum. A pedal runs
+            this part at a milliamp.
+
+            VAF 270 is the average of the output curves, which scatter from 190
+            to 370 V between base currents. The sheet's h-parameters are a
+            second, lower-gain specimen -- hfe 250 at 1 mA against this one's
+            324, and hoe pointing to 400 V -- but they agree on NF = 1: hie is
+            hfe x Vt / Ic within 2% on both, i.e. no visible base resistance.
+
+            BR is not separable from the collector leakage terms on this
+            sheet, which fit the saturation curve equally well with BR from 1
+            to 20; 8 is the BC547B's. Cob is read off the curve at Vcb 5 V,
+            where a pedal sits -- 3.8 pF, against the table's 3.0 at 10 V. No
+            input capacitance: fT is 100 MHz, so it is mostly diffusion
+            charge, ~60 pF at 1 mA and moving with the current. */
+        static BjtModel npn2SC2240GR() noexcept
+        {
+            return {
+                .polarity = Polarity::NPN,
+                .saturationCurrent = 2.385e-14,       // IS   Vbe 0.65 V at 2 mA
+                .forwardBeta = 331.5,                 // BF
+                .reverseBeta = 8.0,                   // BR   BC547B's; see above
+                .forwardEmission = 1.0,               // NF
+                .reverseEmission = 1.0,               // NR
+                .thermalVoltage = 0.025852,
+                .baseEmitterLeakage = 1.118e-10,      // ISE
+                .baseEmitterLeakageEmission = 3.057,  // NE
+                .baseCollectorLeakage = 4.343e-12,    // ISC  from Vce(sat)
+                .baseCollectorLeakageEmission = 1.283, // NC
+                .capBaseCollector = 3.8e-12,          // Cob at Vcb 5 V
+                .forwardEarlyVoltage = 270.0,         // VAF
+                .forwardKneeCurrent = 0.2235,         // IKF
+            };
+        }
+
+        /** 2SC2240BL: the GR scaled to hFE 495 at 2 mA. See the note above.
+            Through the engine: hFE 317 / 472 / 495 / 509 at 0.1 / 1 / 2 /
+            10 mA, Vbe 0.638 V at 2 mA, VAF 169 V.
+
+            The factor is a little over 495 / 314 because ISE is not scaled.
+            At a given collector current the lower Vbe cuts the ideal base
+            current by the full factor but the recombination current only by
+            its NE-th root, so recombination becomes a larger share and the
+            gain lands short of the ratio. */
+        static BjtModel npn2SC2240BL() noexcept
+        {
+            auto m = npn2SC2240GR();
+            constexpr double thinnerBase = 1.5951; // puts hFE at 495 at 2 mA
+            m.saturationCurrent *= thinnerBase;
+            m.forwardBeta *= thinnerBase;
+            m.forwardEarlyVoltage /= thinnerBase;
+            return m;
+        }
     };
 
     //==========================================================================
