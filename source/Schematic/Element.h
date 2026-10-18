@@ -243,7 +243,7 @@ namespace SchematicModel
              "celine:opamp-ne5532|NE5532|Low noise, 12 MHz;"
              "celine:opamp-lm308|LM308|Distortion pedal OpAmp, 1 MHz;"
              "celine:opamp-ideal|Ideal|No gain limit, bandwidth or clipping;"
-             "celine:opamp-lm741|LM741|General purpose, 1.2 MHz"},
+             "celine:opamp-lm741|LM741|General purpose, 0.9 MHz"},
 
             // Primary A/B then secondary A/B, the order addTransformer() wants.
             // Two turns counts rather than one ratio: a single box cannot take

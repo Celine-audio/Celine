@@ -461,6 +461,13 @@ MidHumpOverdrive makeMidHumpOverdrive()
     MidHumpOverdrive result;
     auto& circuit = result.circuit;
 
+    // Without the slew stage, because the plugin would not fit one: an NE5532
+    // cannot slew at any rate the plugin runs, so the builder gives it the
+    // linear input (OpAmpModel::slewsAt), and this circuit stands in for what
+    // the plugin runs -- the benchmarks time it as such.
+    auto ne5532 = Circuit::OpAmpModel::ne5532().withRails(9, 0);
+    ne5532.slewRate = 0.0;
+
     // V1 -- the 4.5 V bias rail
     circuit.addVoltageSource("n011", "gnd", 4.5);
     // V2 -- the input
@@ -473,8 +480,7 @@ MidHumpOverdrive makeMidHumpOverdrive()
     circuit.addCapacitor("n008", "n005", 1e-6);
     // U1 -- the gain stage. Swap ne5532() for jrc4558() to hear the part the
     // pedal actually shipped with; everything else stays put.
-    circuit.addOpAmp("U1", "n010", "n003", "n001",
-                     Circuit::OpAmpModel::ne5532().withRails(9, 0));
+    circuit.addOpAmp("U1", "n010", "n003", "n001", ne5532);
     // Cc
     circuit.addCapacitor("n001", "n003", 51e-12);
     // D1, D2 -- the clipping pair, inside U1's feedback loop.
@@ -491,8 +497,7 @@ MidHumpOverdrive makeMidHumpOverdrive()
     // R5
     circuit.addResistor("n001", "n009", 1000);
     // U2 -- the tone stage.
-    circuit.addOpAmp("U2", "n009", "n004", "n005",
-                     Circuit::OpAmpModel::ne5532().withRails(9, 0));
+    circuit.addOpAmp("U2", "n009", "n004", "n005", ne5532);
     // R8
     circuit.addResistor("n005", "n004", 1000);
     // C2

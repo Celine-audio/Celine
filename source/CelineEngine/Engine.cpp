@@ -392,7 +392,28 @@ Circuit::OpAmp Circuit::addOpAmp(const juce::String& name,
     // Gain stage: current into the gain node proportional to the differential
     // input. Driving from ground into the node means it sources rather than
     // sinks, so the node follows the non-inverting input.
-    amp.gainStage = addVccs("gnd", gainNode, inPlus, inMinus, model.inputTransconductance());
+    //
+    // With a slew rate it is a long-tailed pair instead, whose tail caps the
+    // current the compensation capacitor can be charged with -- see
+    // DifferentialPair.h. Without one it is the linear source it always was,
+    // so a model that does not ask for slewing costs no Newton port.
+    if (model.slewRate > 0.0)
+    {
+        DifferentialPair pair{};
+        pair.inPlus = getOrCreateNode(inPlus);
+        pair.inMinus = getOrCreateNode(inMinus);
+        pair.from = groundIndex;
+        pair.to = getOrCreateNode(gainNode);
+        pair.transconductance = model.inputTransconductance();
+        pair.tailCurrent = model.tailCurrent();
+        pair.degeneration = model.inputDegeneration;
+        differentialPairs.push_back(pair);
+        amp.inputPair = static_cast<ComponentId>(differentialPairs.size() - 1);
+    }
+    else
+    {
+        amp.gainStage = addVccs("gnd", gainNode, inPlus, inMinus, model.inputTransconductance());
+    }
 
     // The gain node rests at the midpoint of the rails, not at ground. On a
     // single supply those are different places, and hanging it off ground puts
@@ -421,10 +442,27 @@ Circuit::OpAmp Circuit::addOpAmp(const juce::String& name,
     amp.positiveClamp = addDiode(gainNode, highClamp, DiodeModel::silicon());
     amp.negativeClamp = addDiode(lowClamp, gainNode, DiodeModel::silicon());
 
+    // The second pole: a copy of the gain node, buffered so it draws nothing
+    // from it, through one RC. What the output follows is this rather than the
+    // gain node itself, so the open-loop response gains the second pole a real
+    // part has -- the phase it is down by at unity gain, which sets how a
+    // feedback loop rings and how far up the closed-loop response is flat.
+    // Linear, so it costs a node and no Newton port; the clamps stay on the gain
+    // node, so where the output clips is unchanged.
+    juce::String driveNode = gainNode;
+
+    if (model.hasSecondPole())
+    {
+        driveNode = name + "_pole";
+        amp.secondPoleStage = addVccs(midNode, driveNode, gainNode, midNode, 1.0 / model.secondPoleResistance);
+        amp.secondPoleResistor = addResistor(driveNode, midNode, model.secondPoleResistance);
+        amp.secondPoleCapacitor = addCapacitor(driveNode, midNode, model.secondPoleCapacitance());
+    }
+
     // Output buffer: current into the output proportional to how far it lags
     // the gain node. Drawing from ground rather than from the gain node is what
     // makes it a buffer -- the load can't pull the gain stage about.
-    amp.outputStage = addVccs("gnd", output, gainNode, output, 1.0 / model.outputResistance);
+    amp.outputStage = addVccs("gnd", output, driveNode, output, 1.0 / model.outputResistance);
 
     return amp;
 }
@@ -846,6 +884,9 @@ void Circuit::clearState() noexcept
         m.channelCurrentLast = 0.0;
         m.vgsLast = m.vdsLast = m.slopeGateLast = m.slopeDrainLast = 0.0;
     }
+
+    for (auto& d : differentialPairs)
+        d.vLast = 0.0;
 
     for (auto& s : voltageSources)
     {

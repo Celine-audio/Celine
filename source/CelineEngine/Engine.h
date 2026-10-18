@@ -574,6 +574,7 @@ class Circuit
     using Jfet = CircuitComponents::Jfet;
     using Mosfet = CircuitComponents::Mosfet;
     using Vccs = CircuitComponents::Vccs;
+    using DifferentialPair = CircuitComponents::DifferentialPair;
     using IdealOpAmp = CircuitComponents::IdealOpAmp;
     using Transformer = CircuitComponents::Transformer;
     using VoltageSource = CircuitComponents::VoltageSource;
@@ -740,6 +741,7 @@ class Circuit
     std::vector<Jfet> jfets;
     std::vector<Mosfet> mosfets;
     std::vector<Vccs> transconductances;
+    std::vector<DifferentialPair> differentialPairs;
     std::vector<IdealOpAmp> idealOpAmps;
     std::vector<Transformer> transformers;
     std::vector<VoltageSource> voltageSources;

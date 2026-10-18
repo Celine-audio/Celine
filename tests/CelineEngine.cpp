@@ -1303,6 +1303,292 @@ TEST_CASE("Swapping the overdrive's clipping diodes changes its ceiling", "[circ
 // Ideal op-amps and transformers
 //==============================================================================
 
+namespace
+{
+    /** A follower on +/-4.5 V hit with a +/-2 V square wave: the fastest the
+        output ever moves, in V/us. At four times 48 kHz, so a sample is short
+        enough to see a slope of a few tenths of a volt per microsecond. */
+    double followerSlewRate(const Circuit::OpAmpModel& model)
+    {
+        constexpr double rate = 4.0 * sampleRate;
+        Circuit circuit;
+        circuit.addResistor("in", "p", 1000.0);
+        circuit.addOpAmp("U", "p", "out", "out", model.withRails(4.5, -4.5));
+        circuit.addResistor("out", "gnd", 10000.0);
+        circuit.setInputNode("in");
+        circuit.setOutputNode("out");
+        circuit.prepare(rate);
+
+        double fastest = 0.0;
+        float last = 0.0f;
+
+        for (int i = 0; i < 16000; ++i)
+        {
+            const float out = circuit.process((i / 800) % 2 ? 2.0f : -2.0f);
+
+            if (i > 0)
+                fastest = std::max(fastest, std::abs(out - last) * rate / 1.0e6);
+
+            last = out;
+        }
+
+        CHECK(circuit.getNonConvergenceCount() == 0);
+        return fastest;
+    }
+
+    /** The Rat's gain stage without its filters: non-inverting, gain 1000, on a
+        9 V rail biased at 4.5. */
+    std::vector<float> ratStage(const Circuit::OpAmpModel& model, Circuit::SolverStrategy strategy,
+                                float drive, int& nonConverged)
+    {
+        Circuit circuit;
+        circuit.addVoltageSource("vb", "gnd", 4.5);
+        circuit.addCapacitor("in", "p", 1.0e-6);
+        circuit.addResistor("p", "vb", 1.0e6);
+        circuit.addOpAmp("U", "p", "n", "out", model);
+        circuit.addResistor("out", "n", 1.0e6);
+        circuit.addResistor("n", "m", 1000.0);
+        circuit.addCapacitor("m", "vb", 4.7e-6);
+        circuit.addCapacitor("out", "o2", 1.0e-6);
+        circuit.addResistor("o2", "gnd", 100000.0);
+        circuit.setInputNode("in");
+        circuit.setOutputNode("o2");
+        circuit.setSolverStrategy(strategy);
+        circuit.prepare(sampleRate);
+
+        std::vector<float> out;
+        const double step = 2.0 * std::numbers::pi * 1000.0 / sampleRate;
+
+        for (int i = 0; i < 9600; ++i)
+            out.push_back(circuit.process(drive * static_cast<float>(std::sin(step * i))));
+
+        nonConverged = circuit.getNonConvergenceCount();
+        return out;
+    }
+}
+
+TEST_CASE("A slow op-amp slews at its datasheet rate", "[circuit][opamp]")
+{
+    // The tail current over the compensation capacitor, and nothing else: the
+    // same figure the datasheet quotes, read back off a follower's edge.
+    CHECK(followerSlewRate(Circuit::OpAmpModel::lm308()) == Catch::Approx(0.3).epsilon(0.05));
+    CHECK(followerSlewRate(Circuit::OpAmpModel::lm741()) == Catch::Approx(0.5).epsilon(0.05));
+
+    // And without the pair the same edge is taken at the bandwidth's pace,
+    // which at this sample rate is far faster.
+    auto unlimited = Circuit::OpAmpModel::lm308();
+    unlimited.slewRate = 0.0;
+    CHECK(followerSlewRate(unlimited) > 0.6);
+}
+
+TEST_CASE("A slewing op-amp gives one answer under both solvers", "[circuit][opamp]")
+{
+    // The input pair is a nonlinear element on the differential input -- the
+    // shape OpAmp.h records breaking the DK solve once. Driven hard enough to
+    // slew on every cycle, the two strategies have to agree.
+    for (const float drive : {0.01f, 0.1f, 1.0f})
+    {
+        int dk = -1, full = -1;
+        const auto a = ratStage(Circuit::OpAmpModel::lm308(), Circuit::SolverStrategy::DiscreteK, drive, dk);
+        const auto b = ratStage(Circuit::OpAmpModel::lm308(), Circuit::SolverStrategy::FullNewton, drive, full);
+
+        double worst = 0.0;
+
+        for (size_t i = 0; i < a.size(); ++i)
+            worst = std::max(worst, static_cast<double>(std::abs(a[i] - b[i])));
+
+        INFO("drive " << drive << " V: largest difference " << worst << " V");
+        CHECK(worst < 1.0e-4);
+        CHECK(dk == 0);
+        CHECK(full == 0);
+    }
+
+    // And slewing is audible there: a hard-driven Rat is a fifth different with
+    // the 308's real slew rate than without it.
+    int unused = 0;
+    auto unlimited = Circuit::OpAmpModel::lm308();
+    unlimited.slewRate = 0.0;
+    const auto slewing = ratStage(Circuit::OpAmpModel::lm308(), Circuit::SolverStrategy::Auto, 1.0f, unused);
+    const auto linear = ratStage(unlimited, Circuit::SolverStrategy::Auto, 1.0f, unused);
+
+    double difference = 0.0, level = 0.0;
+
+    for (size_t i = 4800; i < slewing.size(); ++i)
+    {
+        difference += std::pow(slewing[i] - linear[i], 2.0);
+        level += std::pow(linear[i], 2.0);
+    }
+
+    CHECK(std::sqrt(difference / level) > 0.1);
+}
+
+TEST_CASE("The TL072 and LM741 follow TI's own macromodels", "[circuit][opamp]")
+{
+    // Non-inverting, gain 101, +/-15 V into 10k, 0.1 V in -- 10 V out, which a
+    // 741 has to slew to above about 8 kHz and a TL072 never does. The
+    // references are TI's TL072 and uA741 Boyle cards run in ngspice-47 on the
+    // same circuit: the fundamental's amplitude and phase over 5 ms, at the
+    // same 192 kHz. Before the second pole and the 741's measured bandwidth
+    // these were 1.3-4.9% (TL072) and 2.8-3.9% (741) out in amplitude and up to
+    // 4.3 degrees in phase, the 741 right only where two errors cancelled.
+    struct Reference
+    {
+        const char* name;
+        Circuit::OpAmpModel model;
+        double frequency, amplitude, phaseDegrees;
+    };
+
+    const Reference references[] = {
+        {"TL072", Circuit::OpAmpModel::tl072(), 10000.0, 9.678, -106.59},
+        {"TL072", Circuit::OpAmpModel::tl072(), 20000.0, 8.680, -120.85},
+        {"LM741", Circuit::OpAmpModel::lm741(), 10000.0, 6.519, -139.97},
+        {"LM741", Circuit::OpAmpModel::lm741(), 20000.0, 3.702, -159.01},
+    };
+
+    constexpr double rate = 4.0 * sampleRate;
+
+    for (const auto& r : references)
+    {
+        Circuit circuit;
+        circuit.addOpAmp("U", "in", "n", "o", r.model.withRails(15.0, -15.0));
+        circuit.addResistor("o", "n", 100000.0);
+        circuit.addResistor("n", "gnd", 1000.0);
+        circuit.addResistor("o", "gnd", 10000.0);
+        circuit.setInputNode("in");
+        circuit.setOutputNode("o");
+        circuit.prepare(rate);
+
+        std::vector<double> out;
+        const double step = 2.0 * std::numbers::pi * r.frequency / rate;
+
+        for (int i = 0; i < 1920; ++i)
+            out.push_back(circuit.process(0.1f * static_cast<float>(std::sin(step * i))));
+
+        // The fundamental over the second half, which is a whole number of
+        // cycles at both frequencies.
+        double mean = 0.0;
+
+        for (int i = 960; i < 1920; ++i)
+            mean += out[static_cast<size_t>(i)] / 960.0;
+
+        double re = 0.0, im = 0.0;
+
+        for (int i = 960; i < 1920; ++i)
+        {
+            const double v = out[static_cast<size_t>(i)] - mean;
+            const double angle = step * (i - 960);
+            re += 2.0 * v * std::cos(angle) / 960.0;
+            im -= 2.0 * v * std::sin(angle) / 960.0;
+        }
+
+        const double amplitude = std::hypot(re, im);
+        const double phase = std::atan2(im, re) * 180.0 / std::numbers::pi;
+
+        INFO(r.name << " at " << r.frequency << " Hz: " << amplitude << " V at " << phase
+                    << " degrees, TI's card " << r.amplitude << " V at " << r.phaseDegrees);
+        CHECK(amplitude == Catch::Approx(r.amplitude).epsilon(r.frequency < 15000.0 ? 0.015 : 0.045));
+        CHECK(phase == Catch::Approx(r.phaseDegrees).margin(2.5));
+    }
+}
+
+TEST_CASE("A second pole leaves the gain crossing unity where the datasheet says", "[circuit][opamp]")
+{
+    // The datasheet's unity-gain bandwidth is where the gain crosses; the
+    // dominant pole is raised so the second pole does not pull that crossing
+    // down. At the crossing the open-loop magnitude is one, and the lag is
+    // 180 degrees less the margin.
+    for (const auto& model : {Circuit::OpAmpModel::tl072(), Circuit::OpAmpModel::lm741(),
+                              Circuit::OpAmpModel::jrc4558(), Circuit::OpAmpModel::lm308()})
+    {
+        REQUIRE(model.hasSecondPole());
+
+        const double f = model.gainBandwidth;
+        const double dominant = model.lowFrequencyGainBandwidth() / model.openLoopGain;
+        const double second = model.secondPoleFrequency();
+        const double magnitude = model.openLoopGain / std::hypot(1.0, f / dominant) / std::hypot(1.0, f / second);
+        const double lag = (std::atan(f / dominant) + std::atan(f / second)) * 180.0 / std::numbers::pi;
+
+        INFO("GBW " << f << " Hz, second pole " << second << " Hz");
+        CHECK(magnitude == Catch::Approx(1.0).epsilon(1.0e-3));
+        CHECK(180.0 - lag == Catch::Approx(model.phaseMargin).margin(0.1));
+    }
+
+    // And a model without one is exactly the single pole it always was.
+    auto single = Circuit::OpAmpModel::tl072();
+    single.phaseMargin = 0.0;
+    CHECK(single.lowFrequencyGainBandwidth() == Catch::Approx(single.gainBandwidth).epsilon(1.0e-15));
+}
+
+TEST_CASE("A degenerated input pair solves its own transfer curve", "[opamp][model]")
+{
+    // u = (1 - d) atanh(x) + d x, solved by Newton inside the device. Bare, it
+    // is tanh; degenerated, the same small-signal slope and the same limit,
+    // reached later and more abruptly.
+    for (const double d : {0.0, 0.35, 0.8})
+    {
+        for (const double u : {-60.0, -6.0, -1.5, -0.2, 0.0, 0.3, 1.0, 2.5, 8.0, 400.0})
+        {
+            double x = 0.0, slope = 0.0;
+            CircuitComponents::steerTail(u, d, x, slope);
+
+            INFO("d " << d << ", u " << u << ": x " << x);
+            CHECK(std::abs(x) <= 1.0);
+            CHECK(std::isfinite(slope));
+
+            // Out where the whole tail is on one side, x is one to the last bit
+            // and the curve has nothing left to check.
+            if (1.0 - std::abs(x) < 1.0e-9)
+                continue;
+
+            CHECK((1.0 - d) * std::atanh(x) + d * x == Catch::Approx(u).margin(1.0e-9));
+
+            double xp = 0.0, xm = 0.0, unused = 0.0;
+            CircuitComponents::steerTail(u + 1.0e-6, d, xp, unused);
+            CircuitComponents::steerTail(u - 1.0e-6, d, xm, unused);
+            CHECK(slope == Catch::Approx((xp - xm) / 2.0e-6).epsilon(1.0e-4).margin(1.0e-9));
+        }
+    }
+
+    double bare = 0.0, degenerated = 0.0, unused = 0.0;
+    CircuitComponents::steerTail(1.0, 0.0, bare, unused);
+    CircuitComponents::steerTail(1.0, 0.35, degenerated, unused);
+    CHECK(bare == Catch::Approx(std::tanh(1.0)));
+    CHECK(degenerated > bare);
+}
+
+TEST_CASE("Only a part that can slew at the circuit's rate gets the input pair", "[circuit][opamp]")
+{
+    // A sample can ask the output to cross its whole swing, so a part whose
+    // slew rate covers swing x rate never slews and needs no pair.
+    using M = Circuit::OpAmpModel;
+    const auto nineVolt = [](M m) { return m.withRails(9.0, 0.0); };
+
+    CHECK(nineVolt(M::lm308()).slewsAt(48000.0));
+    CHECK_FALSE(nineVolt(M::lm741()).slewsAt(48000.0));
+    CHECK(nineVolt(M::lm741()).slewsAt(4.0 * 48000.0));
+    CHECK_FALSE(nineVolt(M::jrc4558()).slewsAt(4.0 * 48000.0));
+    CHECK(nineVolt(M::jrc4558()).slewsAt(8.0 * 48000.0));
+    CHECK_FALSE(nineVolt(M::tl072()).slewsAt(16.0 * 48000.0));
+    CHECK_FALSE(nineVolt(M::ne5532()).slewsAt(16.0 * 48000.0));
+
+    // What the pair costs: two Newton ports beside the clamps' two.
+    const auto ports = [](M model)
+    {
+        Circuit circuit;
+        circuit.addResistor("in", "p", 1000.0);
+        circuit.addOpAmp("U", "p", "out", "out", model);
+        circuit.setInputNode("in");
+        circuit.setOutputNode("out");
+        circuit.prepare(sampleRate);
+        return circuit.getPortCount();
+    };
+
+    auto linear = M::lm308();
+    linear.slewRate = 0.0;
+    CHECK(ports(M::lm308()) == 4);
+    CHECK(ports(linear) == 2);
+}
+
 TEST_CASE("An ideal op-amp gives exactly the textbook gain", "[circuit][nullor]")
 {
     // Not "close to" -- exactly. A nullor is the textbook assumption, so an
@@ -1983,6 +2269,36 @@ TEST_CASE("A valve plate never sources current", "[valve][model]")
 }
 
 //==============================================================================
+TEST_CASE("A starved pentode finds its bias a fraction of a volt above the cathode", "[valve][model]")
+{
+    // A pentode behind 100k on 300 V, screen on the rail: the screen takes most
+    // of the cathode current and the plate is starved down into the knee,
+    // under a volt from the cathode. Once the plate-slope refit sharpened the
+    // knees, Newton overshot from there into the flat region below the cathode
+    // and the KT66 settled at -149 V. See limitPortVoltages().
+    using M = Circuit::PentodeModel;
+
+    for (const auto& model : {M::el34(), M::u6l6gc(), M::el84(), M::kt66(), M::kt77(), M::u6v6(), M::kt88()})
+    {
+        Circuit circuit;
+        circuit.addVoltageSource("rail", "gnd", 300.0);
+        circuit.addResistor("rail", "plate", 100000.0);
+        circuit.addResistor("cathode", "gnd", 1500.0);
+        circuit.addResistor("grid", "gnd", 1.0e6);
+        circuit.addResistor("in", "grid", 1.0);
+        circuit.addPentode("plate", "rail", "grid", "cathode", model);
+        circuit.setInputNode("in");
+        circuit.setOutputNode("plate");
+        circuit.prepare(sampleRate);
+
+        const double vpk = circuit.getNodeVoltage("plate") - circuit.getNodeVoltage("cathode");
+        INFO("MU " << model.mu << ": Vpk = " << vpk << " V");
+        CHECK(circuit.foundOperatingPoint());
+        CHECK(vpk > 0.0);
+        CHECK(vpk < 3.0);
+    }
+}
+
 TEST_CASE("A pentode conducts smoothly as its screen comes up", "[valve][model]")
 {
     // The gate that cuts the valve off used to sit at Ug2 = 1 V, where the

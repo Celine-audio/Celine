@@ -638,8 +638,8 @@ namespace SchematicModel
             a terminal has already named its net, an annotation has no pins, and
             a scope must not change the node it watches. */
         void addElement(Circuit& circuit, const Element& element, const PinNets& net,
-                        const BuildOptions& options, std::vector<LiveControl>& controls,
-                        int& potOrdinal, int& switchOrdinal)
+                        const BuildOptions& options, double sampleRate,
+                        std::vector<LiveControl>& controls, int& potOrdinal, int& switchOrdinal)
         {
             switch (element.type)
             {
@@ -723,8 +723,19 @@ namespace SchematicModel
                     else
                     {
                         // The name must be unique on the sheet; the element id is.
-                        circuit.addOpAmp("U" + juce::String(element.id), net(0), net(1), net(2),
-                                         opAmpModelFor(element.modelIndex).withRails(element.value, 0.0));
+                        auto model = opAmpModelFor(element.modelIndex).withRails(element.value, 0.0);
+
+                        // A part too fast to slew at the rate this circuit runs
+                        // at gets the linear input stage it had before -- not as
+                        // an approximation, but because its tail current can
+                        // carry the output across its whole swing inside one
+                        // sample, so the limit never binds. It saves the pair's
+                        // two Newton ports, which were 60% of the CPU on a
+                        // two-op-amp pedal. See OpAmpModel::slewsAt().
+                        if (! model.slewsAt(sampleRate))
+                            model.slewRate = 0.0;
+
+                        circuit.addOpAmp("U" + juce::String(element.id), net(0), net(1), net(2), model);
                     }
 
                     break;
@@ -847,7 +858,7 @@ namespace SchematicModel
             int potOrdinal = 1, switchOrdinal = 1;
 
             for (size_t e = 0; e < elements.size(); ++e)
-                addElement(*circuit, elements[e], PinNets{nets, e}, options,
+                addElement(*circuit, elements[e], PinNets{nets, e}, options, sampleRate,
                            controls, potOrdinal, switchOrdinal);
 
             circuit->setPortVoltagePrediction(options.predictNewtonSeed);

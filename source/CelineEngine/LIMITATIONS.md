@@ -198,17 +198,46 @@ and the model cannot be both.
 curves at low plate voltage where secondary electrons flow backwards. Not
 modelled, and it sits exactly where a power stage goes when clipping hard.
 
-**Koren's knee is too soft, and his plate curves too flat.** One arctangent sets
-both the knee and the plate resistance, so fitting Ri at the operating point
-fixes KVB near 50 V on every pentode here, and the knee goes with it. The KT88
-sheet, whose plate family was digitised to check this, shows it plainly: at
-Ua 50 V, Ug1 −15 V the sheet has 162 mA and the model 117; above 300 V the real
-curves keep rising (−30 V: 74 mA at 250 V, 87 at 400) while the arctangent has
-flattened (64 and 68). The first is where a clipping output stage spends its
-time. Multiplying the plate term by (1 + Ua/VA) frees KVB to sharpen the knee
-while VA carries Ri: tried on the KT88, it takes the family from 39 mA rms
-over Ua ≥ 30 V to 9 mA, with every operating-point figure still within about
-2%. Not adopted, since it changes the form every pentode here is fitted in.
+**The plate-slope term fixed Koren's knee, not everything about the plate
+curves.** Koren's single arctangent sets both the knee and the plate resistance,
+so fitting Ri pinned KVB near 50 V on every pentode and left the knee far too
+soft. Every pentode with a pentode plate family on its sheet now carries a
+factor (1 + Ua/VA) that takes the slope and frees KVB for the knee, refitted with
+the operating point held exactly. Against the families digitised from
+`docs/specs/tubes` (rms, every 10 V from Ua 30 V):
+
+    valve   sheet's Ug2   Koren's form   now    knee KVB
+    EL34       250 V        17.7 mA     7.8 mA    13 V
+    EL84       250 V        16.2         6.8       6 V
+    KT88       300 V        18.8        10.6      14 V
+    6L6GC      400 V        14.0         9.2      23 V   (MU, EX refitted too)
+    KT77       250 V         8.9         8.2      34 V
+    KT66       400 V        27.3        23.5      10 V
+
+What is left, valve by valve:
+
+- **KT66** — the rest of its 23.5 mA is how current scales with *screen*
+  voltage: its family is at 400 V, its operating point at 250, and its low
+  curves at 400 V sit 15–25 mA under the model (67 mA on Ug1 −35 V where the
+  model draws 93). Koren's grid law cannot hold both; freeing MU and EX
+  reaches 17.8 mA only at MU 50, which a −50 V curve still conducting at 400 V
+  rules out, and the sheet's triode Ri of 1.3k is unreachable alongside the
+  family (the model gives 1.07k).
+- **KT88** — one slope for the whole family cannot give the coldest curves
+  the steeper one they have above 300 V (Ug1 −30 V: 74 mA at 250, 87 at 400 on
+  the sheet; 64 and 69 here).
+- **EL34** — the knee is now right on the upper curves and overshoots on the
+  lower ones: 54 mA at Ua 50 on Ug1 −15 V against the sheet's 40.
+- **6V6S** — still in Koren's form, because its sheet has no pentode plate
+  family; its triode-connected curves cannot separate knee from slope. Held
+  out, they land within 4.1 mA rms of the model.
+
+A sharper knee is a sharper corner for Newton. A pentode starved down to a
+fraction of a volt above its cathode — the screen taking the cathode current
+through a big plate load — biases right beside the floor where plate current
+stops, and the refitted KT66 overshot past it and settled at −149 V until the
+pentode's step limiter learned not to cross the cathode in one step from a
+conducting plate (`limitPortVoltages` in `Pentode.h`).
 
 **Rectifiers are pure 3/2-power, which is too steep at low current.** Real
 rectifiers conduct more than Child-Langmuir predicts near the origin, where
@@ -299,19 +328,82 @@ individual pedals and amps of the same model sound different.
 No Johnson noise, no shot noise, no 1/f. The simulation is perfectly silent
 between notes, which no analogue circuit is.
 
-### Op-amp: no slew rate
+### Op-amp: slew rate and phase margin are modelled; the input range and current limit are not
 
-`OpAmp` models finite gain, one dominant pole, and rails it clips against. It
-does not model slew limiting. On the slow parts that matters: a JRC4558 slews
-at 2.2 V/µs, an LM308 (the ProCo Rat) far slower, and an LM741 at 0.5 V/µs —
-a 7 V swing takes it 14 µs — and on a fast transient that rounds the waveform
-in a way the frequency response alone does not capture. `OpAmpModel::jrc4558()`
-and `lm741()` document this at their definitions.
+`OpAmp` models finite gain, rails it clips against, two poles, and — for any
+model with a `slewRate` — a long-tailed input pair whose tail current caps how
+fast the compensation capacitor charges (`DifferentialPair.h`). That is the
+Boyle macromodel's input stage, and the slew rate, the gain-bandwidth and the
+input voltage at which the stage runs out of current all follow from the
+datasheet's two figures. A pair with emitter resistors, as the 741's has, takes
+a `degeneration` that keeps it linear further out and runs it out of current
+more abruptly.
 
-Also absent: input bias and offset current, CMRR, PSRR, the input common-mode
-range (an LM741 on a 9 V pedal runs out of it before its output does, and a
-real one turns that into early, gritty clipping), and the higher-order poles a
-real part has.
+The second pole is placed from each part's phase margin, and the dominant pole
+is raised so the gain still crosses unity at the datasheet's unity-gain
+bandwidth. That distinction was the larger error: a sheet's "unity-gain
+bandwidth" is where the gain *crosses*, which with a second pole sits below the
+gain-bandwidth the audio band sees (3.0 MHz against 3.3 on a TL072). The 741 was
+worse — its bandwidth had been read off the sheet's rise time as 1.2 MHz, which
+is a follower's closed-loop bandwidth; the open loop crosses at 0.885.
+
+Checked against TI's own TL072 and µA741 Boyle cards in ngspice-47, on a gain
+of 101 at ±15 V with 0.1 V in (10 V out, which the 741 must slew to above about
+8 kHz). Error in the whole waveform, rms:
+
+               1 kHz   5 kHz   10 kHz   20 kHz
+    TL072      0.1%    0.4%    1.0%     3.2%     (was 0.4 / 2.1 / 4.2 / 8.9)
+    LM741      0.1%    0.4%    1.2%     4.0%     (was 1.7 / 6.6 / 5.9 / 1.7)
+
+The 741's old 1.7% at 20 kHz was two errors cancelling — at small signal, where
+nothing slews, the same model was 8–11% too loud at 10–20 kHz. Part of what is
+left at 20 kHz is the trapezoidal rule at 192 kHz, under which a 20 kHz tone
+answers as 20.75 kHz would in the analogue circuit — about 1.2 points of the
+TL072's 1.6% amplitude error there. On a Rat — an LM308 at gain 1000 — slewing
+changes a hard-driven output by a fifth.
+
+Where each margin comes from: the TL072's and the 741's from TI's cards,
+measured open-loop in ngspice (64 and 63 degrees), and each consistent with its
+sheet's quoted follower overshoot (62 and 65); the JRC4558's and NE5532's from
+their sheets' overshoot alone, with the test load counted (60 and 73, the
+NE5532's assuming 50 Ω of output resistance); the LM308's read off a scanned
+phase plot, about 65 and coarse. Only the 741's degeneration (0.35) has a source
+— the card's emitter resistors — so the other parts keep the bare pair, which
+matters only to a part that slews.
+
+The pair costs two Newton ports, so it is only fitted where it can act: a
+sampled output moves at most its whole swing in a sample, and a part whose slew
+rate covers that never slews (`OpAmpModel::slewsAt`). On 9 V at 48 kHz that
+leaves only the LM308; the LM741 joins at 4× oversampling and the JRC4558 at 8×;
+the TL072 and NE5532 never do. Where it is fitted it is not cheap: the Rat's
+gain stage, hard driven, goes from 0.24 ms per 512 samples to 0.40 ms — 1.7×,
+or about 4% of a core at 48 kHz for that one stage. (An earlier run, before the
+second pole was added, read 0.44–0.66 ms with a wide spread; the cause of that
+spread was not isolated.) The second pole is a node, not a port, and costs
+nothing measurable: the two-op-amp pedal is 0.66 ms per block with or without
+it. Newton is not what
+grows (4.3–4.7 iterations a sample against 3.8–4.1, the worst case unchanged);
+each iteration solves four ports instead of two.
+
+What is still absent, and why:
+
+- **The input common-mode range.** The sheets give the range — ±13 V of ±15
+  on a 741 or 4558, ±14 on an LM308, −12 to +15 on a TL072 — but not what the
+  part does past it, which is where the sound would be: a JFET-input TL07x is
+  known to phase-reverse below its negative limit, a bipolar part does
+  something else, and no sheet here quantifies either. Any model of it would be
+  invented. An LM741 on a 9 V pedal reaches it with about 1.5 V of input swing.
+- **The output current limit.** 25 mA on a 741, 38 on an NE5532, about 6 on an
+  LM308 (TI's output-swing curve). In the classic pedals it never engages — the
+  Rat's 308 drives its clipping diodes through 1k, a few milliamps at most — so
+  it would cost a Newton port per op-amp for nothing audible.
+- **Poles beyond the second**, and the zeros a real compensation network has.
+  They are what is left between the models and the cards above 20 kHz.
+- Input bias and offset current, CMRR, PSRR, noise.
+
+The NE5532 model follows TI's revision K tables (12 MHz, 5 V/µs); the sheet in
+`docs/specs` is the older revision H (10 MHz, 9 V/µs). At audio rates it slews
+at neither.
 
 The **LM386** (`PowerAmp.h`) is built the same way and shares the gaps, plus
 its own: no crossover distortion from its class-AB output stage, no current

@@ -25,7 +25,8 @@
 
     An op-amp is not in that list. It is assembled out of the parts above --
     resistors, a capacitor, two controlled sources and two diodes -- rather than
-    being a device of its own. See OpAmp.h for why that matters. The LM386
+    being a device of its own; a model with a slew rate swaps the input source
+    for a DifferentialPair, the one nonlinear part made only for it. See OpAmp.h for why that matters. The LM386
     power amplifier is built the same way; see PowerAmp.h.
 
     Neither -- states a constraint instead of describing a current, and so needs
@@ -42,6 +43,7 @@
 
 #include "Capacitor.h"
 #include "Diode.h"
+#include "DifferentialPair.h"
 #include "IdealOpAmp.h"
 #include "Inductor.h"
 #include "Jfet.h"
