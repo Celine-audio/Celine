@@ -398,10 +398,12 @@ it stays perfectly linear however hard you hit it.
   has three times Vishay's input capacitance. The threshold spread on a real
   part (0.8 to 3 V; 1 to 3.5 V on the BS250) dwarfs every one of these; the
   models are Vishay's typical part.
-- **Diodes:** the 1N4001 and the BAT41 carry junction capacitance, and the
-  1N4001 its stored charge (transit time, 5.7 µs), integrated backward-Euler
-  inside the device; the BAT41 its series resistance and guard ring. The older
-  models carry none of these. The capacitance is a constant — a real one rises
+- **Diodes:** the 1N4001, the BAT41 and the BAT46 carry junction capacitance,
+  and the 1N4001 its stored charge (transit time, 5.7 µs), integrated
+  backward-Euler inside the device; the two BATs their series resistance and
+  guard ring. The guard ring has no resistance of its own, which is what leaves
+  the BAT46 16–24 mV off ST's curve above 50 mA — past anything a clipper
+  draws. The older models carry none of these. The capacitance is a constant — a real one rises
   into forward bias — and the stored charge relaxes within one sample at any
   audio rate, so what it models is the charge a clipping edge has to move, not
   the shape of the recovery, which is over in microseconds.

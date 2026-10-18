@@ -721,6 +721,80 @@ TEST_CASE("The BAT41 reproduces ST's typical curve", "[diode][model]")
     CHECK(circuit.getPortCount() == 2);
 }
 
+TEST_CASE("The BAT41 sits inside General Semiconductor's sheet", "[diode][model]")
+{
+    // docs/specs/diodes/BAT41.PDF: a table, no curves -- and the same figures
+    // as ST's. Typical 0.40 V at 1 mA, which ST's own curve puts at 0.39.
+    const auto m = DiodeModel::bat41();
+
+    CHECK(diodeVoltageAt(m, 1.0e-3) == Catch::Approx(0.40).margin(0.015));
+    CHECK(diodeVoltageAt(m, 1.0e-3) < 0.45);
+    CHECK(diodeVoltageAt(m, 200.0e-3) < 1.0);
+
+    // 100 nA max at 50 V reverse, 25 C. The model's leakage is its two
+    // saturation currents, which nothing was fitted to.
+    CHECK(m.saturationCurrent + m.guardRingSaturationCurrent < 100.0e-9);
+}
+
+TEST_CASE("The BAT46 reproduces ST's typical curve", "[diode][model]")
+{
+    // ST's sheet (docs/specs/diodes/BAT46-ST.PDF), Fig. 1-1 (to 20 mA) and Fig. 1-2 (above), 25 C. The
+    // drafter plotted on round currents, so these are the sheet's own points.
+    // Fitted with the weight on 20 mA and below, where a pedal runs it.
+    const auto m = DiodeModel::bat46();
+    const std::pair<double, double> low[] = { { 0.1e-3, 0.188 }, { 0.2e-3, 0.208 }, { 0.5e-3, 0.235 },
+                                              { 1.0e-3, 0.259 }, { 2.0e-3, 0.287 }, { 3.0e-3, 0.307 },
+                                              { 5.0e-3, 0.340 }, { 8.0e-3, 0.380 }, { 10.0e-3, 0.405 },
+                                              { 15.0e-3, 0.462 }, { 20.0e-3, 0.515 } };
+
+    for (const auto& [current, volts] : low)
+    {
+        INFO("at " << current * 1e3 << " mA");
+        CHECK(diodeVoltageAt(m, current) == Catch::Approx(volts).margin(0.003));
+    }
+
+    // Above 20 mA the guard ring's own resistance, which the model has not got,
+    // shows: 16 mV high at 100 mA and 24 mV low at 500 mA, where it is three
+    // times its rating.
+    const std::pair<double, double> high[] = { { 50.0e-3, 0.685 }, { 100.0e-3, 0.756 },
+                                               { 200.0e-3, 0.820 }, { 500.0e-3, 0.914 } };
+
+    for (const auto& [current, volts] : high)
+    {
+        INFO("at " << current * 1e3 << " mA");
+        CHECK(diodeVoltageAt(m, current) == Catch::Approx(volts).margin(0.03));
+    }
+
+    // General Semiconductor's sheet (docs/specs/diodes) gives maxima only.
+    CHECK(diodeVoltageAt(m, 0.1e-3) < 0.25);
+    CHECK(diodeVoltageAt(m, 10.0e-3) < 0.45);
+    CHECK(diodeVoltageAt(m, 250.0e-3) < 1.0);
+
+    // The leakage, which is the saturation currents and was not fitted: ST's
+    // Fig. 2 reads about 0.28 uA typical at 10 V, and both sheets say 0.5 max
+    // at 1.5 V.
+    const double leakage = m.saturationCurrent + m.guardRingSaturationCurrent;
+    CHECK(leakage > 0.1e-6);
+    CHECK(leakage < 0.5e-6);
+}
+
+TEST_CASE("A BAT46 clips lowest of all the diodes", "[diode][model]")
+{
+    // 0.26 V at a milliamp: 130 mV under a BAT41, and under germanium and the
+    // 1N5817 too.
+    const double bat46 = diodeVoltageAt(DiodeModel::bat46(), 1.0e-3);
+    CHECK(bat46 < diodeVoltageAt(DiodeModel::bat41(), 1.0e-3) - 0.1);
+    CHECK(bat46 < diodeVoltageAt(DiodeModel::germanium(), 1.0e-3));
+    CHECK(bat46 < diodeVoltageAt(DiodeModel::schottky(), 1.0e-3));
+
+    // But with a Schottky's sharp knee rather than germanium's soft one: less
+    // voltage across the three decades below a milliamp.
+    const auto span = [](const DiodeModel& model)
+    { return diodeVoltageAt(model, 1.0e-3) - diodeVoltageAt(model, 1.0e-6); };
+
+    CHECK(span(DiodeModel::bat46()) < span(DiodeModel::germanium()));
+}
+
 TEST_CASE("A diode stack scales its series resistance and guard ring", "[diode]")
 {
     // n composite diodes in series drop n times one at the same current --

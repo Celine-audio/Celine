@@ -195,6 +195,7 @@ namespace SchematicModel
              "celine:zener-5v1|Zener 5.1V|Clamps at 5.1 V|Zener;"
              "celine:diode-1n914|1N914|Same as the 1N4148|Silicon;"
              "celine:diode-bat41|BAT41|~0.4 V, soft knee|Schottky;"
+             "celine:diode-bat46|BAT46|~0.26 V, sharp knee|Schottky;"
              "celine:diode-1n4001|1N4001|Rectifier, ~0.57 V, slow recovery|Silicon"},
 
             // Base, collector, emitter -- the order addTransistor() wants.

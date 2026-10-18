@@ -198,7 +198,13 @@ namespace CircuitComponents
 
             The 35 ohm resistance is why its knee is softer than a Schottky's
             ought to be, and why it clips at a silicon-like voltage once the
-            current gets up. 2 pF of capacitance (ST, typ at 1 V). */
+            current gets up. 2 pF of capacitance (ST, typ at 1 V).
+
+            Checked again against General Semiconductor's sheet
+            (docs/specs/diodes), whose table is ST's figure for figure: 0.39 V
+            at 1 mA against 0.40 typ and 0.45 max, 0.94 V at 200 mA against
+            1.0 max, and 39 nA of leakage against 100 nA max at 50 V. Nothing
+            there to refit to -- it has no curves. */
         static DiodeModel bat41() noexcept
         {
             DiodeModel model;
@@ -208,6 +214,45 @@ namespace CircuitComponents
             model.guardRingSaturationCurrent = 1.176e-8;
             model.guardRingEmission = 2.2;
             model.junctionCapacitance = 2.0e-12;
+            return model;
+        }
+
+        /** BAT46, the BAT41's lower-voltage sibling: same DO-35, same guard
+            ring, a larger barrier area -- four times the saturation current
+            and a quarter of the resistance. It clips about 130 mV lower than a
+            BAT41 at a milliamp -- the lowest diode in the list, under the
+            germanium's 0.33 V and the 1N5817's 0.30 -- and with a Schottky's
+            sharp knee below that rather than germanium's soft one.
+
+            Built the BAT41's way -- a Schottky behind its series resistance,
+            the guard ring across both -- and fitted to ST's typical curves
+            (docs/specs/diodes/BAT46-ST.PDF, Fig. 1-1 and 1-2, 25 C), whose
+            plotted points fall on round currents from 0.1 mA to 500 mA and
+            agree between the two figures where they overlap. The guard ring's
+            emission is held at the BAT41's 2.2 and the fit weighted to 20 mA
+            and below, which is where a pedal runs it. Through the engine: 0.19 V at 0.1 mA, 0.26 at 1 mA,
+            0.41 at 10 mA, within 1.3 mV of the curve everywhere up to 20 mA;
+            above that the guard ring's own resistance, which this structure
+            has not got, leaves it up to 16 mV high at 100 mA and 24 mV low at
+            500 mA -- three times its rating.
+
+            General Semiconductor's sheet (docs/specs/diodes) gives maxima only,
+            and it sits inside every one: 0.25 V at 0.1 mA, 0.45 at 10 mA, 1 V at
+            250 mA (0.84 here). Its reverse current, which is the saturation
+            currents and was not fitted, comes out at 0.19 uA -- ST's Fig. 2
+            reads about 0.28 uA typical at 10 V, and both sheets say 0.5 max.
+
+            10 pF: the sheets' typical at 0 V, the bias a clipping diode lives
+            near. It falls to 6 pF at 1 V reverse. */
+        static DiodeModel bat46() noexcept
+        {
+            DiodeModel model;
+            model.saturationCurrent = 1.155e-7;
+            model.emissionCoefficient = 1.0619;
+            model.seriesResistance = 9.451;
+            model.guardRingSaturationCurrent = 7.056e-8;
+            model.guardRingEmission = 2.2;
+            model.junctionCapacitance = 10.0e-12;
             return model;
         }
     };
