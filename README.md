@@ -17,7 +17,7 @@ Céline lets you experiment, design, and play with circuits with no latency.
 
 - **Draw your own circuit :** Place parts, wire them and then press _Rebuild_ to load the schematic. The circuit is sent to the solver and is ready to be played through.
 - **Potentiometers and switches :** Every potentiometer and switch you draw becomes a knob in the strip along the bottom. They are host-automatable and can be adjusted without needing a rebuild.
-- **Oversampling.** 2× or 4× oversampling is available. Lessens the effects of aliasing but computationally intensive.
+- **Oversampling.** 2×, 4×, 8× or 16× oversampling is available. Lessens the effects of aliasing but computationally intensive: each doubling costs nearly twice the CPU, and 16× is meant for rendering rather than playing live.
 - **Schematics.** `.celsch` holds the drawing and the knob positions. They can be loaded, imported to a current drawing, and exported directly from the editor. A preset folder can be assigned for easy access to a library of schematics.
 
 The simulation's limits are documented. Read

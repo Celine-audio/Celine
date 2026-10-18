@@ -2,6 +2,7 @@
 // back when the plugin was one hard-coded pedal. It now builds whatever is drawn,
 // so the benchmarks ask for them directly.
 #include <CelineEngine/Circuits.h>
+#include <Schematic/ExampleSchematics.h>
 
 TEST_CASE ("Boot performance")
 {
@@ -299,6 +300,68 @@ TEST_CASE ("Circuit engine performance")
 // Two sheet sizes, because the interesting question is how the cost *scales*:
 // per-element work shows up in the first, anything quadratic in the second.
 //==============================================================================
+//==============================================================================
+// Oversampling
+//
+// The whole plugin, not the bare circuit: one 512-sample stereo block at
+// 48 kHz through processBlock, halfband filters and all, so the figure is the
+// one a host's meter shows. Same budget as above -- 10.67 ms per block, so
+// 1 ms is about 9% of a core.
+//
+// Driven 24 dB hot, as the aliasing test drives it, because a clipping circuit
+// is both where oversampling earns its keep and where Newton works hardest.
+//==============================================================================
+
+TEST_CASE ("Oversampling cost")
+{
+    constexpr double rate = 48000.0;
+    constexpr int blockSize = 512;
+
+    for (const int example : { 0, 2 }) // diode clipper, 12AX7 gain stage
+    {
+        for (const int factor : PluginProcessor::oversamplingFactors)
+        {
+            const auto label = SchematicModel::Examples::getNames()[example].toStdString()
+                             + ", stereo 512 samples, " + std::to_string (factor) + "x";
+
+            BENCHMARK_ADVANCED (std::string (label))
+            (Catch::Benchmark::Chronometer meter)
+            {
+                PluginProcessor plugin;
+                plugin.prepareToPlay (rate, blockSize);
+                SchematicModel::Examples::load (plugin.getSchematic(), example);
+                REQUIRE (plugin.setOversamplingFactor (factor).isValid());
+
+                auto* input = plugin.apvts.getParameter ("input");
+                input->setValueNotifyingHost (input->convertTo0to1 (24.0f));
+
+                juce::AudioBuffer<float> source (2, blockSize), buffer (2, blockSize);
+                juce::MidiBuffer midi;
+
+                for (int i = 0; i < blockSize; ++i)
+                {
+                    const auto v = 0.5f * std::sin (2.0f * 3.14159265f * 440.0f * (float) i / (float) rate);
+                    source.setSample (0, i, v);
+                    source.setSample (1, i, v);
+                }
+
+                // Settle the bias point and the filters before timing anything.
+                for (int b = 0; b < 20; ++b)
+                {
+                    buffer.makeCopyOf (source, true);
+                    plugin.processBlock (buffer, midi);
+                }
+
+                meter.measure ([&] (int) {
+                    buffer.makeCopyOf (source, true);
+                    plugin.processBlock (buffer, midi);
+                    return buffer.getSample (0, 0);
+                });
+            };
+        }
+    }
+}
+
 TEST_CASE ("Drawing performance")
 {
     using namespace SchematicModel;

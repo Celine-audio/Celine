@@ -332,7 +332,7 @@ void PluginProcessor::prepareOversampler()
         // Polyphase IIR halfband: much cheaper than an equiripple FIR and the
         // phase distortion it trades for that is irrelevant in front of a guitar
         // amp, which is a minimum-phase device from end to end anyway.
-        const auto stages = oversamplingFactor == 4 ? 2 : 1;
+        const auto stages = static_cast<size_t> (juce::findHighestSetBit (static_cast<juce::uint32> (oversamplingFactor)));
 
         prepared = std::make_unique<juce::dsp::Oversampling<float>> (
             2, stages, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true, false);
@@ -359,14 +359,15 @@ void PluginProcessor::prepareOversampler()
     setLatencySamples (latency);
 }
 
-// 1, 2 or 4, never 3: the filter chain only comes in powers of two, so a 3 --
-// reachable from a hand-edited document -- would prepare the circuits at one
-// rate and the halfbands at another. Rounded down: cheaper, and a hand-written
-// 3 was almost certainly meant to be one of its neighbours.
+// A power of two up to the maximum, never 3 or 12: the filter chain only comes
+// in powers of two, so anything between -- reachable from a hand-edited
+// document -- would prepare the circuits at one rate and the halfbands at
+// another. Rounded down: cheaper, and a hand-written 12 was almost certainly
+// meant to be one of its neighbours.
 static int normaliseOversamplingFactor (int factor) noexcept
 {
-    factor = juce::jlimit (1, 4, factor);
-    return factor == 3 ? 2 : factor;
+    factor = juce::jlimit (1, PluginProcessor::maximumOversamplingFactor, factor);
+    return 1 << juce::findHighestSetBit (static_cast<juce::uint32> (factor));
 }
 
 SchematicModel::BuildResult PluginProcessor::setOversamplingFactor (int factor)

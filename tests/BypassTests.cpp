@@ -301,7 +301,7 @@ TEST_CASE ("Bypassed, the plugin is the input delayed by the latency it reports"
     // it up but filtered it; it is a delay line now, so bypassed is bit for bit what
     // went in. Each side is its own input, whatever the channel mode, since only the
     // engaged path collapses to mono.
-    for (const auto factor : { 1, 2, 4 })
+    for (const auto factor : PluginProcessor::oversamplingFactors)
     {
         for (const auto mode : { 0, 3 }) // Stereo, Mono L+R
         {
@@ -316,7 +316,7 @@ TEST_CASE ("Bypassed, the plugin is the input delayed by the latency it reports"
 
             CHECK (latency <= PluginProcessor::maximumOversamplingLatency);
 
-            if (factor == 4)
+            if (factor > 1)
                 CHECK (latency > 0);
 
             juce::AudioBuffer<float> buffer (2, blockSize);

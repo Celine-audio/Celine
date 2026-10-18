@@ -1245,7 +1245,7 @@ void PluginEditor::showSettingsMenu()
     // Oversampling: the only real fix for aliasing.
     menu.addSectionHeader ("Oversampling");
 
-    for (const int factor : { 1, 2, 4 })
+    for (const int factor : PluginProcessor::oversamplingFactors)
     {
         juce::PopupMenu::Item item (factor == 1 ? "Off" : juce::String (factor) + juce::String ("x"));
         item.isTicked = processorRef.oversamplingFactor == factor;
@@ -1260,9 +1260,10 @@ void PluginEditor::showSettingsMenu()
                 return;
             }
 
-            setStatus (factor == 1
-                           ? "Oversampling off."
-                           : juce::String (factor) + "x oversampling. Reduces aliasing but increases CPU usage.",
+            setStatus (factor == 1  ? juce::String ("Oversampling off.")
+                     : factor <= 4  ? juce::String (factor) + "x oversampling. Reduces aliasing but increases CPU usage."
+                     : factor == 8  ? juce::String ("8x oversampling. About 7x usage.")
+                                    : juce::String ("16x oversampling. About 13x usage, best kept for rendering."),
                        false);
         });
 

@@ -6,6 +6,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_dsp/juce_dsp.h>
+#include <array>
 #include <memory>
 #include <vector>
 
@@ -90,15 +91,22 @@ public:
     /** See wasDocumentFromNewerBuild(). */
     bool documentFromNewerBuild = false;
 
-    /** How many times the host's rate the circuit runs at: 1, 2 or 4.
+    /** How many times the host's rate the circuit runs at: one of
+        `oversamplingFactors`.
 
         Every nonlinear device generates harmonics without limit, and at 48 kHz
-        what they make above 24 kHz folds back as inharmonic grit. 2x is roughly
-        twice the CPU, the per-sample solve dominating.
+        what they make above 24 kHz folds back as inharmonic grit. Each doubling
+        costs a little under twice the CPU, the per-sample solve dominating --
+        Newton needs fewer iterations when consecutive samples are closer.
 
         Changing it re-prepares the circuits -- the DK discretisation depends on
         the timestep -- so it goes through rebuild() rather than per block. */
     int oversamplingFactor = 1;
+
+    /** Every factor the Settings menu offers, and the only ones a document can
+        ask for: the halfband chain comes in powers of two, one stage each. */
+    static constexpr std::array<int, 5> oversamplingFactors { 1, 2, 4, 8, 16 };
+    static constexpr int maximumOversamplingFactor = oversamplingFactors.back();
 
     /** Sets the factor and rebuilds. Message thread; returns the build result
         so the caller can report failures the same way Rebuild does. */
@@ -320,9 +328,10 @@ public:
     /** The most latency the oversampler reports at any factor, which the
         bypass's dry path is sized for once, in prepareToPlay. Not the latency
         of the factor in force: that changes from the message thread while
-        audio runs, and the delay line cannot grow then. 4x reports a handful
-        of samples; this leaves room for a longer filter, and a test holds the
-        real figure under it. */
+        audio runs, and the delay line cannot grow then. The halfbands report
+        3, 4, 5 and 5 samples at 2x to 16x -- each further stage runs at a
+        higher rate, so adds less at the host's -- which leaves this room for a
+        longer filter, and a test holds every factor's real figure under it. */
     static constexpr int maximumOversamplingLatency = 64;
 
     /** Parameter id for live control `index`. */

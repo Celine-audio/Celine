@@ -530,7 +530,7 @@ namespace CircuitComponents
             in two polarities -- the germanium pair above with a datasheet
             behind it instead of a guess.
 
-            Fitted here to every typical the sheet prints (docs/specs/nte102):
+            Fitted here to every typical the sheet prints (docs/specs/transistors/nte102-179916.pdf):
 
                                                   sheet      model
                 hfe   Vce 6 V, Ie 1 mA            135        135.0
@@ -612,7 +612,7 @@ namespace CircuitComponents
         // sorted for gain at Vce 6 V, Ic 2 mA -- GR 200-400 and BL 350-700 --
         // and the engine models gain, so the two sorts are two parts.
         //
-        // The sheet (docs/specs/2SC2240.pdf) prints one typical and curves of
+        // The sheet (docs/specs/transistors/2SC2240.pdf) prints one typical and curves of
         // one typical specimen, which is a GR: hFE 300 at 1 mA and flat to
         // 30 mA. That specimen is fitted, and is the GR. The BL is the same die
         // with a thinner base, which raises IS and BF together and lowers VAF

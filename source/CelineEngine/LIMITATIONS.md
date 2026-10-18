@@ -16,13 +16,32 @@ because a curve was drawn by ear.
 
 **Oversampling is off by default.** `process()` runs one circuit solve per input
 sample at whatever rate the host provides, unless the Settings menu raises it to
-2x or 4x.
+2x, 4x, 8x or 16x.
 
-Measured on the diode clipper driven hard, the ratio of fold-down to genuine
-harmonic content is **-23.7 dB at 1x, -43.3 dB at 2x and -53.5 dB at 4x**, for
-+65% and +192% CPU respectively. So the first doubling buys about 20 dB for
-two-thirds more CPU, which is the best trade on the list; the second buys
-another 10 dB for a lot more.
+Measured on the default sheet (the diode clipper) driven 24 dB hot with a
+1.88 kHz tone, the ratio of fold-down to genuine harmonic content, and the
+whole plugin's time for one stereo 512-sample block at 48 kHz in Release:
+
+    factor   alias / harmonic   diode clipper        12AX7 gain stage
+      1x         -23.7 dB       242 us   2.3%        509 us    4.8%
+      2x         -43.7 dB       444 us   4.2%       1011 us    9.5%
+      4x         -59.8 dB       832 us   7.8%       1934 us   18.1%
+      8x         -93.1 dB      1556 us  14.6%       3537 us   33.2%
+     16x         -99.1 dB      2871 us  26.9%       6927 us   64.9%
+
+The percentage is of one core. Each doubling costs a little under twice the
+CPU -- Newton needs fewer iterations when consecutive samples are closer -- and
+the first buys the most per unit of it: 20 dB for less than double. 8x is where
+the aliasing stops being the thing you hear; 16x buys 6 dB more for twice the
+CPU again, sits near the floor the measurement can see, and on anything bigger
+than one valve stage is a setting for rendering, not for playing. A 96 kHz
+session doubles every figure in the table.
+
+(The alias figures are from `Oversampling trades CPU for aliasing` in
+`tests/PluginBasics.cpp`, the timings from `Oversampling cost` in
+`benchmarks/`. An earlier version of that test windowed an off-bin tone with a
+Hann window, whose own leakage read as -57 dB of aliasing: it put 4x at -53.5
+and could not see past 8x.)
 
 Every nonlinear device in here generates harmonics, and clipping generates them
 without limit. At 48 kHz, everything a diode produces above 24 kHz folds back
@@ -43,9 +62,9 @@ bandlimits each stage before the next one multiplies its harmonics up again.
 Turning that off to save 23% makes this worse, which is a tension worth knowing
 about before reaching for it.
 
-Note also that the measurements in `benchmarks/` are all at 1×, so budget
-accordingly: the op-amp overdrive at ~6% of a core per channel is roughly 10% at
-2× and 18% at 4×.
+Note also that the circuit measurements in `benchmarks/` are at 1×, so budget
+with the table above: the op-amp overdrive at ~6% of a core per channel is
+roughly 11% at 2×, 21% at 4×, 40% at 8× and 75% at 16×.
 
 ## 2. Missing physics that changes the sound
 
