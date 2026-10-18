@@ -43,6 +43,7 @@ namespace Celine
             JfetN, JfetP, VacuumDiode, Pentode,
             Transformer, TransformerCt,
             Scope,
+            MosfetN, MosfetP, PowerAmp,
             count,
         };
 
@@ -57,6 +58,7 @@ namespace Celine
             "jfet-n", "jfet-p", "vacuum-diode", "pentode",
             "transformer", "transformer-ct",
             "scope",
+            "mosfet-n", "mosfet-p", "power-amp",
         };
 
         static_assert(std::size(assetNames) == (size_t) assetCount,
@@ -313,13 +315,16 @@ namespace Celine
 
         int diodeAsset(int modelIndex)
         {
+            // From the dropdown heading, as a transistor's arrow is from its
+            // polarity: the heading *is* the kind of junction, and a part
+            // number -- a 1N5817, a BAT41 -- says nothing about it.
             const auto& table = modelTable(ElementType::Diode, [](int model)
             {
-                const auto name = getModelChoices(ElementType::Diode)[model];
+                const auto group = getModelGroup(ElementType::Diode, model);
 
-                if (name.containsIgnoreCase("zener"))    return (int) Asset::DiodeZener;
-                if (name.containsIgnoreCase("schottky")) return (int) Asset::DiodeSchottky;
-                if (name.containsIgnoreCase("led"))      return (int) Asset::DiodeLed;
+                if (group.equalsIgnoreCase("Zener"))    return (int) Asset::DiodeZener;
+                if (group.equalsIgnoreCase("Schottky")) return (int) Asset::DiodeSchottky;
+                if (group.equalsIgnoreCase("LED"))      return (int) Asset::DiodeLed;
 
                 return (int) Asset::Diode;
             });
@@ -354,6 +359,7 @@ namespace Celine
                 case ElementType::VoltageSource: return (int) Asset::VoltageSource;
                 case ElementType::Triode:        return (int) Asset::Triode;
                 case ElementType::OpAmp:         return (int) Asset::OpAmp;
+                case ElementType::PowerAmp:      return (int) Asset::PowerAmp;
                 case ElementType::VacuumDiode:   return (int) Asset::VacuumDiode;
                 case ElementType::Pentode:       return (int) Asset::Pentode;
 
@@ -381,6 +387,10 @@ namespace Celine
                 case ElementType::Jfet:
                     return polarityAsset(ElementType::Jfet, element.modelIndex,
                                          Asset::JfetN, Asset::JfetP);
+
+                case ElementType::Mosfet:
+                    return polarityAsset(ElementType::Mosfet, element.modelIndex,
+                                         Asset::MosfetN, Asset::MosfetP);
 
                 // A note is its own text, a group box a frame whose size is
                 // dragged, and a node a tag as wide as the name written in it.

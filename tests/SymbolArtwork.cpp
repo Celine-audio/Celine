@@ -276,3 +276,47 @@ TEST_CASE ("The VST Compatible Logo is embedded and findable", "[artwork][gui]")
         CHECK (bounds.getHeight() > 20.0f);
     }
 }
+
+TEST_CASE ("A diode's symbol follows its heading, not its name", "[artwork][gui]")
+{
+    // Part numbers say nothing about the junction -- a 1N5817 and a BAT41 are
+    // both Schottkys -- so the dropdown heading decides. Zener, Schottky and
+    // LED each have a drawing of their own; silicon and germanium share the
+    // plain one.
+    const auto artworkFor = [] (int model)
+    {
+        Element diode;
+        diode.type = ElementType::Diode;
+        diode.modelIndex = model;
+        return getSymbolArtwork (diode);
+    };
+
+    const auto choices = getModelChoices (ElementType::Diode);
+    std::map<juce::String, const SymbolArtwork*> byGroup;
+
+    for (int model = 0; model < choices.size(); ++model)
+    {
+        const auto group = getModelGroup (ElementType::Diode, model);
+        const auto* artwork = artworkFor (model);
+        REQUIRE (artwork != nullptr);
+
+        INFO (choices[model] << " under " << group);
+
+        if (const auto it = byGroup.find (group); it != byGroup.end())
+            CHECK (artwork == it->second);
+        else
+            byGroup[group] = artwork;
+    }
+
+    REQUIRE (byGroup.count ("Silicon") == 1);
+    REQUIRE (byGroup.count ("Germanium") == 1);
+    REQUIRE (byGroup.count ("Schottky") == 1);
+    REQUIRE (byGroup.count ("LED") == 1);
+    REQUIRE (byGroup.count ("Zener") == 1);
+
+    CHECK (byGroup["Germanium"] == byGroup["Silicon"]);
+
+    const std::set<const SymbolArtwork*> distinct { byGroup["Silicon"], byGroup["Schottky"],
+                                                    byGroup["LED"], byGroup["Zener"] };
+    CHECK (distinct.size() == 4);
+}

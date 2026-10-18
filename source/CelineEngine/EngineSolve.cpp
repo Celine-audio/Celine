@@ -399,6 +399,9 @@ void Circuit::forEachNonlinearDevice(Fn fn)
 
     for (auto& j : jfets)
         visit(j);
+
+    for (auto& m : mosfets)
+        visit(m);
 }
 
 void Circuit::buildPortList()
@@ -856,6 +859,12 @@ void Circuit::solveOperatingPoint() noexcept
     if (systemSize == 0)
         return;
 
+    // Nothing moves at the bias point, so no stored charge is moving either:
+    // the diodes solve as their static curves, and have their charge seeded
+    // from the answer below.
+    for (auto& d : diodes)
+        d.transitScale = 0.0;
+
     // No signal at the input while we find the resting state.
     nodeVoltage[static_cast<size_t>(groundIndex)] = 0.0;
     if (inputIndex >= 0)
@@ -912,6 +921,17 @@ void Circuit::solveOperatingPoint() noexcept
     // Seed the port voltages too, so the first audio sample's Newton starts from
     // the operating point rather than from nothing.
     readPortVoltagesFromNodes();
+
+    // And the diodes' stored charge: whatever they carry at rest is charge they
+    // already hold, not charge the first sample has to supply.
+    for (auto& d : diodes)
+    {
+        d.transitScale = d.model.transitTime / dt;
+
+        if (d.transitScale > 0.0)
+            d.chargeCurrentPrevious = CircuitComponents::chargeCurrent(
+                d, nodeVoltage[static_cast<size_t>(d.anode)] - nodeVoltage[static_cast<size_t>(d.cathode)]);
+    }
 }
 
 //==============================================================================
@@ -974,6 +994,13 @@ void Circuit::updateReactiveState() noexcept
         l.iPrev = l.conductance * v - ieq;
         l.vPrev = v;
     }
+
+    // The charge a slow diode holds at the end of this sample is what the next
+    // one starts from. One exponential per such diode; the rest skip it.
+    for (auto& d : diodes)
+        if (d.transitScale > 0.0)
+            d.chargeCurrentPrevious = CircuitComponents::chargeCurrent(
+                d, nodeVoltage[static_cast<size_t>(d.anode)] - nodeVoltage[static_cast<size_t>(d.cathode)]);
 }
 
 float Circuit::process(float vIn)

@@ -159,6 +159,11 @@ TEST_CASE ("Bypass passes the input through untouched", "[plugin]")
 
     setParameter (plugin, "bypass", 1.0f);
 
+    // Bypass is a crossfade rather than a switch -- see BypassFade -- so the
+    // signal is untouched once the fade has landed, not in the block it starts.
+    // Four blocks is 43 ms against a 30 ms fade.
+    for (int block = 0; block < 4; ++block) { fillSine (buffer, phase, 440.0, 0.5f); plugin.processBlock (buffer, midi); }
+
     juce::AudioBuffer<float> expected (2, 512);
     for (int block = 0; block < 5; ++block)
     {
@@ -847,7 +852,7 @@ TEST_CASE ("Grouping a model list never renumbers it", "[plugin][schematic]")
 
     const Expected heads[] = {
         { ElementType::Diode,       0, "1N4148" },
-        { ElementType::Diode,       1, "Germanium" },
+        { ElementType::Diode,       1, "1N34A" },
         { ElementType::Transistor,  0, "2N3904" },
         { ElementType::Transistor,  1, "2N3906" },
         { ElementType::Jfet,        0, "J201" },
@@ -1550,7 +1555,7 @@ TEST_CASE ("A real transformer has a bandwidth and blocks DC", "[schematic]")
     }
 }
 
-TEST_CASE ("Every model record has a name and a description", "[schematic]")
+TEST_CASE ("Every model record has a name", "[schematic]")
 {
     using namespace SchematicModel;
 
@@ -1577,9 +1582,10 @@ TEST_CASE ("Every model record has a name and a description", "[schematic]")
 
             INFO ("model " << model << " is \"" << name << "\" / \"" << description << "\"");
 
-            // A record with no '|' puts the whole thing in the name, which is
-            // the signature of an accidental split.
-            CHECK (description.isNotEmpty());
+            // The tail of an accidental split has no id and no name -- the
+            // whole fragment lands in the id -- so an empty name is its
+            // signature. A description may be left out on purpose: a part
+            // with one model and nothing to say shows no line for it.
 
             // Names go under the part on the drawing, so a runaway one is also
             // a sentence that got parsed as a name.
@@ -1980,11 +1986,19 @@ TEST_CASE ("Panel position reorders the control strip", "[schematic]")
 
 TEST_CASE ("Oversampling trades CPU for aliasing", "[plugin]")
 {
-    // A fundamental that divides neither the host rate nor its harmonics
-    // neatly, so anything folding down lands somewhere obviously not harmonic.
-    constexpr double frequency = 1867.0;
+    // A fundamental exactly on bin 641 of the FFT. 641 is prime and the FFT
+    // length a power of two, so no harmonic below the 641st can fold onto
+    // another harmonic's bin: whatever folds down lands somewhere plainly not
+    // harmonic.
+    //
+    // On a bin, rather than the 1867 Hz this used to use, so the fundamental's
+    // own skirt does not spill into the bins counted as aliasing. With a Hann
+    // window that spill summed to about -57 dB of the harmonics, and every
+    // factor from 8x up read exactly that -- the measurement's floor, not the
+    // plugin's.
     constexpr int order = 14;
     constexpr int size = 1 << order;
+    constexpr double frequency = 641.0 * 48000.0 / size; // 1877.9 Hz
 
     auto aliasToHarmonicDb = [] (PluginProcessor& plugin)
     {
@@ -2015,8 +2029,11 @@ TEST_CASE ("Oversampling trades CPU for aliasing", "[plugin]")
 
             for (int i = 0; i < 512 && written < size; ++i, ++written)
             {
-                const double w = 0.5 - 0.5 * std::cos (2.0 * juce::MathConstants<double>::pi
-                                                       * written / (size - 1));
+                // 4-term Blackman-Harris: sidelobes under -92 dB, so what is
+                // left between the harmonics is the plugin's.
+                const double x = 2.0 * juce::MathConstants<double>::pi * written / size;
+                const double w = 0.35875 - 0.48829 * std::cos (x) + 0.14128 * std::cos (2.0 * x)
+                               - 0.01168 * std::cos (3.0 * x);
                 data[static_cast<size_t> (written)] = static_cast<float> (buffer.getSample (0, i) * w);
             }
         }
@@ -2053,26 +2070,73 @@ TEST_CASE ("Oversampling trades CPU for aliasing", "[plugin]")
         input->setValueNotifyingHost (input->convertTo0to1 (24.0f));
     };
 
-    PluginProcessor plain;
-    slammed (plain);
-    REQUIRE (plain.setOversamplingFactor (1).isValid());
-    CHECK (plain.getLatencySamples() == 0);
-    const double plainAlias = aliasToHarmonicDb (plain);
+    std::vector<double> alias;
+    std::vector<int> latency;
+    juce::String figures;
 
-    PluginProcessor doubled;
-    slammed (doubled);
-    REQUIRE (doubled.setOversamplingFactor (2).isValid());
-    const double doubledAlias = aliasToHarmonicDb (doubled);
+    for (const int factor : PluginProcessor::oversamplingFactors)
+    {
+        PluginProcessor plugin;
+        slammed (plugin);
+        REQUIRE (plugin.setOversamplingFactor (factor).isValid());
+        REQUIRE (plugin.oversamplingFactor == factor);
 
-    INFO ("1x " << plainAlias << " dB, 2x " << doubledAlias << " dB");
+        alias.push_back (aliasToHarmonicDb (plugin));
+        latency.push_back (plugin.getLatencySamples());
+        figures << factor << "x " << juce::String (alias.back(), 1) << " dB, latency " << latency.back() << "; ";
+    }
+
+    INFO (figures);
+    UNSCOPED_INFO ("Alias to harmonic: " << figures);
 
     // Measured at about 20 dB of improvement; assert well inside that so the
     // test is about the mechanism working, not about the exact figure.
-    CHECK (doubledAlias < plainAlias - 10.0);
+    CHECK (alias[1] < alias[0] - 10.0);
+
+    // Every further doubling has to buy something too, or the factor is only
+    // spending CPU. Measured at -23.7 / -43.7 / -59.8 / -93.1 / -99.1 dB from
+    // 1x to 16x: 16x is near the floor this can see, and buys the least.
+    for (size_t i = 2; i < alias.size(); ++i)
+        CHECK (alias[i] < alias[i - 1] - 3.0);
 
     // And the host is told about the delay the halfband filters introduce,
-    // otherwise everything downstream sits a few samples early.
-    CHECK (doubled.getLatencySamples() > 0);
+    // otherwise everything downstream sits a few samples early. Every stage
+    // adds some, and none may outgrow the bypass's delay line.
+    CHECK (latency[0] == 0);
+
+    for (size_t i = 1; i < latency.size(); ++i)
+    {
+        CHECK (latency[i] >= latency[i - 1]);
+        CHECK (latency[i] > 0);
+        CHECK (latency[i] <= PluginProcessor::maximumOversamplingLatency);
+    }
+}
+
+TEST_CASE ("An oversampling factor from a document is a power of two in range", "[plugin]")
+{
+    // A hand-edited or corrupted document can name anything. The halfband chain
+    // only comes in powers of two, so anything else is rounded down to one, and
+    // the circuits are prepared at the same rate as the filters.
+    const std::pair<int, int> cases[] = { { -3, 1 }, { 0, 1 }, { 1, 1 }, { 3, 2 }, { 4, 4 }, { 6, 4 },
+                                          { 8, 8 }, { 12, 8 }, { 16, 16 }, { 17, 16 }, { 64, 16 } };
+
+    for (const auto& [asked, expected] : cases)
+    {
+        PluginProcessor plugin;
+        plugin.prepareToPlay (48000.0, 256);
+        REQUIRE (plugin.setOversamplingFactor (asked).isValid());
+
+        INFO ("asked for " << asked);
+        CHECK (plugin.oversamplingFactor == expected);
+
+        auto document = plugin.createDocument();
+        document.setProperty ("oversampling", asked, nullptr);
+
+        PluginProcessor loaded;
+        loaded.prepareToPlay (48000.0, 256);
+        REQUIRE (loaded.restoreDocument (document));
+        CHECK (loaded.oversamplingFactor == expected);
+    }
 }
 
 TEST_CASE ("Performance options do not change the output", "[plugin][schematic]")
@@ -2141,13 +2205,13 @@ TEST_CASE ("Performance settings travel with the document", "[plugin]")
 
     plugin.buildOptions.fastMath = true;
     plugin.buildOptions.predictNewtonSeed = true;
-    plugin.oversamplingFactor = 4;
+    plugin.oversamplingFactor = 16;
 
     const auto document = plugin.createDocument();
 
     PluginProcessor loaded;
     REQUIRE (loaded.restoreDocument (document));
-    CHECK (loaded.oversamplingFactor == 4);
+    CHECK (loaded.oversamplingFactor == 16);
     CHECK (loaded.buildOptions.fastMath);
     CHECK (loaded.buildOptions.predictNewtonSeed);
 
@@ -2204,7 +2268,7 @@ TEST_CASE ("Changing oversampling while audio is running is safe", "[plugin]")
 
     // Hammer the factor from this thread, which is what the Settings menu does.
     for (int pass = 0; pass < 40; ++pass)
-        for (const int factor : { 2, 4, 1, 4, 2, 1 })
+        for (const int factor : { 2, 4, 16, 1, 8, 4, 2, 16, 1 })
             REQUIRE (plugin.setOversamplingFactor (factor).isValid());
 
     running.store (false);

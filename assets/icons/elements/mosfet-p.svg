@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- MOSFET, P-channel enhancement, body tied to source. The body arrow
+     points out of the channel. The body diode is drawn beside it, because it is modelled:
+     pull the drain the wrong way and it conducts.
+
+     Schematic symbol artwork. The convention, which replacements must follow:
+       * viewBox is -60 -60 120 120, and (0,0) is the part's CENTRE.
+       * 10 SVG units = 1 grid square, so a pin at grid (0,-2) is at (0,-20).
+         Pins are drawn by the canvas at the positions in Element.h, so artwork
+         that ignores this will have its terminals land in the wrong place.
+       * stroke-width 1.2 is the schematic's normal line weight. Heavier lines
+         are multiples of it (1.56 = 1.3x, 1.8 = 1.5x); the app re-strokes at
+         that ratio so lines stay visible when zoomed out.
+       * Colour is ignored - everything is recoloured by the app.
+
+     The channel sits on the part's centre line (x = 0), as the JFET's and
+     the BJT's spines do. It is broken in three because the device is off
+     until its gate says otherwise the enhancement-mode convention and
+     the gate plate stands clear of it because the gate is insulated. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-60 -60 120 120" width="120" height="120">
+  <path d="M -20 0 L -6 0" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
+  <path d="M -6 -12 L -6 12" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round"/>
+  <path d="M 0 -15 L 0 -8" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round"/>
+  <path d="M 0 -3.5 L 0 3.5" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round"/>
+  <path d="M 0 8 L 0 15" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round"/>
+  <path d="M 0 -11.5 L 20 -11.5 L 20 -20" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 0 11.5 L 20 11.5 L 20 20" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 0 0 L 20 0 L 20 11.5" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 12 0 L 6 -2.7 L 6 2.7 Z" fill="#000" stroke="none"/>
+  <path d="M 20 -11.5 L 30 -11.5 L 30 -3" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 30 4 L 30 11.5 L 20 11.5" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 27 4 L 33 4" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
+  <path d="M 30 4 L 27 -3 L 33 -3 Z" fill="#000" stroke="none"/>
+</svg>

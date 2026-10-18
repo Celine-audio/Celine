@@ -280,6 +280,14 @@ TEST_CASE ("The first-run prompt's Choose button is button 1, not button 0", "[p
 
     REQUIRE (options.getNumButtons() == 2);
 
+    // An AlertWindow lays itself out in its constructor, against the monitor it
+    // would open on, and JUCE dereferences that display without checking for
+    // one. A process that cannot reach the window server -- a sandboxed shell,
+    // a CI agent with no login session -- has no displays at all, so building
+    // one there is a SIGSEGV that takes every test after this one with it.
+    if (juce::Desktop::getInstance().getDisplays().getPrimaryDisplay() == nullptr)
+        SKIP ("No display to lay an AlertWindow out against");
+
     std::unique_ptr<juce::AlertWindow> alert (
         juce::LookAndFeel::getDefaultLookAndFeel().createAlertWindow (
             options.getTitle(), options.getMessage(),

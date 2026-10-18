@@ -90,7 +90,10 @@ class Circuit
     using TriodeModel = CircuitComponents::TriodeModel;
     using PentodeModel = CircuitComponents::PentodeModel;
     using JfetModel = CircuitComponents::JfetModel;
+    using MosfetModel = CircuitComponents::MosfetModel;
     using OpAmpModel = CircuitComponents::OpAmpModel;
+    using PowerAmpModel = CircuitComponents::PowerAmpModel;
+    using PowerAmp = CircuitComponents::PowerAmp;
     using OpAmp = CircuitComponents::OpAmp;
     using Winding = CircuitComponents::Winding;
 
@@ -195,7 +198,12 @@ class Circuit
     /** Adds a diode conducting from `anode` to `cathode`.
 
         `seriesCount` stacks that many identical diodes in series, which raises
-        the clipping threshold proportionally without adding nodes to the solve. */
+        the clipping threshold proportionally without adding nodes to the solve.
+
+        A model with a series resistance gets it on an internal node, one with
+        a guard ring gets a second junction across the terminals, and one with
+        a junction capacitance gets a capacitor -- all scaled for the stack.
+        Those are topology: setDiodeModel() changes the junction, not them. */
     ComponentId addDiode(const juce::String& anode,
                          const juce::String& cathode,
                          const DiodeModel& model = DiodeModel::silicon(),
@@ -207,7 +215,11 @@ class Circuit
 
         Any junction capacitances the model carries (capBaseEmitter /
         capBaseCollector) are wired in here, as a valve's interelectrode
-        capacitance is: a zero field means none is added. */
+        capacitance is: a zero field means none is added.
+
+        A model flagged `darlington` is built as two transistors on an internal
+        node, and the id returned is the first; setTransistorModel() on it
+        moves both. */
     ComponentId addTransistor(const juce::String& base,
                               const juce::String& collector,
                               const juce::String& emitter,
@@ -219,6 +231,15 @@ class Circuit
                         const juce::String& gate,
                         const juce::String& source,
                         const JfetModel& model = JfetModel::j201());
+
+    /** Adds an enhancement MOSFET, source tied to body. The model carries its
+        channel type, so an N-channel and a P-channel part are wired
+        identically. Any gate capacitances the model carries are wired in here,
+        as a transistor's junction capacitances are. */
+    ComponentId addMosfet(const juce::String& drain,
+                          const juce::String& gate,
+                          const juce::String& source,
+                          const MosfetModel& model = MosfetModel::n2N7000());
 
     /** Adds an ideal op-amp: forces its inputs equal and sources whatever output
         current that takes. One matrix row and nothing else -- no internal nodes,
@@ -270,6 +291,20 @@ class Circuit
                    const juce::String& inMinus,
                    const juce::String& output,
                    const OpAmpModel& model = OpAmpModel::tl072());
+
+    /** Adds an LM386-style power amplifier, built from primitives as the
+        op-amp is -- see PowerAmp.h. `gainA` and `gainB` are its pins 1 and 8:
+        leave them unconnected for a gain of 20, put a capacitor between them
+        for 200. Internal nodes are named after `name`, which must be unique
+        within the circuit; the supply rail is shared with any op-amp or power
+        amp on the same voltage. */
+    PowerAmp addPowerAmp(const juce::String& name,
+                         const juce::String& inPlus,
+                         const juce::String& inMinus,
+                         const juce::String& output,
+                         const juce::String& gainA,
+                         const juce::String& gainB,
+                         const PowerAmpModel& model = PowerAmpModel::lm386());
 
     //==========================================================================
     // Netlist construction -- valves
@@ -537,6 +572,7 @@ class Circuit
     using Triode = CircuitComponents::Triode;
     using Pentode = CircuitComponents::Pentode;
     using Jfet = CircuitComponents::Jfet;
+    using Mosfet = CircuitComponents::Mosfet;
     using Vccs = CircuitComponents::Vccs;
     using IdealOpAmp = CircuitComponents::IdealOpAmp;
     using Transformer = CircuitComponents::Transformer;
@@ -576,6 +612,10 @@ class Circuit
     static constexpr NodeIndex groundIndex = 0;
 
     NodeIndex getOrCreateNode(const juce::String& name);
+
+    /** A fixed voltage against ground, shared by every op-amp and power amp
+        that asks for the same one -- see addOpAmp(). Returns the node's name. */
+    juce::String sharedRail(double volts);
     int rowOf(NodeIndex n) const noexcept { return rowOfNode[static_cast<size_t>(n)]; }
 
     //==========================================================================
@@ -698,6 +738,7 @@ class Circuit
     std::vector<Triode> triodes;
     std::vector<Pentode> pentodes;
     std::vector<Jfet> jfets;
+    std::vector<Mosfet> mosfets;
     std::vector<Vccs> transconductances;
     std::vector<IdealOpAmp> idealOpAmps;
     std::vector<Transformer> transformers;

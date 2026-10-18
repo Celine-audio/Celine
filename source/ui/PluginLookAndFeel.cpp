@@ -70,6 +70,37 @@ void PluginLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int wi
     cap->drawWithin(g, face, juce::RectanglePlacement::centred, 1.0f);
 }
 
+juce::Label* PluginLookAndFeel::createSliderTextBox(juce::Slider& slider)
+{
+    auto* label = LookAndFeelBase::createSliderTextBox(slider);
+
+    if (slider.getProperties().contains(panelReadoutProperty))
+    {
+        label->setColour(juce::Label::textColourId, Theme::textOnPanel());
+
+        // And while it is being typed into. The house sets the editing ink, the
+        // caret and the selection for the chrome, where every other field lives
+        // -- light on dark, which on this panel is white on white: you could
+        // type a value but not see it. The label hands its own colours to the
+        // editor it makes, so they are set here rather than on the editor.
+        label->setColour(juce::Label::textWhenEditingColourId, Theme::textOnPanel());
+        label->setColour(juce::CaretComponent::caretColourId, Theme::textOnPanel());
+        label->setColour(juce::TextEditor::highlightColourId, Theme::accent().withAlpha(0.35f));
+        label->setColour(juce::TextEditor::highlightedTextColourId, Theme::textOnPanel());
+        label->setFont(Fonts::light(13.0f));
+
+        // Typed where it is read. A label's editor starts left-aligned whatever
+        // the label is, so a click made the value jump to the cell's edge.
+        label->onEditorShow = [label]
+        {
+            if (auto* editor = label->getCurrentTextEditor())
+                editor->setJustification(juce::Justification::centred);
+        };
+    }
+
+    return label;
+}
+
 void PluginLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
                                          bool shouldDrawButtonAsHighlighted,
                                          bool shouldDrawButtonAsDown)

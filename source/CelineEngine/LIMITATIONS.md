@@ -16,13 +16,32 @@ because a curve was drawn by ear.
 
 **Oversampling is off by default.** `process()` runs one circuit solve per input
 sample at whatever rate the host provides, unless the Settings menu raises it to
-2x or 4x.
+2x, 4x, 8x or 16x.
 
-Measured on the diode clipper driven hard, the ratio of fold-down to genuine
-harmonic content is **-23.7 dB at 1x, -43.3 dB at 2x and -53.5 dB at 4x**, for
-+65% and +192% CPU respectively. So the first doubling buys about 20 dB for
-two-thirds more CPU, which is the best trade on the list; the second buys
-another 10 dB for a lot more.
+Measured on the default sheet (the diode clipper) driven 24 dB hot with a
+1.88 kHz tone, the ratio of fold-down to genuine harmonic content, and the
+whole plugin's time for one stereo 512-sample block at 48 kHz in Release:
+
+    factor   alias / harmonic   diode clipper        12AX7 gain stage
+      1x         -23.7 dB       242 us   2.3%        509 us    4.8%
+      2x         -43.7 dB       444 us   4.2%       1011 us    9.5%
+      4x         -59.8 dB       832 us   7.8%       1934 us   18.1%
+      8x         -93.1 dB      1556 us  14.6%       3537 us   33.2%
+     16x         -99.1 dB      2871 us  26.9%       6927 us   64.9%
+
+The percentage is of one core. Each doubling costs a little under twice the
+CPU -- Newton needs fewer iterations when consecutive samples are closer -- and
+the first buys the most per unit of it: 20 dB for less than double. 8x is where
+the aliasing stops being the thing you hear; 16x buys 6 dB more for twice the
+CPU again, sits near the floor the measurement can see, and on anything bigger
+than one valve stage is a setting for rendering, not for playing. A 96 kHz
+session doubles every figure in the table.
+
+(The alias figures are from `Oversampling trades CPU for aliasing` in
+`tests/PluginBasics.cpp`, the timings from `Oversampling cost` in
+`benchmarks/`. An earlier version of that test windowed an off-bin tone with a
+Hann window, whose own leakage read as -57 dB of aliasing: it put 4x at -53.5
+and could not see past 8x.)
 
 Every nonlinear device in here generates harmonics, and clipping generates them
 without limit. At 48 kHz, everything a diode produces above 24 kHz folds back
@@ -43,9 +62,9 @@ bandlimits each stage before the next one multiplies its harmonics up again.
 Turning that off to save 23% makes this worse, which is a tension worth knowing
 about before reaching for it.
 
-Note also that the measurements in `benchmarks/` are all at 1×, so budget
-accordingly: the op-amp overdrive at ~6% of a core per channel is roughly 10% at
-2× and 18% at 4×.
+Note also that the circuit measurements in `benchmarks/` are at 1×, so budget
+with the table above: the op-amp overdrive at ~6% of a core per channel is
+roughly 11% at 2×, 21% at 4×, 40% at 8× and 75% at 16×.
 
 ## 2. Missing physics that changes the sound
 
@@ -179,6 +198,18 @@ and the model cannot be both.
 curves at low plate voltage where secondary electrons flow backwards. Not
 modelled, and it sits exactly where a power stage goes when clipping hard.
 
+**Koren's knee is too soft, and his plate curves too flat.** One arctangent sets
+both the knee and the plate resistance, so fitting Ri at the operating point
+fixes KVB near 50 V on every pentode here, and the knee goes with it. The KT88
+sheet, whose plate family was digitised to check this, shows it plainly: at
+Ua 50 V, Ug1 −15 V the sheet has 162 mA and the model 117; above 300 V the real
+curves keep rising (−30 V: 74 mA at 250 V, 87 at 400) while the arctangent has
+flattened (64 and 68). The first is where a clipping output stage spends its
+time. Multiplying the plate term by (1 + Ua/VA) frees KVB to sharpen the knee
+while VA carries Ri: tried on the KT88, it takes the family from 39 mA rms
+over Ua ≥ 30 V to 9 mA, with every operating-point figure still within about
+2%. Not adopted, since it changes the form every pentode here is fitted in.
+
 **Rectifiers are pure 3/2-power, which is too steep at low current.** Real
 rectifiers conduct more than Child-Langmuir predicts near the origin, where
 initial electron velocity matters and space charge doesn't yet dominate. Fitted
@@ -272,12 +303,24 @@ between notes, which no analogue circuit is.
 
 `OpAmp` models finite gain, one dominant pole, and rails it clips against. It
 does not model slew limiting. On the slow parts that matters: a JRC4558 slews
-at 2.2 V/µs and an LM308 (the ProCo Rat) far slower, and on a fast transient
-that rounds the waveform in a way the frequency response alone does not
-capture. `OpAmpModel::jrc4558()` documents this at its definition.
+at 2.2 V/µs, an LM308 (the ProCo Rat) far slower, and an LM741 at 0.5 V/µs —
+a 7 V swing takes it 14 µs — and on a fast transient that rounds the waveform
+in a way the frequency response alone does not capture. `OpAmpModel::jrc4558()`
+and `lm741()` document this at their definitions.
 
-Also absent: input bias and offset current, CMRR, PSRR, and the higher-order
-poles a real part has.
+Also absent: input bias and offset current, CMRR, PSRR, the input common-mode
+range (an LM741 on a 9 V pedal runs out of it before its output does, and a
+real one turns that into early, gritty clipping), and the higher-order poles a
+real part has.
+
+The **LM386** (`PowerAmp.h`) is built the same way and shares the gaps, plus
+its own: no crossover distortion from its class-AB output stage, no current
+limit (it swings 8 Ω the way the datasheet says, but a 4 Ω load swings wider
+than the datasheet's 3.5 V), and no bypass pin, since the supply here is ideal
+and has no ripple to reject. Its frequency response is fitted to the datasheet's
+curves at 6 V and follows the supply from there by the physics of its bias
+network; it is −3 dB at 260 kHz at gain 20 where the datasheet says 300, which
+is all ultrasonic.
 
 ### Transformer: no core saturation, and it passes DC
 
@@ -311,7 +354,8 @@ it stays perfectly linear however hard you hit it.
 
 - **BJT (Ebers-Moll):** the Early effect (VAF) and junction capacitances
   (CJE/CJC) are modelled for the parts whose cards publish them — the silicon
-  small-signal pair exactly, datasheet Cobo for the 2N2222A/2N5133/BC109C —
+  small-signal pair exactly, datasheet Cobo for the 2N2222A/2N5133/BC109C,
+  the NTE102/103 and the 2SC2240 —
   and both are **on by default**, like everything else here — turn them off
   under Settings → Performance if you need the CPU back. VAF
   reads as an output resistance ro = VAF/Ic, a few percent of a stage's gain;
@@ -319,19 +363,58 @@ it stays perfectly linear however hard you hit it.
   stage driven through 100k they put the pole at 7.5 kHz where the estimate
   said 8.7. The capacitances are fixed values — a real junction's falls off
   with reverse bias (VJE/MJE/VJC/MJC stay out) — and with no transit time
-  (TF/TR) fT still doesn't degrade with current. High-level injection
-  (IKF/IKR) is still out too, so gain keeps climbing past the knee a real part
-  has (on the 2N2222A card, 19.5 mA); terminal resistances and the reverse
-  Early effect as well.
+  (TF/TR) fT still doesn't degrade with current. The forward high-injection
+  knee (IKF) is modelled for the cards that carry one — the BC107-109 family,
+  the 2N5088/2N5089, the MPSA18 and MPSA13, the NTE102/103 and the
+  2SC2240 — but not for the older models
+  whose cards were entered without it (the 2N2222A's knee is 19.5 mA, so its
+  gain keeps climbing past it). One knee cannot draw every roll-off: the
+  2SC2240's gain is flat to 30 mA and a quarter of that by 200 mA, and the
+  fit, made for the audio end, is 15% high at its 100 mA rating. The reverse
+  knee (IKR), terminal resistances and the reverse Early effect are out
+  everywhere, and so is base-width modulation of the base current, which is
+  what a datasheet's hre measures — 8e-4 on the NTE102/103, 4e-5 here.
+- **Darlingtons** (the MPSA13) are two transistors on an internal node, so the
+  pair's Vbe and gain come out right, but a real Darlington's gain below a few
+  milliamps is extrapolated: onsemi's curves start at 5 mA.
 - **JFET (Shichman-Hodges):** simple square law, no capacitances.
-- **Diodes:** no junction capacitance, no reverse recovery. Negligible for
-  audio-rate clipping; slightly wrong for a rectifier.
+- **MOSFET** (`Mosfet.h`): a square law smoothed through threshold into an
+  exponential below it, so the moderate inversion a pedal biases one in is
+  continuous, with a source resistance solved inside the device that bends it
+  straight as the current rises — 45% more CPU on a clipping one-MOSFET stage,
+  about 2.5% of a core per channel at 48 kHz, after warm-starting the solve
+  (cold, it was 3.1 times). Both cards are fitted to Vishay's sheets, and the
+  2N7000's covers the BS170, which Vishay make from the same die. The
+  subthreshold slope is fitted only for the 2N7000 (n = 2.0, from Vishay's two
+  threshold points); the BS250's sheet resolves nothing below about 30 mA, so
+  its pedal region is that n extrapolated, landing 1 mA at 3.2 V inside the
+  sheet's 1–3.5 V window. One resistance cannot bend the BS250's family
+  everywhere: the middle runs 7–20% under the curves. No drain resistance and
+  no mobility degradation as such, and the gate capacitances are constants
+  read at a pedal's bias rather than the steeply voltage-dependent things they
+  are — the gate-drain one doubles between 5 V and 1 V. And the part number is
+  not the die: onsemi's 2N7000 carries 1.6 times Vishay's current above 3 V,
+  onsemi's BS170 is a different, weaker die, and General Semiconductor's BS250
+  has three times Vishay's input capacitance. The threshold spread on a real
+  part (0.8 to 3 V; 1 to 3.5 V on the BS250) dwarfs every one of these; the
+  models are Vishay's typical part.
+- **Diodes:** the 1N4001, the BAT41 and the BAT46 carry junction capacitance,
+  and the 1N4001 its stored charge (transit time, 5.7 µs), integrated
+  backward-Euler inside the device; the two BATs their series resistance and
+  guard ring. The guard ring has no resistance of its own, which is what leaves
+  the BAT46 16–24 mV off ST's curve above 50 mA — past anything a clipper
+  draws. The older models carry none of these. The capacitance is a constant — a real one rises
+  into forward bias — and the stored charge relaxes within one sample at any
+  audio rate, so what it models is the charge a clipping edge has to move, not
+  the shape of the recovery, which is over in microseconds.
 - **Capacitors:** ESR is modelled. Dielectric absorption, ESL, and the large
   voltage-dependence of Class 2 ceramics are not — a ceramic can lose half its
   capacitance under DC bias, which is a real effect in a real pedal.
 - **Everything is at a fixed 300 K.** `thermalVoltage = 0.025852` throughout,
   no self-heating and no drift. Germanium parts in particular are noticeably
-  temperature-dependent in reality.
+  temperature-dependent in reality: the NTE102/103 sheet puts ICBO at 0.8 µA
+  at 25 °C and 20 µA at 80 °C, and that leakage is what a germanium fuzz's
+  bias rests on.
 - **Valves:** no warm-up, no heater dynamics, no cathode depletion. Grid
   conduction uses a plausible perveance rather than a fitted one (published
   grid-current data barely exists), and the pentode's screen current is

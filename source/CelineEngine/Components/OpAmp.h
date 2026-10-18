@@ -96,9 +96,30 @@ namespace CircuitComponents
         //======================================================================
         // Models.
 
-        /** TL072 / TL071 -- the JFET-input part in a large fraction of all
-            pedals. 3 MHz gain-bandwidth, and it stops well short of the rails. */
-        static OpAmpModel tl072() noexcept { return {}; }
+        /** TL071 / TL072 -- the JFET-input part in a large fraction of all
+            pedals. One datasheet covers the single, the dual and the quad (TI
+            SLOS080), and one amplifier of a TL072 *is* a TL071, so they are one
+            model. Typical column, +/-15 V:
+
+                large-signal voltage gain   200 V/mV       -> 2e5
+                unity-gain bandwidth        3 MHz
+                input resistance            1e12 Ohm       -- JFET inputs
+                output swing                +/-13.5 V into 10k -> 1.5 V headroom
+
+            The gain and the input resistance used to be the generic defaults
+            (1e5 and 2 MOhm); an input resistance a million times too low
+            loaded any high-impedance bias network wired across the inputs.
+            Output resistance is not on the sheet. Slew rate, 13 V/us, is not
+            modelled, and at that speed rarely matters in a pedal. */
+        static OpAmpModel tl072() noexcept
+        {
+            OpAmpModel m;
+            m.openLoopGain = 2.0e5;
+            m.gainBandwidth = 3.0e6;
+            m.inputResistance = 1.0e12;
+            m.railHeadroom = 1.5;
+            return m;
+        }
 
         /** JRC4558 -- the Tube Screamer op-amp, and the part the pedal's
             mythology is built around.
@@ -170,6 +191,36 @@ namespace CircuitComponents
             m.gainBandwidth = 1.0e6;
             m.outputResistance = 100.0;
             m.railHeadroom = 1.2;
+            return m;
+        }
+
+        /** LM741 -- the 1968 general-purpose op-amp, and the original MXR
+            Distortion+'s. From TI's SNOSC25D, LM741 typical column, +/-15 V:
+
+                large-signal voltage gain   200 V/mV       -> 2e5
+                bandwidth                   0.35 / 0.3 us rise time -> 1.2 MHz
+                input resistance            2 MOhm
+                output swing                +/-14 V into 10k -> 1 V headroom
+
+            Output resistance is not on TI's sheet; 75 Ohm is the figure the
+            original Fairchild uA741 sheet gives.
+
+            Two things this does not model, and on a 741 both are audible. Its
+            slew rate is 0.5 V/us -- a 7 V swing takes 14 us -- which rounds the
+            edges of anything it clips; the bandwidth here only rolls off small
+            signals. And it is specified from +/-10 V: on a 9 V pedal its
+            inputs lose their common-mode range long before the output reaches
+            the headroom above, which a real one turns into early, gritty
+            clipping. The gain-bandwidth product -- a gain of 1000 is flat only
+            to about a kilohertz -- is the part of its sound this does get. */
+        static OpAmpModel lm741() noexcept
+        {
+            OpAmpModel m;
+            m.openLoopGain = 2.0e5;
+            m.gainBandwidth = 1.2e6;
+            m.inputResistance = 2.0e6;
+            m.outputResistance = 75.0;
+            m.railHeadroom = 1.0;
             return m;
         }
 

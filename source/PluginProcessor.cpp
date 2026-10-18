@@ -332,7 +332,7 @@ void PluginProcessor::prepareOversampler()
         // Polyphase IIR halfband: much cheaper than an equiripple FIR and the
         // phase distortion it trades for that is irrelevant in front of a guitar
         // amp, which is a minimum-phase device from end to end anyway.
-        const auto stages = oversamplingFactor == 4 ? 2 : 1;
+        const auto stages = static_cast<size_t> (juce::findHighestSetBit (static_cast<juce::uint32> (oversamplingFactor)));
 
         prepared = std::make_unique<juce::dsp::Oversampling<float>> (
             2, stages, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true, false);
@@ -359,14 +359,15 @@ void PluginProcessor::prepareOversampler()
     setLatencySamples (latency);
 }
 
-// 1, 2 or 4, never 3: the filter chain only comes in powers of two, so a 3 --
-// reachable from a hand-edited document -- would prepare the circuits at one
-// rate and the halfbands at another. Rounded down: cheaper, and a hand-written
-// 3 was almost certainly meant to be one of its neighbours.
+// A power of two up to the maximum, never 3 or 12: the filter chain only comes
+// in powers of two, so anything between -- reachable from a hand-edited
+// document -- would prepare the circuits at one rate and the halfbands at
+// another. Rounded down: cheaper, and a hand-written 12 was almost certainly
+// meant to be one of its neighbours.
 static int normaliseOversamplingFactor (int factor) noexcept
 {
-    factor = juce::jlimit (1, 4, factor);
-    return factor == 3 ? 2 : factor;
+    factor = juce::jlimit (1, PluginProcessor::maximumOversamplingFactor, factor);
+    return 1 << juce::findHighestSetBit (static_cast<juce::uint32> (factor));
 }
 
 SchematicModel::BuildResult PluginProcessor::setOversamplingFactor (int factor)
@@ -397,12 +398,26 @@ void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     loadedCabinetFile = juce::File{};
     cabinetLength.store (0);
 
+    // A file loaded at another rate is dropped and resampled again, in the
+    // background, before it plays at the wrong pitch.
+    inputFile.prepare (sampleRate);
+
     prepareOversampler();
     rebuild();
 
     // After rebuild(), which is what fills `probes` -- and again here because
     // the column width follows the sample rate we have just been handed.
     prepareScopes();
+
+    // Sized for the longest latency any oversampling factor reports rather than
+    // this one's -- see maximumOversamplingLatency. Started where the bypass
+    // already stands, so a session opened bypassed does not fade out of a
+    // circuit it never played.
+    jassert (getLatencySamples() <= maximumOversamplingLatency);
+
+    bypassFade.prepare (juce::jmax (1, getTotalNumOutputChannels()), preparedBlockSize,
+                        maximumOversamplingLatency, sampleRate);
+    bypassFade.reset (bypassValue->load() > 0.5f);
 }
 
 void PluginProcessor::prepareScopes()
@@ -860,10 +875,10 @@ void PluginProcessor::runStereo (float* left, float* right, int count, const Blo
             if (measured)
                 sampleInspectedCurrent (circuit);
 
-            // The circuit runs even when bypassed and the result is thrown away,
-            // so its capacitors do not hold stale charge and re-engaging does
-            // not thump.
-            samples[s] = state.bypassed ? dry : wet;
+            // The circuit runs even when bypassed, so its capacitors do not hold
+            // stale charge and re-engaging does not thump. Whether it is heard is
+            // the bypass crossfade's business, at the end of processBlock.
+            samples[s] = wet;
         }
     }
 }
@@ -893,15 +908,14 @@ void PluginProcessor::runMono (float* left, float* right, int count, const Block
 
         sampleInspectedCurrent (circuit);
 
-        // Bypass stays a true bypass: whatever arrived, untouched, stereo image
-        // and all. Only the engaged path collapses to mono.
-        if (! state.bypassed)
-        {
-            left[s] = wet;
+        // Written whatever the bypass says. Bypass stays a true bypass --
+        // whatever arrived, untouched, stereo image and all -- because the
+        // crossfade at the end of processBlock blends towards its own copy of
+        // the input, not towards what is left in here.
+        left[s] = wet;
 
-            if (right != nullptr)
-                right[s] = wet;
-        }
+        if (right != nullptr)
+            right[s] = wet;
     }
 }
 
@@ -922,6 +936,14 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear (i, 0, buffer.getNumSamples());
+
+    // The file, when there is one, *is* the input: written over the host's before
+    // anything reads it -- the bypass's dry copy included, so bypass gives back
+    // the file -- and before the try-lock below, so a block that misses the lock
+    // passes the file through rather than letting the live input slip out.
+    // Over every channel, not just the inputs: a standalone with no input
+    // device still plays a file.
+    inputFile.render (buffer.getArrayOfWritePointers(), buffer.getNumChannels(), buffer.getNumSamples());
 
     // Never wait. A rebuild holds the lock only long enough to move a few
     // pointers, so failing to get it costs one dry block -- better than a stall
@@ -969,10 +991,28 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     const auto numSamples = buffer.getNumSamples();
     juce::dsp::AudioBlock<float> whole (buffer);
 
+    // The latency the host is compensating for, which the bypass's dry path has
+    // to match.
+    const auto latency = getLatencySamples();
+
     for (int start = 0; start < numSamples; start += preparedBlockSize)
     {
         const int count = juce::jmin (preparedBlockSize, numSamples - start);
         auto piece = whole.getSubBlock (static_cast<size_t> (start), static_cast<size_t> (count));
+
+        // A view onto the piece rather than a copy of it, for the two things
+        // here that work on an AudioBuffer: building one from the block's own
+        // channel pointers borrows the samples instead of allocating for them.
+        float* channels[2] = { piece.getChannelPointer (0),
+                               piece.getNumChannels() > 1 ? piece.getChannelPointer (1) : nullptr };
+
+        juce::AudioBuffer<float> view (channels,
+                                       (int) juce::jmin ((size_t) 2, piece.getNumChannels()),
+                                       (int) piece.getNumSamples());
+
+        // Taken before anything touches the piece: the input, delayed by the
+        // latency, is the whole of what bypass gives back.
+        bypassFade.pushDry (view, latency);
 
         auto run = [&] (juce::dsp::AudioBlock<float>& block, int samples)
         {
@@ -991,32 +1031,25 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         }
         else
         {
-            // The dry signal rides through the halfband filters alongside the
-            // wet one, so a bypassed signal comes out lined up with the latency
-            // the host was told about instead of arriving early.
             auto upsampled = oversampler->processSamplesUp (piece);
             run (upsampled, static_cast<int> (upsampled.getNumSamples()));
             oversampler->processSamplesDown (piece);
         }
 
         // The cabinet last, at the host's own rate -- see the member for why it
-        // sits outside the oversampled section. Skipped when bypassed, because
-        // bypass is a true bypass and a cab is as much part of the sound as the
-        // circuit is.
-        if (! state.bypassed && cabinetActive.load (std::memory_order_relaxed))
-        {
-            // A view onto the piece rather than a copy of it: the engine filters an
-            // AudioBuffer in place, and building one from the block's own channel
-            // pointers borrows the samples instead of allocating for them.
-            float* channels[2] = { piece.getChannelPointer (0),
-                                   piece.getNumChannels() > 1 ? piece.getChannelPointer (1) : nullptr };
-
-            juce::AudioBuffer<float> view (channels,
-                                           (int) juce::jmin ((size_t) 2, piece.getNumChannels()),
-                                           (int) piece.getNumSamples());
-
+        // sits outside the oversampled section. Run whatever the bypass says, as
+        // the circuit is: a convolution that is not fed while bypassed keeps the
+        // input it last heard and plays it on the way back in, the past at full
+        // scale over whatever is playing now. GALLERY measured that ghost at 0.99
+        // of full scale.
+        if (cabinetActive.load (std::memory_order_relaxed))
             cabinet.process (view);
-        }
+
+        // A crossfade rather than a switch, and the cabinet is part of what it
+        // takes away. The circuit and the dry signal are never in step -- the
+        // halfbands and every coupling capacitor shift the phase -- so swapping
+        // one for the other in a sample was a step in the waveform.
+        bypassFade.mix (view, state.bypassed);
     }
 }
 

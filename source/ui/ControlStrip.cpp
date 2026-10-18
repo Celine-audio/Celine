@@ -94,10 +94,6 @@ namespace Celine
                 widget.slider = std::make_unique<juce::Slider>();
                 widget.slider->setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
 
-                // No readout. The design has none, and a drawn pot's 0..1 is not
-                // a number anyone wants: what it means is a resistance that
-                // depends on the part it came from.
-                widget.slider->setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
 
                 // The wheel scrolls the strip rather than turning the knob
                 // under the pointer. Slider::mouseWheelMove falls through to
@@ -110,6 +106,11 @@ namespace Celine
                 widget.attachment =
                     std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
                         processorRef.apvts, parameterId, *widget.slider);
+
+                // Its position, as a percentage -- see formatPosition for why not
+                // the resistance. Typed back the same way, the % optional.
+                showValueBelow(*widget.slider, formatPosition, [](const juce::String& text)
+                               { return juce::jlimit(0.0, 1.0, text.getDoubleValue() / 100.0); });
 
                 // Fires for a drag and for the host moving the parameter alike,
                 // since the attachment drives the slider either way -- which is
@@ -183,6 +184,31 @@ namespace Celine
         }
     }
 
+    void ControlStrip::showValueBelow(juce::Slider& knob, std::function<juce::String(double)> format,
+                                      std::function<double(const juce::String&)> parse)
+    {
+        knob.getProperties().set(panelReadoutProperty, true);
+        knob.textFromValueFunction = std::move(format);
+        knob.valueFromTextFunction = std::move(parse);
+
+        // As wide as the cell rather than the cap: "-12.5 dB" is wider than a
+        // knob, and a value clipped to "-12." is worse than none.
+        knob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, cellWidth - 4, valueHeight);
+        knob.updateText();
+    }
+
+    juce::String ControlStrip::formatPosition(double position)
+    {
+        return juce::String(juce::roundToInt(position * 100.0)) + "%";
+    }
+
+    juce::String ControlStrip::formatDecibels(double decibels)
+    {
+        // Rounded first, so a value a hair under zero does not read "-0.0".
+        const auto tenths = juce::roundToInt(decibels * 10.0);
+        return (tenths > 0 ? "+" : "") + juce::String(tenths / 10.0, 1) + " dB";
+    }
+
     void ControlStrip::paint(juce::Graphics& g)
     {
         // The second of the two light surfaces -- see Theme.h. It painted nothing
@@ -226,8 +252,10 @@ namespace Celine
 
             if (widget.slider != nullptr)
             {
-                const auto face = layOutCell(cell, widget.label.get(), knobSize);
-                widget.slider->setBounds(face.withSizeKeepingCentre(knobSize, knobSize));
+                // The cap and the value under it, as one control: the slider
+                // draws the cap in what is left above its value box.
+                const auto face = layOutCell(cell, widget.label.get(), knobSize + valueHeight);
+                widget.slider->setBounds(face.withSizeKeepingCentre(cellWidth - 4, knobSize + valueHeight));
             }
             else if (widget.toggle != nullptr)
             {

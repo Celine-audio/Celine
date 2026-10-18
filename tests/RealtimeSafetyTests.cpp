@@ -78,6 +78,58 @@ TEST_CASE ("processBlock never allocates", "[realtime]")
         CHECK (worstOver (20) == 0);
     }
 
+    SECTION ("while the bypass is fading")
+    {
+        // A 512-sample block is shorter than the 30 ms fade, so toggling every
+        // block keeps it moving -- the one state where the dry copy and the
+        // circuit are both being blended per sample.
+        auto* bypass = plugin.getBypassParameter();
+        REQUIRE (bypass != nullptr);
+
+        std::size_t worst = 0;
+
+        for (int b = 0; b < 20; ++b)
+        {
+            bypass->setValueNotifyingHost ((float) (b % 2));
+            fillNoise (buffer, random);
+
+            RealtimeGuard guard;
+            plugin.processBlock (buffer, midi);
+            worst = juce::jmax (worst, guard.allocations());
+        }
+
+        CHECK (worst == 0);
+    }
+
+    SECTION ("playing a file, looping, across its end")
+    {
+        // A short file, so forty blocks wrap it several times: the loop's
+        // turnaround is the one branch here that a long file would never reach.
+        juce::TemporaryFile wav (".wav");
+        {
+            juce::AudioBuffer<float> take (2, 3000);
+            fillNoise (take, random);
+
+            juce::WavAudioFormat format;
+            std::unique_ptr<juce::OutputStream> stream (wav.getFile().createOutputStream());
+            auto writer = format.createWriterFor (stream, juce::AudioFormatWriterOptions{}
+                                                              .withSampleRate (48000.0)
+                                                              .withNumChannels (2)
+                                                              .withBitsPerSample (24));
+            REQUIRE (writer != nullptr);
+            writer->writeFromAudioSampleBuffer (take, 0, take.getNumSamples());
+        }
+
+        auto& player = plugin.getInputFilePlayer();
+        player.load (wav.getFile());
+        REQUIRE (player.waitUntilLoaded (10000));
+        player.setLooping (true);
+        player.play();
+
+        CHECK (worstOver (40) == 0);
+        CHECK (player.isPlaying());
+    }
+
     SECTION ("fed silence, where anything decaying goes denormal")
     {
         for (int b = 0; b < 200; ++b)

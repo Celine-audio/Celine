@@ -1902,7 +1902,8 @@ TEST_CASE("A valve plate never sources current", "[valve][model]")
         for (const auto& model : {CircuitComponents::PentodeModel::el34(),
                                   CircuitComponents::PentodeModel::el84(),
                                   CircuitComponents::PentodeModel::kt77(),
-                                  CircuitComponents::PentodeModel::u6v6()})
+                                  CircuitComponents::PentodeModel::u6v6(),
+                                  CircuitComponents::PentodeModel::kt88()})
         {
             pentode.model = model;
 
@@ -1997,7 +1998,8 @@ TEST_CASE("A pentode conducts smoothly as its screen comes up", "[valve][model]"
 
     for (const auto& model : {CircuitComponents::PentodeModel::el34(),
                               CircuitComponents::PentodeModel::el84(),
-                              CircuitComponents::PentodeModel::u6v6()})
+                              CircuitComponents::PentodeModel::u6v6(),
+                              CircuitComponents::PentodeModel::kt88()})
     {
         pentode.model = model;
 

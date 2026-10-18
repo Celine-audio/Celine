@@ -39,12 +39,12 @@ TEST_CASE ("A block larger than the host declared is still processed correctly",
 {
     // Hosts are supposed to honour the size they declared in prepareToPlay, and
     // mostly do. When one does not, the circuit must still run at the timestep
-    // it was prepared for -- oversampling makes that a factor of four, so
-    // getting it wrong retunes every capacitor in the drawing.
+    // it was prepared for -- oversampling makes that a factor of up to sixteen,
+    // so getting it wrong retunes every capacitor in the drawing.
     constexpr double rate = 48000.0;
     constexpr int declared = 256;
 
-    for (const int factor : { 1, 2, 4 })
+    for (const int factor : PluginProcessor::oversamplingFactors)
     {
         PluginProcessor plugin;
         plugin.prepareToPlay (rate, declared);

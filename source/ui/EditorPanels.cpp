@@ -22,8 +22,8 @@ namespace Celine
             ElementType::Resistor,      ElementType::Capacitor,   ElementType::Inductor,
             ElementType::Potentiometer, ElementType::Switch,      ElementType::Spdt,      ElementType::VoltageSource,
             ElementType::Transformer,   ElementType::CenterTapTransformer,
-            ElementType::Diode,         ElementType::Transistor,  ElementType::Jfet,
-            ElementType::OpAmp,
+            ElementType::Diode,         ElementType::Transistor,  ElementType::Jfet,       ElementType::Mosfet,
+            ElementType::OpAmp,         ElementType::PowerAmp,
             ElementType::Triode,        ElementType::Pentode,     ElementType::VacuumDiode,
             ElementType::Text,          ElementType::Rectangle,
             ElementType::Scope,
@@ -181,11 +181,12 @@ namespace Celine
     // Inspector
     //==========================================================================
 
-    std::array<juce::Label*, 13> ElementInspector::captionLabels()
+    std::array<juce::Label*, 14> ElementInspector::captionLabels()
     {
         return {&valueCaption, &valueCaptionB, &labelCaption, &modelCaption, &taperCaption,
                 &orderCaption, &knobCaption, &widthCaption, &heightCaption,
-                &scopeMinCaption, &scopeMaxCaption, &scopeSecondsCaption, &cabFileCaption};
+                &scopeMinCaption, &scopeMaxCaption, &scopeSecondsCaption, &cabFileCaption,
+                &inputFileCaption};
     }
 
     void ElementInspector::applyColours()
@@ -196,6 +197,13 @@ namespace Celine
             caption->setColour(juce::Label::textColourId, Theme::text().withAlpha(0.65f));
 
         scopeAutoButton.setColour(juce::ToggleButton::textColourId, Theme::text());
+        fileInputButton.setColour(juce::ToggleButton::textColourId, Theme::text());
+        loopButton.setColour(juce::ToggleButton::textColourId, Theme::text());
+
+        // Play lights while the file runs, which is the one thing about the
+        // transport you want to see from across the room.
+        playButton.setColour(juce::TextButton::buttonOnColourId, Theme::accent());
+        playButton.setColour(juce::TextButton::textColourOnId, Theme::textOnPanel());
         polarisedButton.setColour(juce::ToggleButton::textColourId, Theme::text());
         modelDescription.setColour(juce::Label::textColourId, Theme::text().withAlpha(0.6f));
         hintLabel.setColour(juce::Label::textColourId, Theme::text().withAlpha(0.5f));
@@ -358,6 +366,58 @@ namespace Celine
         cabFileButton.onClick = [this] { if (onCabFileRequested) onCabFileRequested(); };
         content.addAndMakeVisible(cabFileCaption);
         content.addAndMakeVisible(cabFileButton);
+
+        // The file player. Every button goes straight to the player and then
+        // re-reads it, so what the panel shows is what the player says rather
+        // than what was clicked.
+        fileInputButton.getProperties().set(pillSwitchProperty, true);
+        loopButton.getProperties().set(pillSwitchProperty, true);
+
+        fileInputButton.setTooltip("Feed the circuit from the loaded file instead of the input. "
+                                   "Not saved with the sheet.");
+        inputFileButton.setTooltip("Choose an audio file to play through the circuit");
+        loopButton.setTooltip("Play the file over and over instead of once");
+        playButton.setTooltip("Play the file through the circuit");
+        stopButton.setTooltip("Stop the file and go back to its start");
+
+        fileInputButton.onClick = [this]
+        {
+            if (filePlayer != nullptr)
+                filePlayer->setFileMode(fileInputButton.getToggleState());
+
+            syncFilePlayer();
+        };
+
+        loopButton.onClick = [this]
+        {
+            if (filePlayer != nullptr)
+                filePlayer->setLooping(loopButton.getToggleState());
+
+            syncFilePlayer();
+        };
+
+        playButton.onClick = [this]
+        {
+            if (filePlayer != nullptr)
+                filePlayer->play();
+
+            syncFilePlayer();
+        };
+
+        stopButton.onClick = [this]
+        {
+            if (filePlayer != nullptr)
+                filePlayer->stop();
+
+            syncFilePlayer();
+        };
+
+        inputFileCaption.setText("File", juce::dontSendNotification);
+        inputFileButton.onClick = [this] { if (onInputFileRequested) onInputFileRequested(); };
+
+        for (juce::Component* c : std::initializer_list<juce::Component*>{
+                 &fileInputButton, &inputFileButton, &loopButton, &playButton, &stopButton, &transportView})
+            content.addAndMakeVisible(c);
 
         rotateButton.onClick = [this] { if (onRotateRequested) onRotateRequested(); };
         content.addAndMakeVisible(rotateButton);
@@ -574,6 +634,16 @@ namespace Celine
         cabFileCaption.setVisible(isOutput);
         cabFileButton.setVisible(isOutput);
 
+        const bool isInput = has && element->type == ElementType::Input;
+
+        for (juce::Component* c : std::initializer_list<juce::Component*>{
+                 &fileInputButton, &inputFileCaption, &inputFileButton, &loopButton,
+                 &playButton, &stopButton, &transportView})
+            c->setVisible(isInput);
+
+        if (isInput)
+            syncFilePlayer();
+
         const bool isBox = has && element->type == ElementType::Rectangle;
 
         if (isBox)
@@ -602,7 +672,9 @@ namespace Celine
         modelCaption.setText(isBox ? "Colour" : "Model", juce::dontSendNotification);
         modelCaption.setVisible(models);
         modelBox.setVisible(models);
-        modelDescription.setVisible(models);
+
+        // A part with one model and nothing to say about it gets no line.
+        modelDescription.setVisible(models && modelDescription.getText().isNotEmpty());
         taperCaption.setVisible(isPot);
         taperBox.setVisible(isPot);
         labelCaption.setText(has && element->type == ElementType::Text     ? "Text"
@@ -639,8 +711,80 @@ namespace Celine
         if (scopeView.isVisible())
             scopeView.repaint();
 
+        if (transportView.isVisible())
+            syncFilePlayer();
+
         if (currentView.isVisible())
             currentView.repaint();
+    }
+
+    void ElementInspector::syncFilePlayer()
+    {
+        const bool have = filePlayer != nullptr;
+        const auto status = have ? filePlayer->getStatus() : InputFilePlayer::Status{};
+        const bool loaded = status.length > 0;
+
+        // All of these are no-ops when nothing changed, which is what lets this
+        // run on every timer tick.
+        fileInputButton.setToggleState(status.fileMode, juce::dontSendNotification);
+        loopButton.setToggleState(status.looping, juce::dontSendNotification);
+        playButton.setToggleState(status.playing, juce::dontSendNotification);
+
+        fileInputButton.setEnabled(have);
+        loopButton.setEnabled(have);
+        inputFileButton.setEnabled(have);
+        playButton.setEnabled(loaded);
+        stopButton.setEnabled(loaded);
+
+        // Named, not "Browse", for the cabinet's reason: a file you cannot
+        // identify without opening a dialog is one you will load twice.
+        inputFileButton.setButtonText(status.file == juce::File{} ? juce::String("Choose...")
+                                                                   : status.file.getFileName());
+
+        transportView.repaint();
+    }
+
+    void ElementInspector::TransportView::paint(juce::Graphics& g)
+    {
+        auto bounds = getLocalBounds().toFloat();
+
+        const auto status = owner.filePlayer != nullptr ? owner.filePlayer->getStatus()
+                                                        : InputFilePlayer::Status{};
+
+        // Minutes, seconds and a tenth: enough to find the bar a take goes
+        // wrong in, and steady enough to read while it counts.
+        const auto clock = [&status](juce::int64 samples)
+        {
+            const double seconds = status.sampleRate > 0.0 ? (double) samples / status.sampleRate : 0.0;
+            const auto tenths = (int) std::floor(seconds * 10.0);
+            return juce::String(tenths / 600) + ":" + juce::String((tenths / 10) % 60).paddedLeft('0', 2)
+                 + "." + juce::String(tenths % 10);
+        };
+
+        juce::String text;
+
+        if (status.loading)
+            text = "Loading...";
+        else if (status.length == 0)
+            text = "No file loaded";
+        else
+            text = clock(status.position) + " / " + clock(status.length)
+                 + (status.fileMode ? juce::String() : juce::String("   (live input)"));
+
+        g.setColour(Theme::comment());
+        g.setFont(Fonts::light(12.0f));
+        g.drawText(text, bounds.removeFromTop(16.0f), juce::Justification::centredLeft, false);
+
+        auto track = bounds.withSizeKeepingCentre(bounds.getWidth(), 4.0f);
+        g.setColour(Theme::track());
+        g.fillRoundedRectangle(track, 2.0f);
+
+        if (status.length > 0)
+        {
+            const auto done = juce::jlimit(0.0f, 1.0f, (float) ((double) status.position / (double) status.length));
+            g.setColour(Theme::accent());
+            g.fillRoundedRectangle(track.withWidth(track.getWidth() * done), 2.0f);
+        }
     }
 
     void ElementInspector::CurrentView::paint(juce::Graphics& g)
@@ -1059,6 +1203,30 @@ namespace Celine
         // Directly under its switch, because the two are one control: the file
         // is what the switch switches in.
         field(cabFileCaption, cabFileButton);
+
+        // The file player, in the order you use it: live or file, which file,
+        // how it repeats, then the transport and where it has got to.
+        if (fileInputButton.isVisible())
+        {
+            fileInputButton.setBounds(area.removeFromTop(24));
+            area.removeFromTop(4);
+        }
+
+        field(inputFileCaption, inputFileButton);
+
+        if (loopButton.isVisible())
+        {
+            loopButton.setBounds(area.removeFromTop(24));
+            area.removeFromTop(4);
+
+            auto row = area.removeFromTop(26);
+            playButton.setBounds(row.removeFromLeft(row.getWidth() / 2 - 3));
+            stopButton.setBounds(row.removeFromRight(row.getWidth() - 3));
+            area.removeFromTop(6);
+
+            transportView.setBounds(area.removeFromTop(30));
+            area.removeFromTop(6);
+        }
 
         // The scope's picture, given real room -- it is the whole of what the
         // part is for, and a trace two centimetres wide tells you nothing.

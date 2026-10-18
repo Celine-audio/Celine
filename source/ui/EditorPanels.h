@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Schematic/Schematic.h"
+#include "../dsp/InputFilePlayer.h"
 #include "../Schematic/SchematicBuilder.h"
 #include "SchematicSymbols.h"
 
@@ -131,6 +132,17 @@ namespace Celine
             call. */
         std::function<void()> onCabFileRequested;
 
+        /** The Input terminal's file player, which its panel drives directly:
+            every call on it returns at once and none of it is part of the sheet,
+            so nothing here needs the editor to decide anything -- not undo, not
+            Rebuild, not the preset's modified mark. Null shows the panel's
+            controls disabled. */
+        InputFilePlayer* filePlayer = nullptr;
+
+        /** The user asked to pick a file to play. The editor owns the dialog,
+            as it does the cabinet's. */
+        std::function<void()> onInputFileRequested;
+
         /** The delete button was pressed. */
         std::function<void()> onDeleteRequested;
 
@@ -153,7 +165,7 @@ namespace Celine
             sets the face, and applyColours', which runs again whenever the theme
             moves -- and two hand-written copies of thirteen names is one place for a
             new caption to be added to only one of them. */
-        std::array<juce::Label*, 13> captionLabels();
+        std::array<juce::Label*, 14> captionLabels();
 
         void rebuildForElement();
 
@@ -254,6 +266,35 @@ namespace Celine
         juce::TextEditor scopeMinEditor, scopeMaxEditor, scopeSecondsEditor;
 
         void commitScopeAxes();
+
+        /** Input only: the file player. Live or file, which file, once or
+            round and round, and the transport.
+
+            Kept in step with the player by repaintReadouts() rather than told,
+            because the player changes on its own -- a file plays to its end, a
+            load finishes -- and the panel is rebuilt whenever the selection
+            moves, so the player is the only one of the two that remembers. */
+        juce::ToggleButton fileInputButton{"Play a file"};
+        juce::Label inputFileCaption;
+        juce::TextButton inputFileButton;
+        juce::ToggleButton loopButton{"Loop"};
+        juce::TextButton playButton{"Play"}, stopButton{"Stop"};
+
+        /** Where the file has got to, as numbers and a bar. Its own component
+            for the same reason the scope's is: it moves while nothing else on
+            the panel does. */
+        struct TransportView : juce::Component
+        {
+            explicit TransportView(ElementInspector& o) : owner(o) {}
+            void paint(juce::Graphics&) override;
+            ElementInspector& owner;
+        };
+
+        TransportView transportView{*this};
+
+        /** Brings the player's controls into line with what it says. Cheap when
+            nothing changed, so it can run on every timer tick. */
+        void syncFilePlayer();
 
         juce::ToggleButton cabButton{"Cab"};
         juce::Label cabFileCaption;

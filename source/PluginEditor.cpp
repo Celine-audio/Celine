@@ -276,6 +276,10 @@ void PluginEditor::buildPanels()
 
     inspector.onCabChanged = [this] { applyCabinetChange(); };
     inspector.onCabFileRequested = [this] { browseForCabinetFile(); };
+
+    inspector.filePlayer = &processorRef.getInputFilePlayer();
+    inspector.onInputFileRequested = [this] { browseForInputFile(); };
+    reportedInputFileLoads = processorRef.getInputFilePlayer().getStatus().loadsFinished;
     inspector.onRotateRequested = [this] { canvas.rotate(); };
     inspector.onFlipRequested = [this] { canvas.flip(); };
     inspector.onDeleteRequested = [this] { canvas.deleteSelection(); };
@@ -293,7 +297,6 @@ void PluginEditor::buildBottomBand()
         // Drawn differently from the drawn circuit's own knobs, which share this
         // band; deaf to the wheel, as those are.
         slider->getProperties().set (digitalGainProperty, true);
-        slider->setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
         slider->setScrollWheelEnabled (false);
 
         addAndMakeVisible (slider);
@@ -326,6 +329,12 @@ void PluginEditor::buildBottomBand()
 
     inputAttachment  = std::make_unique<SliderAttachment> (processorRef.apvts, "input",  inputSlider);
     outputAttachment = std::make_unique<SliderAttachment> (processorRef.apvts, "output", outputSlider);
+
+    // After the attachments, which install the parameters' own text ("3.0", no
+    // unit) and would replace these. Typed back with or without the "dB".
+    for (auto* slider : { &inputSlider, &outputSlider })
+        Celine::ControlStrip::showValueBelow (*slider, Celine::ControlStrip::formatDecibels,
+                                              [] (const juce::String& text) { return text.getDoubleValue(); });
     bypassAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
         processorRef.apvts, "bypass", *bypassButton);
     channelModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
@@ -632,6 +641,7 @@ void PluginEditor::timerCallback()
     // Not gated on that: they are small, they decline in a line when nothing is
     // selected, and a part's current is live on sheets with no scope at all.
     inspector.repaintReadouts();
+    reportInputFileLoads();
 }
 
 //==============================================================================
@@ -833,6 +843,71 @@ void PluginEditor::browseForCabinetFile()
         inspector.setElement (selected);
         applyCabinetChange();
     });
+}
+
+void PluginEditor::browseForInputFile()
+{
+    auto& player = processorRef.getInputFilePlayer();
+    const auto current = player.getStatus().file;
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+
+    fileChooser = std::make_unique<juce::FileChooser> (
+        "Choose an audio file to play through the circuit",
+        current != juce::File{} ? current
+                                : juce::File::getSpecialLocation (juce::File::userMusicDirectory),
+        formats.getWildcardForAllFormats());
+
+    fileChooser->launchAsync (juce::FileBrowserComponent::openMode
+                                  | juce::FileBrowserComponent::canSelectFiles,
+                              [this] (const juce::FileChooser& chooser)
+    {
+        const auto file = chooser.getResult();
+
+        if (file == juce::File{})
+            return; // cancelled
+
+        // Choosing a file arms file input, as choosing an impulse response arms
+        // the cab: nobody goes looking for a take in order to keep listening to
+        // the guitar. It plays when Play is pressed, not before.
+        auto& filePlayer = processorRef.getInputFilePlayer();
+        filePlayer.load (file);
+        filePlayer.setFileMode (true);
+
+        setStatus ("Loading " + file.getFileName() + "...", false);
+    });
+}
+
+void PluginEditor::reportInputFileLoads()
+{
+    const auto status = processorRef.getInputFilePlayer().getStatus();
+
+    if (status.loadsFinished == reportedInputFileLoads)
+        return;
+
+    reportedInputFileLoads = status.loadsFinished;
+
+    if (status.problem.isNotEmpty())
+    {
+        setStatus (status.problem, true);
+        return;
+    }
+
+    auto message = "Loaded " + status.file.getFileName() + ": "
+                 + juce::String ((double) status.length / juce::jmax (1.0, status.sampleRate), 1) + " s";
+
+    // Said, because resampling is the one thing between the file and the
+    // circuit, and a bench that compares two takes wants to know whether
+    // either went through it.
+    if (! juce::exactlyEqual (status.sourceRate, status.sampleRate))
+        message << ", resampled from " << juce::String (status.sourceRate / 1000.0, 1)
+                << " to " << juce::String (status.sampleRate / 1000.0, 1) << " kHz";
+
+    if (status.truncated)
+        message << ", cut to the first " << juce::String ((int) InputFilePlayer::maximumSeconds) << " s";
+
+    setStatus (message + ".", false);
 }
 
 void PluginEditor::applyCabinetChange()
@@ -1245,7 +1320,7 @@ void PluginEditor::showSettingsMenu()
     // Oversampling: the only real fix for aliasing.
     menu.addSectionHeader ("Oversampling");
 
-    for (const int factor : { 1, 2, 4 })
+    for (const int factor : PluginProcessor::oversamplingFactors)
     {
         juce::PopupMenu::Item item (factor == 1 ? "Off" : juce::String (factor) + juce::String ("x"));
         item.isTicked = processorRef.oversamplingFactor == factor;
@@ -1260,9 +1335,10 @@ void PluginEditor::showSettingsMenu()
                 return;
             }
 
-            setStatus (factor == 1
-                           ? "Oversampling off."
-                           : juce::String (factor) + "x oversampling. Reduces aliasing but increases CPU usage.",
+            setStatus (factor == 1  ? juce::String ("Oversampling off.")
+                     : factor <= 4  ? juce::String (factor) + "x oversampling. Reduces aliasing but increases CPU usage."
+                     : factor == 8  ? juce::String ("8x oversampling. About 7x usage.")
+                                    : juce::String ("16x oversampling. About 13x usage, best kept for rendering."),
                        false);
         });
 
@@ -1308,7 +1384,7 @@ void PluginEditor::showSettingsMenu()
     const Toggle performanceToggles[] = {
         { "Model valve interelectrode capacitance",
           &SchematicModel::BuildOptions::interelectrodeCapacitance },
-        { "Model transistor junction capacitance",
+        { "Model semiconductor junction capacitance",
           &SchematicModel::BuildOptions::transistorJunctionCapacitance },
         { "Model transistor Early effect",
           &SchematicModel::BuildOptions::transistorEarlyEffect },
@@ -1590,8 +1666,8 @@ void PluginEditor::layOutPanels (juce::Rectangle<int> area)
 
     auto placeKnob = [] (juce::Rectangle<int> cell, juce::Slider& knob, juce::Label& label)
     {
-        knob.setBounds (Strip::layOutCell (cell, &label, Strip::knobSize)
-                            .withSizeKeepingCentre (Strip::knobSize, Strip::knobSize));
+        knob.setBounds (Strip::layOutCell (cell, &label, Strip::knobSize + Strip::valueHeight)
+                            .withSizeKeepingCentre (Strip::cellWidth - 4, Strip::knobSize + Strip::valueHeight));
     };
 
     // INPUT hard left, VOLUME hard right, the circuit's own knobs between: it

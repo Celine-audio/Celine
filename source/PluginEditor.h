@@ -145,6 +145,16 @@ private:
     /** Picks an impulse response for the selected Output terminal. */
     void browseForCabinetFile();
 
+    /** Picks an audio file for the Input terminal's player. Not the selected
+        part's file -- the player is the plugin's, not any one terminal's, and
+        nothing about it goes on the sheet. */
+    void browseForInputFile();
+
+    /** Says in the console how the last file load went, once per load. Polled
+        from the timer, because the load finishes on a thread that cannot
+        touch the editor. */
+    void reportInputFileLoads();
+
     /** Copies one scope's picture out of the processor for drawing. */
     bool readScopeTrace (int elementId, Celine::ScopeReading& out) const;
 
@@ -283,6 +293,11 @@ private:
         that opens on the other one is a chooser you navigate out of every
         time. */
     juce::File lastCabinetFile;
+
+    /** How many file loads the player had finished when this editor last said
+        anything about one. Starts at the player's count, so reopening the
+        window does not announce a file loaded an hour ago. */
+    int reportedInputFileLoads = 0;
 
     /** The preset being loaded, handed forward to the callback that arrives
         afterwards. `onSchematicReplaced` is bounced through the message thread,

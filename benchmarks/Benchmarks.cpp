@@ -2,6 +2,7 @@
 // back when the plugin was one hard-coded pedal. It now builds whatever is drawn,
 // so the benchmarks ask for them directly.
 #include <CelineEngine/Circuits.h>
+#include <Schematic/ExampleSchematics.h>
 
 TEST_CASE ("Boot performance")
 {
@@ -162,6 +163,44 @@ TEST_CASE ("Circuit engine performance")
         });
     };
 
+    // A MOSFET drain-feedback stage driven into clipping, with and without the
+    // 2N7000's source resistance. The difference is the cost of solving it
+    // inside the device -- a few Newton steps on one scalar per evaluation.
+    for (const bool withSourceResistance : { true, false })
+    {
+        const auto* label = withSourceResistance ? "2N7000 stage, 512 samples (clipping) -- with Rs"
+                                                 : "2N7000 stage, 512 samples (clipping) -- Rs = 0";
+
+        BENCHMARK_ADVANCED (label)
+        (Catch::Benchmark::Chronometer meter)
+        {
+            auto model = Circuit::MosfetModel::n2N7000();
+
+            if (! withSourceResistance)
+                model.sourceResistance = 0.0;
+
+            Circuit stage;
+            stage.addVoltageSource ("rail", "gnd", 9.0);
+            stage.addResistor ("rail", "d", 10000.0);
+            stage.addResistor ("d", "g", 1.0e6);
+            stage.addResistor ("g", "gnd", 1.0e6);
+            stage.addCapacitor ("in", "g", 1.0e-6);
+            stage.addMosfet ("d", "g", "gnd", model);
+            stage.setInputNode ("in");
+            stage.setOutputNode ("d");
+            stage.prepare (benchmarkSampleRate);
+
+            auto block = makeBlock (1.5f);
+            std::vector<float> scratch (blockSize);
+
+            meter.measure ([&] (int) {
+                std::copy (block.begin(), block.end(), scratch.begin());
+                stage.process (scratch.data(), blockSize);
+                return scratch[0];
+            });
+        };
+    }
+
     // The same circuit solved both ways. DK eliminates the linear part once and
     // iterates on the 4 ports; full Newton stamps the devices into the whole
     // 10x10 and re-factorises every iteration. The gap here is what the method
@@ -299,6 +338,94 @@ TEST_CASE ("Circuit engine performance")
 // Two sheet sizes, because the interesting question is how the cost *scales*:
 // per-element work shows up in the first, anything quadratic in the second.
 //==============================================================================
+//==============================================================================
+// Oversampling
+//
+// The whole plugin, not the bare circuit: one 512-sample stereo block at
+// 48 kHz through processBlock, halfband filters and all, so the figure is the
+// one a host's meter shows. Same budget as above -- 10.67 ms per block, so
+// 1 ms is about 9% of a core.
+//
+// Driven 24 dB hot, as the aliasing test drives it, because a clipping circuit
+// is both where oversampling earns its keep and where Newton works hardest.
+//==============================================================================
+
+TEST_CASE ("Oversampling cost")
+{
+    constexpr double rate = 48000.0;
+    constexpr int blockSize = 512;
+
+    for (const int example : { 0, 2 }) // diode clipper, 12AX7 gain stage
+    {
+        for (const int factor : PluginProcessor::oversamplingFactors)
+        {
+            const auto label = SchematicModel::Examples::getNames()[example].toStdString()
+                             + ", stereo 512 samples, " + std::to_string (factor) + "x";
+
+            BENCHMARK_ADVANCED (std::string (label))
+            (Catch::Benchmark::Chronometer meter)
+            {
+                PluginProcessor plugin;
+                plugin.prepareToPlay (rate, blockSize);
+                SchematicModel::Examples::load (plugin.getSchematic(), example);
+                REQUIRE (plugin.setOversamplingFactor (factor).isValid());
+
+                auto* input = plugin.apvts.getParameter ("input");
+                input->setValueNotifyingHost (input->convertTo0to1 (24.0f));
+
+                juce::AudioBuffer<float> source (2, blockSize), buffer (2, blockSize);
+                juce::MidiBuffer midi;
+
+                for (int i = 0; i < blockSize; ++i)
+                {
+                    const auto v = 0.5f * std::sin (2.0f * 3.14159265f * 440.0f * (float) i / (float) rate);
+                    source.setSample (0, i, v);
+                    source.setSample (1, i, v);
+                }
+
+                // Settle the bias point and the filters before timing anything.
+                for (int b = 0; b < 20; ++b)
+                {
+                    buffer.makeCopyOf (source, true);
+                    plugin.processBlock (buffer, midi);
+                }
+
+                meter.measure ([&] (int) {
+                    buffer.makeCopyOf (source, true);
+                    plugin.processBlock (buffer, midi);
+                    return buffer.getSample (0, 0);
+                });
+            };
+        }
+    }
+}
+
+TEST_CASE ("File input resampling")
+{
+    // What loading a take at a foreign rate costs the worker thread, per ten
+    // seconds of stereo. Off the audio thread and off the message thread, so
+    // what this decides is how long "Loading..." shows, not whether anything
+    // drops out. A file at the session rate skips all of it.
+    struct Case { double from, to; const char* name; };
+
+    for (const auto& c : { Case { 44100.0, 48000.0, "10 s stereo, 44.1 to 48 kHz" },
+                           Case { 96000.0, 48000.0, "10 s stereo, 96 to 48 kHz" },
+                           Case { 48000.0, 96000.0, "10 s stereo, 48 to 96 kHz" } })
+    {
+        juce::AudioBuffer<float> take (2, (int) (c.from * 10.0));
+        juce::Random random { 3 };
+
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < take.getNumSamples(); ++i)
+                take.setSample (ch, i, random.nextFloat() - 0.5f);
+
+        BENCHMARK (c.name)
+        {
+            return InputFilePlayer::resample (take, c.from, c.to).getNumSamples();
+        };
+    }
+}
+
 TEST_CASE ("Drawing performance")
 {
     using namespace SchematicModel;

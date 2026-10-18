@@ -1,10 +1,13 @@
 #pragma once
 
+#include "dsp/BypassFade.h"
+#include "dsp/InputFilePlayer.h"
 #include "dsp/PartitionedConvolver.h"
 #include "Schematic/SchematicBuilder.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_dsp/juce_dsp.h>
+#include <array>
 #include <memory>
 #include <vector>
 
@@ -60,7 +63,10 @@ public:
     void setStateInformation (const void* data, int sizeInBytes) override;
 
     /** Hands the host a real bypass control rather than making it fade around
-        the plugin. */
+        the plugin. Without it the host makes a second bypass of its own, which
+        neither lights the power button nor goes through the crossfade -- two
+        switches that could disagree about whether the plugin was on. With it
+        there is one, wherever it is pressed from. */
     juce::AudioProcessorParameter* getBypassParameter() const override { return bypassParameter; }
 
     //==========================================================================
@@ -86,15 +92,22 @@ public:
     /** See wasDocumentFromNewerBuild(). */
     bool documentFromNewerBuild = false;
 
-    /** How many times the host's rate the circuit runs at: 1, 2 or 4.
+    /** How many times the host's rate the circuit runs at: one of
+        `oversamplingFactors`.
 
         Every nonlinear device generates harmonics without limit, and at 48 kHz
-        what they make above 24 kHz folds back as inharmonic grit. 2x is roughly
-        twice the CPU, the per-sample solve dominating.
+        what they make above 24 kHz folds back as inharmonic grit. Each doubling
+        costs a little under twice the CPU, the per-sample solve dominating --
+        Newton needs fewer iterations when consecutive samples are closer.
 
         Changing it re-prepares the circuits -- the DK discretisation depends on
         the timestep -- so it goes through rebuild() rather than per block. */
     int oversamplingFactor = 1;
+
+    /** Every factor the Settings menu offers, and the only ones a document can
+        ask for: the halfband chain comes in powers of two, one stage each. */
+    static constexpr std::array<int, 5> oversamplingFactors { 1, 2, 4, 8, 16 };
+    static constexpr int maximumOversamplingFactor = oversamplingFactors.back();
 
     /** Sets the factor and rebuilds. Message thread; returns the build result
         so the caller can report failures the same way Rebuild does. */
@@ -124,6 +137,17 @@ public:
         must not be the one that finds out the buffers were cut for 48. */
     static constexpr int maximumCabinetSamples =
         (int) (cabinetImpulseSamples * 192000.0 / cabinetReferenceRate);
+
+    /** The audio file the Input terminal can play in place of the host's
+        input, for benching. Its own object, with its own threading, because
+        none of it is part of the sheet -- see InputFilePlayer for why it is
+        deliberately left out of the document and the host's state alike.
+
+        Played **before everything**, the bypass's dry copy included, so that
+        bypassing while a file plays gives the file back untouched: the A/B a
+        bench is for. The input gain still applies, since that is what sets how
+        hard any source hits the circuit. */
+    InputFilePlayer& getInputFilePlayer() noexcept { return inputFile; }
 
     //==========================================================================
     /** One scope's picture, written by the audio thread and read by the UI.
@@ -313,6 +337,15 @@ public:
         sessions and host automation are untouched. Lowering it is not. */
     static constexpr int maxLiveControls = 16;
 
+    /** The most latency the oversampler reports at any factor, which the
+        bypass's dry path is sized for once, in prepareToPlay. Not the latency
+        of the factor in force: that changes from the message thread while
+        audio runs, and the delay line cannot grow then. The halfbands report
+        3, 4, 5 and 5 samples at 2x to 16x -- each further stage runs at a
+        higher rate, so adds less at the host's -- which leaves this room for a
+        longer filter, and a test holds every factor's real figure under it. */
+    static constexpr int maximumOversamplingLatency = 64;
+
     /** Parameter id for live control `index`. */
     static juce::String getControlParameterId (int index) { return "knob" + juce::String (index + 1); }
 
@@ -327,6 +360,13 @@ private:
     int preparedBlockSize = 512;
 
     void prepareOversampler();
+
+    /** Bypass, faded rather than switched, against a copy of the input delayed
+        by the latency the host is compensating for. At the host's rate, after
+        the cabinet, because the cabinet is part of what bypass takes away and
+        a copy of the input is the only dry signal there is out here -- see
+        processBlock. */
+    BypassFade bypassFade;
 
     SchematicModel::Schematic schematic;
 
@@ -369,6 +409,9 @@ private:
         measured at about 275 blocks, a second and a half, before a cabinet
         became audible. */
     PartitionedConvolver cabinet;
+
+    /** See getInputFilePlayer(). */
+    InputFilePlayer inputFile;
 
     /** The length of the response in the convolver, since the engine does not
         keep one. Message thread writes it, the editor reads it. */

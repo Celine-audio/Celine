@@ -17,7 +17,7 @@ Céline lets you experiment, design, and play with circuits with no latency.
 
 - **Draw your own circuit :** Place parts, wire them and then press _Rebuild_ to load the schematic. The circuit is sent to the solver and is ready to be played through.
 - **Potentiometers and switches :** Every potentiometer and switch you draw becomes a knob in the strip along the bottom. They are host-automatable and can be adjusted without needing a rebuild.
-- **Oversampling.** 2× or 4× oversampling is available. Lessens the effects of aliasing but computationally intensive.
+- **Oversampling.** 2×, 4×, 8× or 16× oversampling is available. Lessens the effects of aliasing but computationally intensive: each doubling costs nearly twice the CPU, and 16× is meant for rendering rather than playing live.
 - **Schematics.** `.celsch` holds the drawing and the knob positions. They can be loaded, imported to a current drawing, and exported directly from the editor. A preset folder can be assigned for easy access to a library of schematics.
 
 The simulation's limits are documented. Read
@@ -30,6 +30,8 @@ to learn more about the current known limitations of the engine.
 
 **Terminals** — Ground, Input, Output, and Node. The input and output are where the audio will be sent and where it will be probed. They are purely sending audio and don't represent any load or have any bundled electrical component. Nodes carrying the same label are the same point in the circuit however far apart they are drawn.
 
+**Playing a file** — select the Input terminal to feed the circuit from an audio file instead of the live input, for benching: the same take through two versions of a sheet. Choose a file, switch Loop on or off, then Play and Stop. The file is never saved with the sheet or the session. A file at the session's rate reaches the circuit bit-exact; any other rate is resampled once, when loaded. Bypass gives back the file itself.
+
 **Passives** — Resistor, Capacitor, Inductor, and Transformers.
 
 **Potentiometers** — three tapers: linear, logarithmic, and reverse logarithmic.
@@ -37,7 +39,7 @@ Giving potentiometers the same name will link them. They keep their own resistan
 
 **Switches** — xPST and xPDT. The same naming rule applies, multiple switches with the same name will become linked together and act as one switch.
 
-**Semiconductors** — diodes, transistors (BJTs and JFETs) and op-amps.
+**Semiconductors** — diodes, transistors (BJTs, JFETs and MOSFETs), op-amps, and the LM386 power amplifier.
 
 **Valves** — triodes, pentodes and rectifiers, modelled after **Norman Koren**'s work on [triode SPICE emulation](https://www.normankoren.com/Audio/index.html), plus three triodes using the **Dempwolf–Zölzer** equations from "*[A Physically-Motivated Triode Model for Circuit Simulations](https://dafx.de/paper-archive/2011/Papers/76_e.pdf)*".
 Valves also model **interelectrode capacitance** the "Miller effect". It is a real internal action that changes the effective capacitance between grid and anode and so changes the frequency response under gain. It is on by default and can be switched off for CPU savings.

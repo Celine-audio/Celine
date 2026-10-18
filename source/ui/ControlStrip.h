@@ -67,6 +67,29 @@ namespace Celine
         /** The knob cap, at the size the design draws it. */
         static constexpr int knobSize = 58;
 
+        /** The value under each knob, which the design did not have and the knobs
+            turned out to need: a notch on a cap says roughly where it is, and
+            two takes on a bench want to be compared at exactly the same setting. */
+        static constexpr int valueHeight = 16;
+
+        /** Puts a value under `knob`, written by `format` and read back by `parse`
+            -- the box is editable, so a setting can be typed as well as dialled.
+            After the attachment, which installs the parameter's own text and
+            would otherwise replace these. Shared with the editor's INPUT and
+            VOLUME, so every knob in the band reads out the same way. */
+        static void showValueBelow(juce::Slider& knob, std::function<juce::String(double)> format,
+                                   std::function<double(const juce::String&)> parse);
+
+        /** How far round a drawn pot is, as the inspector's "Knob position (%)"
+            states it, so the strip and the inspector agree on what a setting is
+            called. Not a resistance: a ganged knob can turn two tracks of
+            different values, and a taper makes the same resistance mean a
+            different place on different pots. */
+        static juce::String formatPosition(double position);
+
+        /** A gain in decibels, signed, so 0.0 dB reads as the unity it is. */
+        static juce::String formatDecibels(double decibels);
+
         /** The channel picker, which is the one control in the band that is a
             dropdown rather than a knob. */
         static constexpr int comboWidth = 108;
