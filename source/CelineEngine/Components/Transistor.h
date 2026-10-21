@@ -87,11 +87,18 @@ namespace CircuitComponents
         /** Forward Early voltage, VAF on a SPICE card. Zero means none.
 
             The collector voltage reaching back through the base width and
-            modulating the transport current, which picks up a factor
-            (1 + Vce/VAF) -- exactly an output resistance ro = VAF/Ic across the
-            collector load. At 1 mA with a 74 V part that is 75k against a 4.7k
-            load, so the gain drops about 6%: the difference between what the
-            resistor ratio computes and what the stage actually does. */
+            modulating the transport current. Gummel-Poon divides that current
+            by q1 = 1 / (1 - Vbc/VAF), so it picks up a factor (1 + Vcb/VAF) --
+            an output resistance ro = VAF/Ic across the collector load. At 1 mA
+            with a 74 V part that is 75k against a 4.7k load, so the gain drops
+            about 6%: the difference between what the resistor ratio computes
+            and what the stage actually does.
+
+            Vcb, not Vce. This used to be (1 + Vce/VAF), the level-1 form, which
+            is Vbe/VAF higher -- 0.8 to 1.2% of collector current on the cards
+            here -- and every VAF this file carries is a Gummel-Poon one, from a
+            vendor's card or fitted against one. Run against ngspice with the
+            same parameters, the two now agree to 0.05 mV on every node. */
         double forwardEarlyVoltage = 0.0; // VAF, volts
 
         /** Forward high-injection knee, IKF on a SPICE card. Zero means none.
@@ -129,27 +136,51 @@ namespace CircuitComponents
         /** 2N3904 -- the default small-signal silicon NPN. Big Muff, Rat,
             countless boost and overdrive stages. Turns on around 0.65 V.
 
-            The DC parameters are Fairchild's datasheet SPICE card verbatim
-            (Is 6.734f, BF 416.4, BR 0.7371), and the capacitances and Early
-            voltage come off the same card: CJE 4.493 pF, CJC 3.638 pF,
-            VAF 74.03. */
+            Fitted to Fairchild's own typical curves (docs/specs/transistors/
+            2N3904-Fairchild.PDF, 2011, 25 C, digitised from the vector paths):
+            pulsed current gain at Vce 5 V and base-emitter on voltage. Within
+            1.3% of the gain from 0.1 to 100 mA -- 228 / 230 / 222 / 160 at
+            0.1 / 1 / 10 / 100 mA against the sheet's 231 / 228 / 223 / 159 --
+            and within 1 mV of Vbe. The gain is flat across the whole audio
+            range, so the recombination term the curve cannot pin is held at
+            NE 1.5, the bottom of its physical range; IKF puts the turn-over
+            where the sheet's is. BR, VAF and the capacitances are the card's.
+
+            It used to take IS, BF and BR from Fairchild's SPICE card printed on
+            that same sheet and leave out the card's ISE, NE and IKF. Without
+            them BF is the gain, and 416 is nearly twice the sheet's typical --
+            above even its 300 maximum at 10 mA. The card with them in is no
+            closer the other way: run in ngspice it gives 104 / 141 / 169,
+            0.6 times the typical curve beside it. */
         static BjtModel npnSilicon() noexcept
         {
-            BjtModel m {Polarity::NPN, 6.734e-15, 416.4, 0.7371, 1.0, 1.0, 0.025852};
+            BjtModel m {Polarity::NPN, 5.874e-15, 220.3, 0.7371, 1.0, 1.0, 0.025852};
+            m.baseEmitterLeakage = 1.398e-15; // ISE
+            m.baseEmitterLeakageEmission = 1.5; // NE
+            m.forwardKneeCurrent = 0.2083;  // IKF
             m.capBaseEmitter = 4.493e-12;   // CJE
             m.capBaseCollector = 3.638e-12; // CJC
             m.forwardEarlyVoltage = 74.03;  // VAF
             return m;
         }
 
-        /** 2N3906 -- the PNP complement of the 2N3904. Same provenance as the
-            NPN: the National card whose Is 1.41f, BF 180.7, BR 4.977 the DC
-            parameters already were, which also carries CJE 8.063 pF,
-            CJC 9.728 pF and VAF 18.7. A markedly lower VAF than the NPN, so a
-            PNP stage loses noticeably more gain to it. */
+        /** 2N3906 -- the PNP complement of the 2N3904, fitted the same way to
+            Fairchild's typical curves (docs/specs/transistors/2N3906-Fairchild.PDF,
+            2010, 25 C, Vce 1 V): within 4% of the gain from 0.1 to 100 mA --
+            106 / 130 / 137 / 89 against 109 / 126 / 138 / 88 -- and 4 mV of
+            Vbe. BR, VAF and the capacitances are Fairchild's card's (CJE
+            8.063 pF, CJC 9.728 pF, VAF 18.7 -- a markedly lower VAF than the
+            NPN, so a PNP stage loses noticeably more gain to it).
+
+            The card itself -- the DC set this used to carry, less its IKF -- has
+            a saturation current four times too small for its own sheet: Vbe
+            36 mV high across the range. */
         static BjtModel pnpSilicon() noexcept
         {
-            BjtModel m {Polarity::PNP, 1.41e-15, 180.7, 4.977, 1.0, 1.0, 0.025852};
+            BjtModel m {Polarity::PNP, 6.961e-15, 162.6, 4.977, 1.0, 1.0, 0.025852};
+            m.baseEmitterLeakage = 5.863e-14; // ISE
+            m.baseEmitterLeakageEmission = 1.5; // NE
+            m.forwardKneeCurrent = 0.1301;  // IKF
             m.capBaseEmitter = 8.063e-12;   // CJE
             m.capBaseCollector = 9.728e-12; // CJC
             m.forwardEarlyVoltage = 18.7;   // VAF
@@ -275,12 +306,12 @@ namespace CircuitComponents
             return {
                 .polarity = Polarity::NPN,
                 .saturationCurrent = 9.677e-15,       // IS   Philips BC847A (the BC547A die)
-                .forwardBeta = 201.07,                // BF   refitted
+                .forwardBeta = 202.03,                // BF   refitted
                 .reverseBeta = 7.004,                 // BR
                 .forwardEmission = 0.9922,            // NF
                 .reverseEmission = 0.9935,            // NR
                 .thermalVoltage = 0.025852,
-                .baseEmitterLeakage = 3.8839e-13,     // ISE  refitted
+                .baseEmitterLeakage = 3.8788e-13,     // ISE  refitted
                 .baseEmitterLeakageEmission = 1.7137, // NE   refitted
                 .baseCollectorLeakage = 5.236e-12,    // ISC
                 .baseCollectorLeakageEmission = 1.53, // NC
@@ -298,12 +329,12 @@ namespace CircuitComponents
             return {
                 .polarity = Polarity::NPN,
                 .saturationCurrent = 2.39e-14,        // IS   Philips BC547B
-                .forwardBeta = 305.68,                // BF   refitted
+                .forwardBeta = 308.81,                // BF   refitted
                 .reverseBeta = 7.946,                 // BR
                 .forwardEmission = 1.008,             // NF
                 .reverseEmission = 1.004,             // NR
                 .thermalVoltage = 0.025852,
-                .baseEmitterLeakage = 4.623e-13,      // ISE  refitted
+                .baseEmitterLeakage = 4.6139e-13,     // ISE  refitted
                 .baseEmitterLeakageEmission = 1.7684, // NE   refitted
                 .baseCollectorLeakage = 6.272e-14,    // ISC
                 .baseCollectorLeakageEmission = 1.243, // NC
@@ -327,12 +358,12 @@ namespace CircuitComponents
             return {
                 .polarity = Polarity::NPN,
                 .saturationCurrent = 4.679e-14,       // IS   Philips BC547C
-                .forwardBeta = 560.63,                // BF   refitted
+                .forwardBeta = 567.4,                 // BF   refitted
                 .reverseBeta = 11.57,                 // BR
                 .forwardEmission = 1.01,              // NF
                 .reverseEmission = 1.019,             // NR
                 .thermalVoltage = 0.025852,
-                .baseEmitterLeakage = 1.6442e-13,     // ISE  refitted
+                .baseEmitterLeakage = 1.6398e-13,     // ISE  refitted
                 .baseEmitterLeakageEmission = 1.6415, // NE   refitted
                 .baseCollectorLeakage = 2.337e-14,    // ISC
                 .baseCollectorLeakageEmission = 1.164, // NC
@@ -350,8 +381,9 @@ namespace CircuitComponents
         // sorts, the engine can tell apart.
 
         /** 2N5088. The Fairchild datasheet's own SPICE card, verbatim for
-            everything this model has a field for. Through the engine: hFE 487
-            at 100 uA, 650 at 1 mA and 554 at 10 mA against the sheet's minima
+            everything this model has a field for. Through the engine -- and
+            through ngspice, to the decimal: hFE 484 at 100 uA, 644 at 1 mA and
+            546 at 10 mA against the sheet's minima
             of 300, 350 and 300, with Vbe 0.74 V at 10 mA (0.8 max). The 15 mA
             knee is why the gain has already turned over by 10 mA. */
         static BjtModel npn2N5088() noexcept
@@ -376,7 +408,7 @@ namespace CircuitComponents
         }
 
         /** 2N5089, the higher-gain sort of the same die. Fairchild's card
-            again: hFE 651 at 100 uA, 870 at 1 mA, 742 at 10 mA (sheet minima
+            again: hFE 646 at 100 uA, 862 at 1 mA, 731 at 10 mA (sheet minima
             400, 450, 400). The Big Muff's later transistor. */
         static BjtModel npn2N5089() noexcept
         {
@@ -402,20 +434,20 @@ namespace CircuitComponents
         {
             return {
                 .polarity = Polarity::NPN,
-                .saturationCurrent = 7.8336e-14,      // IS
-                .forwardBeta = 1522.9,                // BF
+                .saturationCurrent = 7.9035e-14,      // IS
+                .forwardBeta = 1538.3,                // BF
                 .reverseBeta = 1.271,                 // BR   process 07
                 .forwardEmission = 1.0,               // NF
                 .reverseEmission = 1.0,               // NR
                 .thermalVoltage = 0.025852,
-                .baseEmitterLeakage = 2.2366e-14,     // ISE
-                .baseEmitterLeakageEmission = 1.4167, // NE
+                .baseEmitterLeakage = 2.2501e-14,     // ISE
+                .baseEmitterLeakageEmission = 1.417,  // NE
                 .baseCollectorLeakage = 0.0,          // ISC
                 .baseCollectorLeakageEmission = 2.0,  // NC
                 .capBaseEmitter = 5.6e-12,            // Ceb typ
                 .capBaseCollector = 1.7e-12,          // Ccb typ
                 .forwardEarlyVoltage = 62.37,         // VAF  process 07
-                .forwardKneeCurrent = 0.056884,       // IKF
+                .forwardKneeCurrent = 0.057629,       // IKF
             };
         }
 
@@ -533,25 +565,30 @@ namespace CircuitComponents
             Fitted here to every typical the sheet prints (docs/specs/transistors/nte102-179916.pdf):
 
                                                   sheet      model
-                hfe   Vce 6 V, Ie 1 mA            135        135.0
-                hie                               3.6k       3.70k
-                hoe                               50 uS      50.0
-                hFE   Vce 0.15 V, Ic 12 mA         80        80.6
-                      Vce 0.20 V, Ic 24 mA         90        89.2
+                hfe   Vce 6 V, Ie 1 mA            135        134.5
+                hie                               3.6k       3.68k
+                hoe                               50 uS      50.1
+                hFE   Vce 0.15 V, Ic 12 mA         80        80.4
+                      Vce 0.20 V, Ic 24 mA         90        89.8
                 Vce(sat)  12 mA / 0.4 mA         0.09        0.091
                            24 mA / 1 mA          0.09        0.091
-                Vbe(sat)  12 mA / 0.4 mA         0.27        0.271
+                Vbe(sat)  12 mA / 0.4 mA         0.27        0.272
                            24 mA / 1 mA          0.30        0.299
                 ICBO  Vcb 12 V                   0.8 uA      0.80
                 IEBO  Veb 2.5 V                  0.5 uA      0.50
+
+            (Refitted when the Early effect became Gummel-Poon's: the first
+            fit leaned on the old form's (1 + Vce/VAF), which in reverse bias
+            shrank the cutoff current by a fifth and so read IEBO 7% high once
+            corrected.)
 
             What falls out of that is worth knowing.
 
             The leakage is the ideal junctions' own -- no ISC is needed. The
             ratio of the two cutoff currents is mostly the reverse gain (it is
             alpha-F over alpha-R), and together with the saturation voltages it
-            puts BR at 1.0: alloy-junction germanium is nearly symmetrical,
-            which is what that says. IS follows from the leakage at 0.67 uA, so
+            puts BR at 0.94: alloy-junction germanium is nearly symmetrical,
+            which is what that says. IS follows from the leakage at 0.63 uA, so
             Vbe is 0.18 V at 1 mA -- germanium, unmistakably.
 
             The Early voltage is 14 V, off hoe, and it matters: hFE at 6 V is
@@ -560,16 +597,16 @@ namespace CircuitComponents
             rail. It also means the gain tracks the collector swing.
 
             Open-base leakage is ICBO multiplied up by the gain at that current:
-            13 uA at 6 V here. Not on the sheet, and the figure a two-transistor
+            15 uA at 6 V here. Not on the sheet, and the figure a two-transistor
             fuzz's bias leans on.
 
             BF is not pinned by the sheet. Anything from 300 to 10000 lands
-            every figure above within 2% (hie within 5%) and the gain from 1 to
-            24 mA within 10%; 500 was taken because it puts NE at 1.8, the
-            middle of the textbook range. At 6 V the gain runs 94 / 128 / 155 /
-            147 at 1 / 3 / 10 / 24 mA, turning over on the 13.5 mA knee. Below
-            a milliamp the sheet says nothing and the choice shows: hFE at
-            0.1 mA is 51 here, and anywhere from 47 to 70 across that BF range.
+            every figure above within 3.5% (hie within 5%); 500 was taken
+            because it puts NE at 1.75, the middle of the textbook range. At
+            6 V the gain runs 96 / 129 / 155 / 148 at 1 / 3 / 10 / 24 mA,
+            turning over on the 15 mA knee. Below a milliamp the sheet says
+            nothing and the choice shows: hFE at 0.1 mA is 54 here, and anywhere
+            from 50 to 62 across that BF range.
 
             Read the h-parameters at 1 kHz: the sheet's test-condition cell
             for them says 1 MHz, which an hfe of 135 with a 25 MHz alpha cutoff
@@ -584,17 +621,17 @@ namespace CircuitComponents
         {
             return {
                 .polarity = Polarity::NPN,
-                .saturationCurrent = 6.650e-7,        // IS   from ICBO and IEBO
+                .saturationCurrent = 6.329e-7,        // IS   from ICBO and IEBO
                 .forwardBeta = 500.0,                 // BF   not pinned; see above
-                .reverseBeta = 1.011,                 // BR   from ICBO / IEBO
+                .reverseBeta = 0.9373,                // BR   from ICBO / IEBO
                 .forwardEmission = 1.0,               // NF   hie agrees within 3%
-                .reverseEmission = 1.145,             // NR   from Vce(sat)
+                .reverseEmission = 1.154,             // NR   from Vce(sat)
                 .thermalVoltage = 0.025852,
-                .baseEmitterLeakage = 2.015e-7,       // ISE
-                .baseEmitterLeakageEmission = 1.794,  // NE
+                .baseEmitterLeakage = 1.716e-7,       // ISE
+                .baseEmitterLeakageEmission = 1.746,  // NE
                 .capBaseCollector = 8.0e-12,          // Cob typ
-                .forwardEarlyVoltage = 13.78,         // VAF  from hoe
-                .forwardKneeCurrent = 13.5e-3,        // IKF
+                .forwardEarlyVoltage = 13.93,         // VAF  from hoe
+                .forwardKneeCurrent = 15.17e-3,       // IKF
             };
         }
 
@@ -777,24 +814,24 @@ namespace CircuitComponents
         double iBc = (is / model.reverseBeta) * (er - 1.0) + gmin * vBc;
 
         // Early effect: the collector voltage modulates the base width, and
-        // with it the transport current, which picks up the level-1 SPICE
-        // factor 1 + Vce/VAF. Vce here is vBe - vBc, so the scale's slope is
-        // +1/VAF in vBe and -1/VAF in vBc. Zero VAF means the idealised model,
-        // and the terms below reduce exactly to what they were.
+        // with it the transport current. Gummel-Poon's q1 = 1 / (1 - vBc/VAF)
+        // divides it, which is a factor 1 - vBc/VAF -- a slope of zero in vBe
+        // and -1/VAF in vBc. Zero VAF means the idealised model, and the terms
+        // below reduce exactly to what they were.
         //
         // The scale is floored clear of zero: nothing physical reaches there
-        // (it wants Vce = -VAF, tens of volts into reverse), but the clamp
+        // (it wants Vbc = +VAF, tens of volts of forward bias), but the clamp
         // keeps a pathological Newton guess stamping a negative current rather
         // than a finite one. The slope goes to zero with it, so the Jacobian
         // below stays the exact derivative of what is actually stamped.
         const double transport = is * (ef - er); // before the Early scale
 
         double earlyScale = 1.0;
-        double earlySlope = 0.0; // d(earlyScale)/d(vBe)
+        double earlySlope = 0.0; // -d(earlyScale)/d(vBc)
 
         if (model.forwardEarlyVoltage > 0.0)
         {
-            const double raw = 1.0 + (vBe - vBc) / model.forwardEarlyVoltage;
+            const double raw = 1.0 - vBc / model.forwardEarlyVoltage;
             earlyScale = std::max(raw, 1.0e-3);
             earlySlope = raw > 1.0e-3 ? 1.0 / model.forwardEarlyVoltage : 0.0;
         }
@@ -806,7 +843,7 @@ namespace CircuitComponents
 
         // The scaled transport current's two slopes, shared by the Jacobian
         // below: d(iCt)/d(vBe) and -d(iCt)/d(vBc).
-        double gIfE = gIf * earlyScale + transport * earlySlope;
+        double gIfE = gIf * earlyScale;
         double gIrE = gIr * earlyScale + transport * earlySlope;
 
         double iCt = transport * earlyScale;

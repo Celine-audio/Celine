@@ -1,0 +1,4 @@
+* Diodes Incorporated 1N5817 SPICE model (diodes.com/spice/download/270/1N5817.spice.txt), provided AS IS.
+*SRC=1N5817;DI_1N5817;Diodes;Si;  20.0V  1.00A  3.00us   Diodes Inc. Schottky Barrier Rectifier
+.MODEL DI_1N5817 D  ( IS=870u RS=81.3m BV=20.0 IBV=1.00m
++ CJO=203p  M=0.333 N=1.81 TT=4.32u )

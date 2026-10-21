@@ -13,7 +13,7 @@ namespace SchematicModel
                 case 3: return Circuit::DiodeModel::redLed();
                 case 4: return Circuit::DiodeModel::greenLed();
                 case 5: return Circuit::DiodeModel::blueLed();
-                case 6: return Circuit::DiodeModel::zener(9.0);
+                case 6: return Circuit::DiodeModel::zener(9.1);
                 case 7: return Circuit::DiodeModel::zener(5.1);
 
                 // Listed separately because it is a part people look for by
@@ -130,6 +130,14 @@ namespace SchematicModel
         {
             if (! options.transistorJunctionCapacitance)
                 model.junctionCapacitance = 0.0;
+
+            return model;
+        }
+
+        Circuit::JfetModel withOptions(Circuit::JfetModel model, const BuildOptions& options)
+        {
+            if (! options.transistorJunctionCapacitance)
+                model.capGateSource = model.capGateDrain = 0.0;
 
             return model;
         }
@@ -684,7 +692,7 @@ namespace SchematicModel
                     break;
 
                 case ElementType::Jfet:
-                    circuit.addJfet(net(0), net(1), net(2), jfetModelFor(element.modelIndex));
+                    circuit.addJfet(net(0), net(1), net(2), withOptions(jfetModelFor(element.modelIndex), options));
                     break;
 
                 case ElementType::Mosfet:

@@ -322,7 +322,17 @@ Circuit::ComponentId Circuit::addJfet(const juce::String& drain,
     j.model = model;
     j.vCritGate = CircuitComponents::criticalVoltage(model.gateSaturationCurrent, model.gateScaleVoltage());
     jfets.push_back(j);
-    return static_cast<ComponentId>(jfets.size() - 1);
+    const auto id = static_cast<ComponentId>(jfets.size() - 1);
+
+    // The gate capacitances, wired as a transistor's junction capacitances
+    // are -- see addTransistor(), and its caveat about ids.
+    if (model.capGateSource > 0.0)
+        addCapacitor(gate, source, model.capGateSource);
+
+    if (model.capGateDrain > 0.0)
+        addCapacitor(gate, drain, model.capGateDrain);
+
+    return id;
 }
 
 Circuit::ComponentId Circuit::addMosfet(const juce::String& drain,
@@ -906,6 +916,7 @@ void Circuit::clearState() noexcept
     {
         j.vGateLast = 0.0;
         j.vDrainLast = 0.0;
+        j.vGateDrainLast = 0.0;
     }
 
     for (auto& m : mosfets)

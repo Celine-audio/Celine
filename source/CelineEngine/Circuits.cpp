@@ -78,7 +78,7 @@ ToneStack makeClassicToneStack(float bass, float mid, float treble)
 Circuit makeDiodeClipper()
 {
     // Edit these to change the sound.
-    //   diode        -- silicon() / germanium() / schottky() / led(), in order of
+    //   diode        -- schottky() / germanium() / silicon() / led(), in order of
     //                   increasing forward voltage, so increasing clean headroom
     //                   before the stage starts clipping.
     //   seriesCount  -- diodes stacked per side. Give the two sides different

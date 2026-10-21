@@ -531,16 +531,22 @@ it stays perfectly linear however hard you hit it.
 
 ## 3. Missing physics that matters less here
 
-- **BJT (Ebers-Moll):** the Early effect (VAF) and junction capacitances
-  (CJE/CJC) are modelled for the parts whose cards publish them — the silicon
-  small-signal pair exactly, datasheet Cobo for the 2N2222A/2N5133/BC109C,
-  the NTE102/103 and the 2SC2240 —
+- **BJT (Gummel-Poon, less its reverse and parasitic terms):** the Early
+  effect (VAF) and junction capacitances (CJE/CJC) are modelled for the parts
+  whose cards publish them — the silicon small-signal pair, datasheet Cobo for
+  the 2N2222A/2N5133/BC109C, the NTE102/103 and the 2SC2240 —
   and both are **on by default**, like everything else here — turn them off
   under Settings → Performance if you need the CPU back. VAF
-  reads as an output resistance ro = VAF/Ic, a few percent of a stage's gain;
-  the capacitances bite through Miller, and measured here on a gain-of-110
-  stage driven through 100k they put the pole at 7.5 kHz where the estimate
-  said 8.7. The capacitances are fixed values — a real junction's falls off
+  reads as an output resistance ro = VAF/Ic, a few percent of a stage's gain.
+  It is Gummel-Poon's form, dividing by q1 = 1 / (1 − Vbc/VAF), which is what
+  every vendor's VAF means. It used to be the level-1 (1 + Vce/VAF), which
+  read collector currents 0.8–1.2% high on every card; set against ngspice
+  with the same parameters the engine now agrees to 0.05 mV on every node,
+  and the models fitted under the old form (the BC107-109 grades, the MPSA18,
+  the NTE102/103) were refitted to land on their sheets again. The capacitances
+  bite through Miller,
+  and measured here on a 2N3904 stage with a transistor gain of 108, driven
+  through 100k, they put the pole at 10.3 kHz where the estimate said 12.7. The capacitances are fixed values — a real junction's falls off
   with reverse bias (VJE/MJE/VJC/MJC stay out) — and with no transit time
   (TF/TR) fT still doesn't degrade with current. The forward high-injection
   knee (IKF) is modelled for the cards that carry one — the BC107-109 family,
@@ -556,7 +562,14 @@ it stays perfectly linear however hard you hit it.
 - **Darlingtons** (the MPSA13) are two transistors on an internal node, so the
   pair's Vbe and gain come out right, but a real Darlington's gain below a few
   milliamps is extrapolated: onsemi's curves start at 5 mA.
-- **JFET (Shichman-Hodges):** simple square law, no capacitances.
+- **JFET (Shichman-Hodges):** SPICE's square law, with both gate junctions —
+  the gate-drain one was missing, and with a drain pulled 2 V under its gate
+  the engine was 0.77 V out against ngspice; now 0.01 mV — and constant
+  gate capacitances, CGS and CGD at their zero-bias figures (a real one falls
+  with reverse bias). The J201, 2N5457, 2N5485 and 2N5460 are InterFET's own
+  measured models; Idss spreads three to five times across a part number, so
+  each is one specimen. No channel-length modulation beyond lambda, no
+  temperature, no noise.
 - **MOSFET** (`Mosfet.h`): a square law smoothed through threshold into an
   exponential below it, so the moderate inversion a pedal biases one in is
   continuous, with a source resistance solved inside the device that bends it
@@ -577,12 +590,19 @@ it stays perfectly linear however hard you hit it.
   has three times Vishay's input capacitance. The threshold spread on a real
   part (0.8 to 3 V; 1 to 3.5 V on the BS250) dwarfs every one of these; the
   models are Vishay's typical part.
-- **Diodes:** the 1N4001, the BAT41 and the BAT46 carry junction capacitance,
-  and the 1N4001 its stored charge (transit time, 5.7 µs), integrated
-  backward-Euler inside the device; the two BATs their series resistance and
-  guard ring. The guard ring has no resistance of its own, which is what leaves
-  the BAT46 16–24 mV off ST's curve above 50 mA — past anything a clipper
-  draws. The older models carry none of these. The capacitance is a constant — a real one rises
+- **Diodes:** the 1N4148, 1N5817, 1N4001, BAT41 and BAT46 carry junction
+  capacitance, and the 1N4148 and 1N4001 their stored charge (transit time,
+  3.5 ns and 5.7 µs), integrated backward-Euler inside the device; the two
+  BATs, the 1N5817 and the LEDs their series resistance, and the BATs their
+  guard ring. The guard ring has no resistance of its own, which is what
+  leaves the BAT46 16–24 mV off ST's curve above 50 mA — past anything a
+  clipper draws. Every diode is now fitted to its maker's typical curve
+  except the 1N34A, whose makers publish only limits. Two of those fits are
+  extrapolated where a pedal runs them: the 1N5817's curve starts at 10 mA
+  (Vishay's), and the LEDs' are drawn on a linear scale that resolves nothing
+  below about half a milliamp (Kingbright's). Series resistance costs an
+  internal node: a bare LED clipper runs 30–50% slower for its 9–21 Ω, which
+  is real LED physics, tens of millivolts at a few milliamps. The capacitance is a constant — a real one rises
   into forward bias — and the stored charge relaxes within one sample at any
   audio rate, so what it models is the charge a clipping edge has to move, not
   the shape of the recovery, which is over in microseconds.
@@ -615,6 +635,13 @@ consequences worth knowing:
 - It is A-stable but not L-stable, so it does not damp components near Nyquist.
   A sharp step can ring. SPICE offers Gear/BDF2 for exactly this reason; this
   engine has one integrator and no choice.
+  The stiffest case is a junction capacitance -- picofarads -- against a
+  resistance of kilohms, a time constant of nanoseconds against a sample of
+  tens of microseconds. There the capacitor's current flips sign every sample
+  and decays by only about 4τ/T per step: a 1N4148's 0.7 pF behind 1k, stepped
+  0.1 V, still carries 13% of the diode's 29 nA alternating 4096 samples
+  later. It is at Nyquist, so oversampling's decimation filter removes it, and
+  at 1× it sits at the top of the band at nanoamp level; but it is there.
 - Pole frequencies are warped near Nyquist. Immaterial in the audio band, real
   above it.
 

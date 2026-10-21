@@ -263,7 +263,8 @@ namespace
         circuit.setOutputNode("a");
         circuit.prepare(sampleRate);
 
-        double lo = 0.0, hi = 1.5;
+        // Up to 4 V, so an LED's drop is inside the bracket.
+        double lo = 0.0, hi = 4.0;
 
         for (int i = 0; i < 80; ++i)
         {
@@ -365,15 +366,54 @@ TEST_CASE("The BC107-109 / BC547-550 grades reproduce their datasheet", "[bjt][m
     CHECK(BjtModel::npnBC108B().forwardEarlyVoltage > BjtModel::npnBC109C().forwardEarlyVoltage);
 }
 
+TEST_CASE("The 2N3904 and 2N3906 land on Fairchild's typical curves", "[bjt][model]")
+{
+    // Fairchild's own curves (docs/specs/transistors, 25 C), digitised from the
+    // vector paths: pulsed current gain and base-emitter on voltage. The 2N3904
+    // at Vce 5 V, the 2N3906 at Vce 1 V. Fairchild's SPICE card printed on the
+    // same 2N3904 sheet gives 0.6 times this gain, and the model that took only
+    // its IS and BF gave twice it.
+    struct Point { double ic, hfe, vbe; };
+
+    const Point npn[] = { { 0.1e-3, 231.0, 0.608 }, { 1.0e-3, 228.0, 0.667 }, { 10.0e-3, 223.0, 0.727 }, { 100.0e-3, 159.0, -1.0 } };
+    const Point pnp[] = { { 0.1e-3, 109.0, 0.600 }, { 1.0e-3, 126.0, 0.662 }, { 10.0e-3, 138.0, 0.726 }, { 100.0e-3, 88.0, -1.0 } };
+
+    for (const auto& p : npn)
+    {
+        const auto at = npnAt(BjtModel::npnSilicon(), p.ic, 5.0);
+        INFO("2N3904 at " << p.ic << " A: hFE " << at.hfe << ", Vbe " << at.vbe);
+        CHECK(at.hfe == Catch::Approx(p.hfe).epsilon(0.02));
+
+        if (p.vbe > 0.0)
+            CHECK(at.vbe == Catch::Approx(p.vbe).margin(0.003));
+    }
+
+    // A PNP is the same device with every sign turned round, so the NPN helper
+    // reads it with the polarity flipped.
+    auto mirrored = BjtModel::pnpSilicon();
+    mirrored.polarity = BjtModel::Polarity::NPN;
+
+    for (const auto& p : pnp)
+    {
+        const auto at = npnAt(mirrored, p.ic, 1.0);
+        INFO("2N3906 at " << p.ic << " A: hFE " << at.hfe << ", Vbe " << at.vbe);
+        CHECK(at.hfe == Catch::Approx(p.hfe).epsilon(0.04));
+
+        if (p.vbe > 0.0)
+            CHECK(at.vbe == Catch::Approx(p.vbe).margin(0.005));
+    }
+}
+
 TEST_CASE("The 2N5088 and 2N5089 reproduce Fairchild's card and sheet", "[bjt][model]")
 {
-    // The datasheet's own SPICE card, run through the engine. Its minima:
+    // The datasheet's own SPICE card, run through the engine -- which now gives
+    // ngspice's gains for it to the decimal. Its minima:
     // 2N5088 300 / 350 / 300 at 0.1 / 1 / 10 mA (900 max at 0.1 mA), 2N5089
     // 400 / 450 / 400 (1200 max).
     struct Point { double ic, card, minimum; };
 
-    const Point p5088[] = { { 100.0e-6, 487.3, 300.0 }, { 1.0e-3, 649.9, 350.0 }, { 10.0e-3, 554.0, 300.0 } };
-    const Point p5089[] = { { 100.0e-6, 650.9, 400.0 }, { 1.0e-3, 869.9, 450.0 }, { 10.0e-3, 741.8, 400.0 } };
+    const Point p5088[] = { { 100.0e-6, 483.7, 300.0 }, { 1.0e-3, 643.9, 350.0 }, { 10.0e-3, 546.2, 300.0 } };
+    const Point p5089[] = { { 100.0e-6, 646.0, 400.0 }, { 1.0e-3, 861.8, 450.0 }, { 10.0e-3, 731.4, 400.0 } };
 
     for (const auto& p : p5088)
     {
@@ -911,6 +951,35 @@ TEST_CASE("The 1N4001 reproduces its card and the Diodes Inc curve", "[diode][mo
           > diodeVoltageAt(sig, 10.0e-3) - diodeVoltageAt(sig, 10.0e-6));
 }
 
+TEST_CASE("The 1N4148, 1N5817 and LEDs land on their makers' curves", "[diode][model]")
+{
+    // Each from its maker's typical forward curve at 25 C, digitised from the
+    // sheet's vector paths (docs/specs/diodes): Vishay's 1N4148 and 1N5817,
+    // and Kingbright's WP7113 red (GaAsP), green (GaP) and blue (InGaN).
+    struct Point { double current, volts, margin; };
+
+    const auto check = [](const char* name, const DiodeModel& model, std::initializer_list<Point> points)
+    {
+        for (const auto& p : points)
+        {
+            const double v = diodeVoltageAt(model, p.current);
+            INFO(name << " at " << p.current << " A: " << v << " V, sheet " << p.volts);
+            CHECK(v == Catch::Approx(p.volts).margin(p.margin));
+        }
+    };
+
+    check("1N4148", DiodeModel::d1n4148(),
+          { { 10.0e-6, 0.380, 0.005 }, { 100.0e-6, 0.497, 0.005 }, { 1.0e-3, 0.609, 0.005 },
+            { 10.0e-3, 0.729, 0.005 }, { 100.0e-3, 0.844, 0.005 } });
+
+    // Vishay's curve starts at 10 mA; below that the fit is extrapolation.
+    check("1N5817", DiodeModel::schottky(), { { 10.0e-3, 0.172, 0.003 }, { 100.0e-3, 0.250, 0.003 }, { 1.0, 0.392, 0.003 } });
+
+    check("WP7113ID", DiodeModel::redLed(), { { 1.0e-3, 1.645, 0.02 }, { 5.0e-3, 1.802, 0.02 }, { 10.0e-3, 1.903, 0.02 } });
+    check("WP7113GD", DiodeModel::greenLed(), { { 1.0e-3, 1.857, 0.02 }, { 5.0e-3, 1.942, 0.02 }, { 10.0e-3, 2.033, 0.02 } });
+    check("WP7113QBC", DiodeModel::blueLed(), { { 1.0e-3, 2.571, 0.03 }, { 5.0e-3, 2.806, 0.03 }, { 10.0e-3, 3.000, 0.03 } });
+}
+
 TEST_CASE("The BAT41 reproduces ST's typical curve", "[diode][model]")
 {
     // Figure 1 of the ST sheet (docs/specs), 25 C, and VF 0.4 V typ at 1 mA.
@@ -995,14 +1064,15 @@ TEST_CASE("The BAT46 reproduces ST's typical curve", "[diode][model]")
     CHECK(leakage < 0.5e-6);
 }
 
-TEST_CASE("A BAT46 clips lowest of all the diodes", "[diode][model]")
+TEST_CASE("A BAT46 clips lowest of the small-signal diodes", "[diode][model]")
 {
-    // 0.26 V at a milliamp: 130 mV under a BAT41, and under germanium and the
-    // 1N5817 too.
+    // 0.26 V at a milliamp: 130 mV under a BAT41, and under germanium. Only
+    // the 1N5817 goes lower -- a 1 A Schottky, whose large die puts a
+    // milliamp at a tenth of a volt (Vishay's curve, extrapolated).
     const double bat46 = diodeVoltageAt(DiodeModel::bat46(), 1.0e-3);
     CHECK(bat46 < diodeVoltageAt(DiodeModel::bat41(), 1.0e-3) - 0.1);
     CHECK(bat46 < diodeVoltageAt(DiodeModel::germanium(), 1.0e-3));
-    CHECK(bat46 < diodeVoltageAt(DiodeModel::schottky(), 1.0e-3));
+    CHECK(bat46 > diodeVoltageAt(DiodeModel::schottky(), 1.0e-3));
 
     // But with a Schottky's sharp knee rather than germanium's soft one: less
     // voltage across the three decades below a milliamp.
@@ -1174,6 +1244,45 @@ namespace
         }
 
         return lo;
+    }
+}
+
+TEST_CASE("The JFETs are InterFET's measured models", "[jfet][model]")
+{
+    // InterFET's own SPICE models, measured on their parts, run in ngspice-47
+    // with the drain 10 V up: Idss, and the gate voltage where the drain current
+    // falls to a microamp. The engine's channel is SPICE's, so these are the
+    // models' own figures; they used to be round numbers 1.7-1.8 times too
+    // much current on the J201 and 2N5457.
+    struct Reference { const char* name; JfetModel model; double idss, cutoff; };
+
+    const Reference references[] = {
+        { "J201", JfetModel::j201(), 0.393e-3, -0.650 },
+        { "2N5457", JfetModel::n2n5457(), 2.124e-3, -1.220 },
+        { "2N5485", JfetModel::n2n5485(), 6.137e-3, -2.130 },
+        { "2N5460", JfetModel::p2n5460(), 2.715e-3, 2.110 },
+    };
+
+    for (const auto& r : references)
+    {
+        const double p = r.model.polaritySign();
+        Jfet j {};
+        j.model = r.model;
+
+        const auto drain = [&](double vgs)
+        {
+            DeviceLinearisation out {};
+            double v[2] = { vgs, p * 9.96 }; // ngspice's Vds, through its 10 ohm drain resistor
+            linearise(j, v, out);
+            return p * out.current[1];
+        };
+
+        INFO(r.name << ": Idss " << drain(0.0) * 1e3 << " mA");
+        CHECK(drain(0.0) == Catch::Approx(r.idss).epsilon(0.003));
+
+        // A microamp at the cutoff, within the 10 mV the sweep stepped by.
+        CHECK(drain(r.cutoff - p * 0.01) < 1.0e-6);
+        CHECK(drain(r.cutoff + p * 0.01) > 1.0e-6);
     }
 }
 

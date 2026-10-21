@@ -151,24 +151,41 @@ TEST_CASE("A single diode satisfies the Shockley equation", "[circuit][diode]")
     // At the solution the resistor current has to equal the diode current, which
     // is a check on the Newton solve rather than on any particular waveform.
     constexpr double seriesR = 1000.0;
-    const auto model = Circuit::DiodeModel::silicon();
+
+    // The 1N4148's DC part only. Its 0.7 pF against this 1k is a 0.7 ns time
+    // constant, which the trapezoidal rule does not damp: the capacitor's
+    // companion current flips sign every sample and decays by about 1e-4 per
+    // step, so thousands of samples after a step it is still a sizeable part
+    // of a few-nanoamp current. That is the integrator's business (see
+    // LIMITATIONS.md), not Newton's, which is what this checks.
+    auto model = Circuit::DiodeModel::silicon();
+    model.junctionCapacitance = 0.0;
+    model.transitTime = 0.0;
 
     Circuit circuit;
     circuit.addResistor("in", "out", seriesR);
-    circuit.addDiode("out", "gnd");
+    circuit.addDiode("out", "gnd", model);
     circuit.setInputNode("in");
     circuit.setOutputNode("out");
+
     circuit.prepare(sampleRate);
 
     REQUIRE(circuit.isNonlinear());
 
     for (const float vIn : {0.1f, 0.5f, 1.0f, 5.0f, 50.0f})
     {
-        const double vOut = circuit.process(vIn);
+        // In double, from the node: process() returns a float, and at 0.1 V in
+        // the resistor drops 29 uV, which a float's rounding of the output
+        // resolves only to a few parts in ten thousand.
+        circuit.process(vIn);
+        const double vOut = circuit.getNodeVoltage("out");
 
+        // The junction sits behind the diode's series resistance, so it sees
+        // the output less that resistance's drop.
         const double resistorCurrent = (vIn - vOut) / seriesR;
-        const double diodeCurrent = model.saturationCurrent * (std::exp(vOut / model.scaleVoltage()) - 1.0)
-                                  + CircuitComponents::gmin * vOut;
+        const double junction = vOut - resistorCurrent * model.seriesResistance;
+        const double diodeCurrent = model.saturationCurrent * (std::exp(junction / model.scaleVoltage()) - 1.0)
+                                  + CircuitComponents::gmin * junction;
 
         // Relative agreement, since the currents span nanoamps to milliamps.
         // Newton stops once the node voltages settle to within its tolerance, so
@@ -213,7 +230,9 @@ TEST_CASE("A diode clipper clamps large signals and passes small ones", "[circui
 
     CHECK(loud < 1.0f);
     CHECK(louder < 1.2f);
-    CHECK(louder - loud < 0.15f); // a 20 dB input increase barely moves the output
+    // A 20 dB input increase barely moves the output: a decade of current costs
+    // the 1N4148 N Vt ln 10 = 0.12 V.
+    CHECK(louder - loud < 0.2f);
 
     CHECK(clipper.getNonConvergenceCount() == 0);
 }
@@ -1246,16 +1265,22 @@ TEST_CASE("Diode models hit their forward voltages", "[circuit][diode]")
         return static_cast<double>(measureDC(circuit, static_cast<float>(supply), 0.05));
     };
 
-    CHECK(forwardVoltage(Circuit::DiodeModel::d1n4148(), 1.0) == Catch::Approx(0.58).margin(0.03));
+    // The makers' typical curves at 1 mA, digitised from the vector paths:
+    // Vishay's 1N4148 (Fig. 2) and Kingbright's WP7113 red, green and blue.
+    // The 1N5817's is the fit's extrapolation below Vishay's 10 mA curve, so
+    // it is held to the fit rather than to a sheet.
+    CHECK(forwardVoltage(Circuit::DiodeModel::d1n4148(), 1.0) == Catch::Approx(0.609).margin(0.006));
     CHECK(forwardVoltage(Circuit::DiodeModel::germanium(), 1.0) == Catch::Approx(0.33).margin(0.03));
-    CHECK(forwardVoltage(Circuit::DiodeModel::schottky(), 1.0) == Catch::Approx(0.30).margin(0.03));
-    CHECK(forwardVoltage(Circuit::DiodeModel::redLed(), 1.0) == Catch::Approx(1.56).margin(0.05));
-    CHECK(forwardVoltage(Circuit::DiodeModel::greenLed(), 1.0) == Catch::Approx(1.93).margin(0.05));
-    CHECK(forwardVoltage(Circuit::DiodeModel::blueLed(), 1.0) == Catch::Approx(3.18).margin(0.05));
+    CHECK(forwardVoltage(Circuit::DiodeModel::schottky(), 1.0) == Catch::Approx(0.098).margin(0.005));
+    CHECK(forwardVoltage(Circuit::DiodeModel::redLed(), 1.0) == Catch::Approx(1.645).margin(0.02));
+    CHECK(forwardVoltage(Circuit::DiodeModel::greenLed(), 1.0) == Catch::Approx(1.857).margin(0.02));
+    CHECK(forwardVoltage(Circuit::DiodeModel::blueLed(), 1.0) == Catch::Approx(2.571).margin(0.02));
 
     // The emission coefficient shows up as how much the forward voltage moves
-    // per decade of current -- the knee. An LED's is several times silicon's,
-    // which is why it clips so much more gradually.
+    // per decade of current -- the knee. An LED's is half again silicon's
+    // (red) to more than twice (blue), which is why it clips more gradually.
+    // It used to be read as two to four times, from generic LED figures; the
+    // makers' curves say less.
     auto knee = [&forwardVoltage](const Circuit::DiodeModel& model)
     {
         return forwardVoltage(model, 1.0) - forwardVoltage(model, 0.1);
@@ -1264,9 +1289,9 @@ TEST_CASE("Diode models hit their forward voltages", "[circuit][diode]")
     const double siliconKnee = knee(Circuit::DiodeModel::d1n4148());
     INFO("silicon knee " << siliconKnee << " V/decade");
 
-    CHECK(siliconKnee == Catch::Approx(0.104).margin(0.01));
-    CHECK(knee(Circuit::DiodeModel::redLed()) > siliconKnee * 1.8);
-    CHECK(knee(Circuit::DiodeModel::blueLed()) > siliconKnee * 3.5);
+    CHECK(siliconKnee == Catch::Approx(0.116).margin(0.005));
+    CHECK(knee(Circuit::DiodeModel::redLed()) > siliconKnee * 1.3);
+    CHECK(knee(Circuit::DiodeModel::blueLed()) > siliconKnee * 2.0);
 }
 
 TEST_CASE("Swapping the overdrive's clipping diodes changes its ceiling", "[circuit][diode]")
@@ -1290,7 +1315,7 @@ TEST_CASE("Swapping the overdrive's clipping diodes changes its ceiling", "[circ
 
     // Higher forward voltage means the loop clips later, so more gets through.
     CHECK(red > silicon * 1.5f);
-    CHECK(blue > red * 1.5f);
+    CHECK(blue > red * 1.3f);
 
     // And this is the reason the handles exist. addOpAmp() builds its rail
     // clamps from ordinary diodes and takes ids 0 and 1 for U1's, so the
@@ -2196,7 +2221,11 @@ TEST_CASE("A JFET channel conducts both ways", "[jfet][model]")
     const double a = drainCurrent(-1.0, 0.4);
     double v[2] = {-1.0 - 0.4, -0.4};
     linearise(jfet, v, out);
-    CHECK(out.current[1] == Catch::Approx(-a).epsilon(1.0e-9));
+    //
+    // To within the gate junctions' leakage: the drain terminal also carries
+    // the gate-drain junction's current, gmin-sized here, and in the mirrored
+    // case that junction sits at the other end. Picoamps against milliamps.
+    CHECK(out.current[1] == Catch::Approx(-a).margin(1.0e-11));
 
     // And smooth across the crossing, which is where the signal spends its time.
     // A kink here would be a discontinuity in the conductance the solver stamps.
@@ -2641,12 +2670,76 @@ TEST_CASE("The plate-current floor leaves working valves alone", "[valve][model]
 }
 
 //==============================================================================
+TEST_CASE("A transistor and a JFET run as ngspice runs them", "[bjt][jfet][model]")
+{
+    // The same circuits, the same parameters, in ngspice-47 at the engine's
+    // thermal voltage. A BJT with an Early voltage: the engine used to scale
+    // by 1 + Vce/VAF where Gummel-Poon -- and so every vendor's VAF -- means
+    // 1 + Vcb/VAF, and read collector currents ~1% high. A JFET with its drain
+    // pulled under its gate: the engine used to have no gate-drain junction,
+    // and was 0.77 V out there.
+    struct BjtCase { double rb, rc, vin, vb, vc; };
+    const BjtCase bjtCases[] = { { 1.0e6, 10.0e3, 3.0, 0.651197349, 3.689222270 },
+                                 { 100.0e3, 1.0e3, 2.0, 0.695649053, 5.982498490 } };
+
+    for (const auto& c : bjtCases)
+    {
+        Circuit::BjtModel m {Circuit::BjtModel::Polarity::NPN, 5.874e-15, 220.3, 0.7371, 1.0, 1.0, 0.025852};
+        m.baseEmitterLeakage = 1.398e-15;
+        m.baseEmitterLeakageEmission = 1.5;
+        m.forwardKneeCurrent = 0.2083;
+        m.forwardEarlyVoltage = 74.03;
+
+        Circuit circuit;
+        circuit.addVoltageSource("vin", "gnd", c.vin);
+        circuit.addVoltageSource("vcc", "gnd", 9.0);
+        circuit.addResistor("vin", "b", c.rb);
+        circuit.addResistor("vcc", "col", c.rc);
+        circuit.addTransistor("b", "col", "gnd", m);
+        circuit.addResistor("in", "gnd", 1000.0);
+        circuit.setInputNode("in");
+        circuit.setOutputNode("col");
+        circuit.setConvergenceTolerance(1.0e-12, 1.0e-10);
+        circuit.prepare(sampleRate);
+
+        INFO("Rb " << c.rb << ": Vb " << circuit.getNodeVoltage("b") << ", Vc " << circuit.getNodeVoltage("col"));
+        CHECK(circuit.getNodeVoltage("b") == Catch::Approx(c.vb).margin(1.0e-4));
+        CHECK(circuit.getNodeVoltage("col") == Catch::Approx(c.vc).margin(1.0e-4));
+    }
+
+    // J201 parameters, gate at -0.2 V, drain through 100 ohms from vin.
+    for (const auto& [vin, vd] : { std::pair { -2.0, -0.884905782 }, std::pair { 5.0, 4.980605470 } })
+    {
+        Circuit::JfetModel j;
+        j.channel = Circuit::JfetModel::Channel::N;
+        j.threshold = -0.691;
+        j.beta = 787.0e-6;
+        j.lambda = 4.46e-3;
+        j.gateSaturationCurrent = 30.7e-15;
+
+        Circuit circuit;
+        circuit.addVoltageSource("vin", "gnd", vin);
+        circuit.addVoltageSource("g", "gnd", -0.2);
+        circuit.addResistor("vin", "d", 100.0);
+        circuit.addJfet("d", "g", "gnd", j);
+        circuit.addResistor("in", "gnd", 1000.0);
+        circuit.setInputNode("in");
+        circuit.setOutputNode("d");
+        circuit.setConvergenceTolerance(1.0e-12, 1.0e-10);
+        circuit.prepare(sampleRate);
+
+        INFO("vin " << vin << ": Vd " << circuit.getNodeVoltage("d"));
+        CHECK(circuit.getNodeVoltage("d") == Catch::Approx(vd).margin(1.0e-4));
+    }
+}
+
 TEST_CASE("The Early effect scales the transport current with collector voltage", "[bjt][model]")
 {
-    // The level-1 SPICE form: the transport current picks up a factor
-    // 1 + Vce/VAF, which is an output resistance ro = VAF/Ic in disguise.
-    // Checked at the device, where the numbers are exact: at Vbe 0.65 V and
-    // Vce 5.65 V the scale is 1.0763 and ro should come out at 74.03/Ic.
+    // Gummel-Poon's form, as every vendor card's VAF assumes: the transport
+    // current is divided by q1 = 1 / (1 - Vbc/VAF), a factor 1 + Vcb/VAF,
+    // which is an output resistance ro = VAF/Ic in disguise. Checked at the
+    // device, where the numbers are exact: at Vbe 0.65 V and Vcb 5 V the
+    // scale is 1.0675 and ro should come out at 74.03/Ic.
     CircuitComponents::DeviceLinearisation on{};
     CircuitComponents::DeviceLinearisation off{};
 
@@ -2668,7 +2761,7 @@ TEST_CASE("The Early effect scales the transport current with collector voltage"
     const double icOff = -off.current[1];
 
     INFO("Ic = " << icOff * 1e3 << " mA without, " << icOn * 1e3 << " mA with");
-    CHECK(icOn / icOff == Catch::Approx(1.0 + 5.65 / 74.03).epsilon(1.0e-3));
+    CHECK(icOn / icOff == Catch::Approx(1.0 + 5.0 / 74.03).epsilon(1.0e-3));
 
     // The output conductance is the difference the effect makes to the
     // collector port's own slope: 1/ro with ro = VAF/Ic.
@@ -2677,8 +2770,9 @@ TEST_CASE("The Early effect scales the transport current with collector voltage"
     CHECK(go > 0.0);
     CHECK(1.0 / go == Catch::Approx(74.03 / icOff).epsilon(0.01));
 
-    // And the cross term mirrors it: the collector port now also sees the
-    // base-emitter voltage, with the opposite sign.
+    // And the cross term mirrors it: the base-emitter port now also sees the
+    // base-collector voltage, with the opposite sign. Nothing new in the other
+    // direction -- the factor depends on Vbc alone.
     CHECK(on.jacobian[1] == Catch::Approx(-go).epsilon(0.01));
     CHECK(std::abs(off.jacobian[1]) < 1.0e-12);
 
@@ -2689,9 +2783,12 @@ TEST_CASE("The Early effect scales the transport current with collector voltage"
     double v[2] = {-0.65, 5.0};
     linearise(pnp, v, pnpOut);
 
-    const double scale = 1.0 + 5.65 / 18.7; // the 2N3906's VAF
-    const double transport = 1.41e-15 * (std::exp(0.65 / 0.025852) - 1.0);
-    CHECK(std::abs(pnpOut.current[1]) == Catch::Approx(transport * scale).epsilon(1.0e-3));
+    // Less its high-injection knee, which this checks around.
+    const auto pnpModel = CircuitComponents::BjtModel::pnpSilicon();
+    const double scale = 1.0 + 5.0 / pnpModel.forwardEarlyVoltage;
+    const double forward = pnpModel.saturationCurrent * (std::exp(0.65 / 0.025852) - 1.0);
+    const double qb = 0.5 * (1.0 + std::sqrt(1.0 + 4.0 * forward / pnpModel.forwardKneeCurrent));
+    CHECK(std::abs(pnpOut.current[1]) == Catch::Approx(forward * scale / qb).epsilon(1.0e-3));
 }
 
 namespace
@@ -2700,14 +2797,15 @@ namespace
         high gain and a high-impedance drive, so the Early output resistance
         and the Miller-multiplied capacitance each have something to act on.
 
-        Biased near 0.13 mA through a 27M base resistor, which keeps the
-        transistor's own input resistance (~80k) comparable to the 100k source
-        rather than shorting the capacitance's pole out. */
+        Biased near 0.13 mA through a 15M base resistor -- the 2N3904's
+        typical gain of 230 times its 0.56 uA -- which keeps the transistor's
+        own input resistance (~46k) comparable to the 100k source rather than
+        shorting the capacitance's pole out. */
     Circuit makeGroundedEmitterStage(Circuit::BjtModel model)
     {
         Circuit circuit;
         circuit.addVoltageSource("vcc", "gnd", 9.0);
-        circuit.addResistor("vcc", "base", 27.0e6);
+        circuit.addResistor("vcc", "base", 15.0e6);
         circuit.addCapacitor("in", "src", 100.0e-6);  // blocks DC, transparent in band
         circuit.addResistor("src", "base", 100000.0); // the source the Miller cap works against
         circuit.addResistor("vcc", "collector", 22000.0);
@@ -2772,10 +2870,11 @@ TEST_CASE("The Early effect moves a stage's gain by a few percent", "[circuit][t
 
 TEST_CASE("Junction capacitance puts a pole on a transistor stage", "[circuit][transistor]")
 {
-    // The estimate for the stage above: Av ~ gm * Rc ~ 110, so
-    // Cin = Cbe + Cbc*(1+Av) ~ 410 pF, against 100k || 27M || r_pi ~ 44k that
-    // is a lowpass at ~8.7 kHz -- inside the audio band, which is the whole
-    // reason this is modelled.
+    // The estimate for the stage above: Av ~ gm * Rc ~ 108, so
+    // Cin = Cbe + Cbc*(1+Av) ~ 400 pF, against 100k || 15M || r_pi ~ 31k that
+    // is a lowpass at ~12.7 kHz -- inside the audio band, which is the whole
+    // reason this is modelled. Low-frequency gain is Av times the divider the
+    // 100k source makes with r_pi, about a third.
     const auto gainAt = stageGainAt;
 
     auto model = Circuit::BjtModel::npnSilicon();
@@ -2790,7 +2889,7 @@ TEST_CASE("Junction capacitance puts a pole on a transistor stage", "[circuit][t
 
     const double g0 = gainAt(stage, 100.0);
     INFO("low-frequency gain = " << g0);
-    REQUIRE(g0 > 50.0);
+    REQUIRE(g0 > 25.0);
 
     // Find the -3 dB point by scanning, then check it lands near the estimate.
     double poleFrequency = 0.0;
@@ -2815,7 +2914,7 @@ TEST_CASE("Junction capacitance puts a pole on a transistor stage", "[circuit][t
         previousFrequency = f;
     }
 
-    INFO("measured -3 dB at " << poleFrequency << " Hz, estimate 8.7 kHz");
+    INFO("measured -3 dB at " << poleFrequency << " Hz, estimate 12.7 kHz");
     REQUIRE(poleFrequency > 0.0);
     CHECK(poleFrequency > 4000.0);
     CHECK(poleFrequency < 16000.0);
