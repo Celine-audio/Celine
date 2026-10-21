@@ -724,6 +724,16 @@ namespace Celine
         const auto status = have ? filePlayer->getStatus() : InputFilePlayer::Status{};
         const bool loaded = status.length > 0;
 
+        // Only what the transport draws: a stopped file, or none, costs no
+        // repaint at all.
+        const bool transportMoved = status.position != fileStatus.position
+                                 || status.length != fileStatus.length
+                                 || status.loading != fileStatus.loading
+                                 || status.fileMode != fileStatus.fileMode
+                                 || ! juce::exactlyEqual(status.sampleRate, fileStatus.sampleRate);
+
+        fileStatus = status;
+
         // All of these are no-ops when nothing changed, which is what lets this
         // run on every timer tick.
         fileInputButton.setToggleState(status.fileMode, juce::dontSendNotification);
@@ -741,15 +751,15 @@ namespace Celine
         inputFileButton.setButtonText(status.file == juce::File{} ? juce::String("Choose...")
                                                                    : status.file.getFileName());
 
-        transportView.repaint();
+        if (transportMoved)
+            transportView.repaint();
     }
 
     void ElementInspector::TransportView::paint(juce::Graphics& g)
     {
         auto bounds = getLocalBounds().toFloat();
 
-        const auto status = owner.filePlayer != nullptr ? owner.filePlayer->getStatus()
-                                                        : InputFilePlayer::Status{};
+        const auto& status = owner.fileStatus;
 
         // Minutes, seconds and a tenth: enough to find the bar a take goes
         // wrong in, and steady enough to read while it counts.

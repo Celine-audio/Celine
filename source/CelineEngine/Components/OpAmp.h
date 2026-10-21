@@ -249,6 +249,49 @@ namespace CircuitComponents
             return slewRate > 0.0 && slewRate < outputSwing() * sampleRate;
         }
 
+        /** The rail clamps' diode, as addOpAmp() builds it: its saturation
+            current is the input transconductance times clampLeakageVolts, so it
+            conducts by the overdrive in volts, with a knee clampEmission times
+            a junction's. See addOpAmp() for why. */
+        static constexpr double clampEmission = 0.25;
+        static constexpr double clampLeakageVolts = 1.0e-12;
+
+        /** How far inside the clamp rail the gain node sits when the clamp
+            carries clampReferenceOverdrive's worth of current: the offset
+            addOpAmp() moves each clamp rail by, so the output stops where the
+            headroom says. About 0.15 V. */
+        static constexpr double clampReferenceOverdrive = 0.01;
+
+        static double clampOffset() noexcept
+        {
+            return clampEmission * 0.025852 * std::log(clampReferenceOverdrive / clampLeakageVolts);
+        }
+
+        /** The lowest supply this model can run on. Below it the two clamp
+            rails cross -- each holds the gain node past the other's -- so both
+            conduct at rest and the output sits at a fixed level whatever the
+            input: a supply too low for the part, not a sound. Solved from the
+            per-side headroom and its slope with supply, so it is the same limit
+            addOpAmp() would hit. */
+        double minimumSupply() const noexcept
+        {
+            const double load = (headroomLoad + outputResistance) / headroomLoad;
+            const bool split = negativeRailHeadroom >= 0.0;
+            const double slopeUp = headroomPerSupplyVolt;
+            const double slopeDown = split ? negativeHeadroomPerSupplyVolt : headroomPerSupplyVolt;
+            const double atZeroUp = railHeadroom - 15.0 * slopeUp;
+            const double atZeroDown = (split ? negativeRailHeadroom : railHeadroom) - 15.0 * slopeDown;
+            const double half = (2.0 * clampOffset() / load + atZeroUp + atZeroDown) / (2.0 - slopeUp - slopeDown);
+            return std::max(0.0, 2.0 * half);
+        }
+
+        /** The span the output can move in, less what the model needs: zero or
+            less is a supply too low for it -- see minimumSupply(). */
+        double outputRange() const noexcept
+        {
+            return positiveRail - negativeRail - minimumSupply();
+        }
+
         /** Transconductance of the input stage: gain divided by the gain node's
             impedance, so that the two multiply back to the open-loop gain. */
         double inputTransconductance() const noexcept

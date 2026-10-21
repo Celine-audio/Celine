@@ -1298,8 +1298,9 @@ TEST_CASE("Swapping the overdrive's clipping diodes changes its ceiling", "[circ
 {
     auto peakWith = [](const Circuit::DiodeModel& model)
     {
-        auto ts = Circuits::makeMidHumpOverdrive();
-        ts.setClippingDiodes(model);
+        // Built with the pair in place rather than swapped in: an LED carries a
+        // series resistance, which only addDiode() can wire.
+        auto ts = Circuits::makeMidHumpOverdrive(model);
         ts.circuit.prepare(sampleRate);
         ts.setControls(0.5f, 0.7f, 1.0f);
 

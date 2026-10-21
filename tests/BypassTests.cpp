@@ -1,6 +1,7 @@
 #include "helpers/test_helpers.h"
 
 #include <PluginProcessor.h>
+#include <Schematic/ExampleSchematics.h>
 #include <ui/ToolbarWidgets.h>
 #include <catch2/catch_test_macros.hpp>
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -352,6 +353,166 @@ TEST_CASE ("Bypassed, the plugin is the input delayed by the latency it reports"
             {
                 REQUIRE (juce::exactlyEqual (outLeft[i], inLeft[i - (size_t) latency]));
                 REQUIRE (juce::exactlyEqual (outRight[i], inRight[i - (size_t) latency]));
+            }
+        }
+    }
+}
+
+TEST_CASE ("Changing the oversampling while bypassed does not click", "[bypass][clicks]")
+{
+    // A new factor reports a new latency, and the dry delay has to follow it. Jumping
+    // straight to the new read position skips samples of the input -- a click in what
+    // bypass promises is the untouched signal -- so it crossfades there instead.
+    PluginProcessor plugin;
+    plugin.prepareToPlay (sampleRate, blockSize);
+    setParameter (plugin, "bypass", 1.0f);
+
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer midi;
+    std::vector<float> out;
+    double phase = 0.0;
+    const double step = juce::MathConstants<double>::twoPi * 100.0 / sampleRate;
+
+    const auto run = [&] (int blocks)
+    {
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int i = 0; i < blockSize; ++i, phase += step)
+                for (int c = 0; c < 2; ++c)
+                    buffer.setSample (c, i, 0.5f * (float) std::sin (phase));
+
+            plugin.processBlock (buffer, midi);
+
+            for (int i = 0; i < blockSize; ++i)
+                out.push_back (buffer.getSample (0, i));
+        }
+    };
+
+    run (40);
+    const auto before = plugin.getLatencySamples();
+    REQUIRE (plugin.setOversamplingFactor (16).isValid());
+    REQUIRE (plugin.getLatencySamples() != before);
+    run (40);
+
+    // A 100 Hz sine's second difference is under 1e-4. Two samples skipped at once
+    // put a step a hundred times that into it.
+    float worst = 0.0f;
+
+    for (size_t i = 2; i < out.size(); ++i)
+        worst = juce::jmax (worst, std::abs (out[i] - 2.0f * out[i - 1] + out[i - 2]));
+
+    INFO ("worst second difference " << worst);
+    CHECK (worst < 1.0e-3f);
+}
+
+TEST_CASE ("Pressing Rebuild while a note plays does not click", "[clicks]")
+{
+    // A rebuild swaps a fresh circuit in for the running one. The fresh one starts
+    // at its bias point -- every capacitor at rest -- while the one it replaces was
+    // halfway through a waveform, so swapping them in a sample was a step. Now the
+    // old one fades to silence, the new one takes over there, and fades in. Every
+    // example sheet, since a sheet with little memory hides the step; and a change
+    // of oversampling factor too, which swaps the filters along with the circuit.
+    //
+    // Measured as the largest sample-to-sample step. A pop is a step; a 30 ms dip
+    // is not, though it bends the waveform's curvature where it turns round.
+    const auto names = SchematicModel::Examples::getNames();
+    const int fadeLength = juce::roundToInt (PluginProcessor::rebuildFadeSeconds * sampleRate);
+
+    struct Change
+    {
+        const char* what;
+        int from, to;
+    };
+
+    for (const auto change : { Change { "Rebuild at 1x", 1, 1 }, Change { "Rebuild at 4x", 4, 4 },
+                               Change { "1x to 4x", 1, 4 }, Change { "4x to 1x", 4, 1 } })
+    {
+        for (int example = 0; example < names.size(); ++example)
+        {
+            for (const bool silent : { false, true })
+            {
+                PluginProcessor plugin;
+                plugin.prepareToPlay (sampleRate, blockSize);
+                SchematicModel::Examples::load (plugin.getSchematic(), example);
+                REQUIRE (plugin.setOversamplingFactor (change.from).isValid());
+                setParameter (plugin, "bypass", 0.0f);
+
+                constexpr int switchAt = 40;
+
+                const auto doSwitch = [&]
+                {
+                    if (change.from == change.to)
+                        REQUIRE (plugin.rebuild().isValid());
+                    else
+                        REQUIRE (plugin.setOversamplingFactor (change.to).isValid());
+                };
+
+                std::vector<float> out;
+
+                if (silent)
+                {
+                    juce::AudioBuffer<float> buffer (2, blockSize);
+                    juce::MidiBuffer midi;
+
+                    for (int block = 0; block < switchAt * 2; ++block)
+                    {
+                        if (block == switchAt)
+                            doSwitch();
+
+                        buffer.clear();
+                        plugin.processBlock (buffer, midi);
+
+                        for (int i = 0; i < blockSize; ++i)
+                            out.push_back (buffer.getSample (0, i));
+                    }
+                }
+                else
+                {
+                    out = playSine (plugin, switchAt * 2, [&] (int block)
+                    {
+                        if (block == switchAt)
+                            doSwitch();
+                    });
+                }
+
+                const auto worstStep = [&out] (int from, int to)
+                {
+                    auto worst = 0.0f;
+
+                    for (int i = juce::jmax (1, from); i < juce::jmin (to, (int) out.size()); ++i)
+                        worst = juce::jmax (worst, std::abs (out[(size_t) i] - out[(size_t) i - 1]));
+
+                    return worst;
+                };
+
+                const auto baseline = worstStep ((switchAt / 2) * blockSize, switchAt * blockSize);
+                const auto around = worstStep (switchAt * blockSize, (int) out.size());
+
+                INFO (change.what << ", " << names[example] << ", " << (silent ? "silent" : "a note")
+                      << ": baseline " << baseline << ", around the switch " << around);
+
+                if (silent)
+                {
+                    CHECK (around < 1.0e-6f);
+                    continue;
+                }
+
+                CHECK (around <= 1.5f * baseline);
+
+                // And it does go through silence: at the turn, a few samples
+                // either side are within a fraction of a percent of nothing.
+                const auto turn = (size_t) (switchAt * blockSize + fadeLength);
+                auto peak = 0.0f, atTurn = 0.0f;
+
+                for (auto i = (size_t) ((switchAt / 2) * blockSize); i < (size_t) (switchAt * blockSize); ++i)
+                    peak = juce::jmax (peak, std::abs (out[i]));
+
+                for (auto i = turn - 4; i <= turn + 4; ++i)
+                    atTurn = juce::jmax (atTurn, std::abs (out[i]));
+
+                INFO ("peak " << peak << ", at the turn " << atTurn);
+                CHECK (atTurn < 0.01f * peak);
             }
         }
     }

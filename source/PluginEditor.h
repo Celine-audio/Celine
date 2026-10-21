@@ -285,6 +285,12 @@ private:
     /** Kept alive for the duration of an async file dialog. */
     std::unique_ptr<juce::FileChooser> fileChooser;
 
+    /** The input file's dialog, kept apart from the one above. Replacing a
+        FileChooser destroys the dialog it was running, so sharing one meant
+        that picking a take to play closed a cabinet dialog that was still open,
+        and the other way round. */
+    std::unique_ptr<juce::FileChooser> inputFileChooser;
+
     /** Where the last save or load went, so the next dialog opens there. */
     juce::File lastCircuitFile;
 

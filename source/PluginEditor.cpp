@@ -632,6 +632,10 @@ void PluginEditor::timerCallback()
     // have no attachment to do it for them.
     controlStrip.syncToggles();
 
+    // The circuit the last Rebuild faded out, once it has: the audio thread can
+    // say the fade is over but cannot free it.
+    processorRef.releaseFadedCircuits();
+
     // A live trace has to be asked for again to move -- and only when there is
     // one, or the editor repaints the whole sheet several times a second for
     // nothing.
@@ -853,13 +857,13 @@ void PluginEditor::browseForInputFile()
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
 
-    fileChooser = std::make_unique<juce::FileChooser> (
+    inputFileChooser = std::make_unique<juce::FileChooser> (
         "Choose an audio file to play through the circuit",
         current != juce::File{} ? current
                                 : juce::File::getSpecialLocation (juce::File::userMusicDirectory),
         formats.getWildcardForAllFormats());
 
-    fileChooser->launchAsync (juce::FileBrowserComponent::openMode
+    inputFileChooser->launchAsync (juce::FileBrowserComponent::openMode
                                   | juce::FileBrowserComponent::canSelectFiles,
                               [this] (const juce::FileChooser& chooser)
     {
@@ -870,10 +874,10 @@ void PluginEditor::browseForInputFile()
 
         // Choosing a file arms file input, as choosing an impulse response arms
         // the cab: nobody goes looking for a take in order to keep listening to
-        // the guitar. It plays when Play is pressed, not before.
-        auto& filePlayer = processorRef.getInputFilePlayer();
-        filePlayer.load (file);
-        filePlayer.setFileMode (true);
+        // the guitar. It plays when Play is pressed, not before -- and it arms
+        // only once the file has read, so one that fails does not leave the
+        // circuit listening to nothing.
+        processorRef.getInputFilePlayer().load (file, true);
 
         setStatus ("Loading " + file.getFileName() + "...", false);
     });

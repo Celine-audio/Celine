@@ -450,13 +450,7 @@ void MidHumpOverdrive::setControls(float tone, float drive, float level)
     levelPot.setPosition(circuit, level);
 }
 
-void MidHumpOverdrive::setClippingDiodes(const Circuit::DiodeModel& model)
-{
-    circuit.setDiodeModel(clipperUp, model);
-    circuit.setDiodeModel(clipperDown, model);
-}
-
-MidHumpOverdrive makeMidHumpOverdrive()
+MidHumpOverdrive makeMidHumpOverdrive(const Circuit::DiodeModel& clippers)
 {
     MidHumpOverdrive result;
     auto& circuit = result.circuit;
@@ -486,8 +480,8 @@ MidHumpOverdrive makeMidHumpOverdrive()
     // D1, D2 -- the clipping pair, inside U1's feedback loop.
     // Swap both for redLed() / greenLed() / blueLed() to raise the clipping
     // threshold and soften the knee, which is the commonest mod to this circuit.
-    result.clipperUp = circuit.addDiode("n001", "n003", Circuit::DiodeModel::d1n4148());
-    result.clipperDown = circuit.addDiode("n003", "n001", Circuit::DiodeModel::d1n4148());
+    result.clipperUp = circuit.addDiode("n001", "n003", clippers);
+    result.clipperDown = circuit.addDiode("n003", "n001", clippers);
     // R2
     circuit.addResistor("n003", "p001", 4700);
     // Cz

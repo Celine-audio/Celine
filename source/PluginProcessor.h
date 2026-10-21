@@ -81,8 +81,36 @@ public:
     /** Builds the schematic and swaps it in. Stamping, factorising and the bias
         solve happen before the swap, so the audio thread is locked out only for
         as long as it takes to move a few pointers; a failed build leaves the
-        previous circuit running and reports why. Message thread; it allocates. */
+        previous circuit running and reports why. Message thread; it allocates.
+
+        The swap is a dip, not a cut: the running circuit fades out to
+        silence over rebuildFadeSeconds, the new one takes over at the silent
+        sample, and fades in over the same again. A fresh circuit starts at its
+        bias point with every capacitor at rest, while the one it replaces is
+        halfway through a waveform, so swapping them on one sample was a step --
+        a pop on every Rebuild with a note sounding, measured at 45 times the
+        waveform's own curvature on a 12AX7 stage.
+
+        Through silence rather than crossfaded, because only one circuit ever
+        runs at once: a crossfade runs both for the length of it, and on a sheet
+        already near a core's worth of CPU that is a dropout -- a click, the
+        thing the fade is for. And it holds across a change of rate, which a
+        crossfade cannot: the old circuit fades out on the filters it was
+        discretised for, and the new one comes in on its own. The cost is a gap
+        of about twice rebuildFadeSeconds on every Rebuild, which is the trade
+        made on purpose. */
     SchematicModel::BuildResult rebuild();
+
+    /** Frees the circuit, and filters, a finished fade out left behind. The
+        audio thread cannot -- destroying a Circuit frees memory -- so it only
+        says the fade is over, and this does the rest. Cheap when there is
+        nothing to do, so the editor calls it from its timer; without an editor
+        they wait for the next rebuild. Message thread. */
+    void releaseFadedCircuits();
+
+    /** Each half of a rebuild's dip. The bypass's length, so the two feel
+        alike. */
+    static constexpr double rebuildFadeSeconds = BypassFade::fadeSeconds;
 
     /** Deliberate inaccuracies traded for CPU. Read at rebuild() time, so a
         plain value is enough. These travel *with* the document, unlike the
@@ -359,7 +387,30 @@ private:
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler;
     int preparedBlockSize = 512;
 
-    void prepareOversampler();
+    /** A filter chain for `factor`, built and ready, and the latency it will
+        report. Built off-lock: it allocates and designs filters. */
+    struct PreparedOversampler
+    {
+        std::unique_ptr<juce::dsp::Oversampling<float>> filters;
+        int latency = 0;
+    };
+
+    PreparedOversampler makeOversampler (int factor) const;
+
+    /** Swaps `fresh` in at once, with no fade, and takes up its factor and
+        latency. For when nothing is playing through it, or nothing can be
+        faded: prepareToPlay, and a factor whose sheet will not build. */
+    void installOversamplerNow (PreparedOversampler& fresh, int factor);
+
+    /** Builds at `factor` and swaps the circuits in through the rebuild dip,
+        bringing `fresh` filters with them when the factor changes -- see
+        rebuild(). */
+    SchematicModel::BuildResult rebuildAt (int factor, PreparedOversampler* fresh);
+
+    /** Ends any rebuild dip at once: the circuit fading out is dropped and the
+        new one plays at full level. prepareToPlay, where audio was stopped and
+        there is nothing to fade. */
+    void cancelRebuildFade();
 
     /** Bypass, faded rather than switched, against a copy of the input delayed
         by the latency the host is compensating for. At the host's rate, after
@@ -378,6 +429,31 @@ private:
     /** One per channel, so each keeps its own capacitor and device state. */
     std::vector<std::unique_ptr<Circuit>> circuits;
     std::vector<SchematicModel::LiveControl> controls;
+
+    /** The circuit a rebuild replaced, while it fades out to silence -- see
+        rebuild(). Guarded by `circuitLock` like `circuits`, and kept, silent,
+        after the fade until releaseFadedCircuits() or the next rebuild frees
+        it off the audio thread. */
+    std::vector<std::unique_ptr<Circuit>> fadingCircuits;
+
+    /** The filters `fadingCircuits` run on, when a change of factor gave the
+        new circuit filters of its own. Otherwise the two take turns on
+        `oversampler`, and this is empty. Null with fadingOwnOversampler set
+        means the old circuit ran at the host's rate. */
+    std::unique_ptr<juce::dsp::Oversampling<float>> fadingOversampler;
+    bool fadingOwnOversampler = false;
+
+    /** Samples of the dip's two halves left, at the host's rate, and the length
+        of each. Set under `circuitLock` with the swap; counted down by the audio
+        thread. Never both non-zero. */
+    int fadeOutRemaining = 0;
+    int fadeInRemaining = 0;
+    int rebuildFadeLength = 1;
+
+    /** Set by the audio thread when a fade out reaches silence, so
+        releaseFadedCircuits() need not take the lock to find out there is
+        nothing to do. */
+    std::atomic<bool> rebuildFadeFinished { false };
 
     //==========================================================================
     /** The speaker cabinet, at the very end of everything.
@@ -487,11 +563,19 @@ private:
         int controlCount = 0;
     };
 
-    /** One circuit per side, each with its own state. */
-    void runStereo (float* left, float* right, int count, const BlockState& state);
+    /** One circuit per side, each with its own state. `set` is the live
+        circuits or the ones fading out after a rebuild; only `live` ones take
+        the controls and feed the scopes and the current readout. */
+    void runStereo (std::vector<std::unique_ptr<Circuit>>& set, bool live,
+                    float* left, float* right, int count, const BlockState& state);
 
     /** One circuit, its output copied to both sides. */
-    void runMono (float* left, float* right, int count, const BlockState& state);
+    void runMono (std::vector<std::unique_ptr<Circuit>>& set, bool live,
+                  float* left, float* right, int count, const BlockState& state);
+
+    /** The rebuild dip on one piece at the host's rate: down towards silence
+        while the old circuit plays, up from it while the new one does. */
+    void applyRebuildFade (juce::AudioBuffer<float>& piece, bool outgoing) noexcept;
 
     void applyControls (Circuit& circuit, const BlockState& state);
 

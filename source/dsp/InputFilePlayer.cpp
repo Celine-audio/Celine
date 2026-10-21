@@ -165,11 +165,12 @@ void InputFilePlayer::startJob()
     });
 }
 
-void InputFilePlayer::load (const juce::File& file)
+void InputFilePlayer::load (const juce::File& file, bool switchToFileWhenLoaded)
 {
     {
         const juce::ScopedLock lock (stateLock);
         wantedFile = file;
+        switchToFileOnLoad.store (switchToFileWhenLoaded);
     }
 
     startJob();
@@ -180,7 +181,8 @@ void InputFilePlayer::prepare (double sampleRate)
     if (sampleRate <= 0.0)
         return;
 
-    bool dropInstalled = false, jobNeeded = false;
+    bool jobNeeded = false;
+    std::unique_ptr<juce::AudioBuffer<float>> old;
 
     {
         const juce::ScopedLock lock (stateLock);
@@ -189,10 +191,13 @@ void InputFilePlayer::prepare (double sampleRate)
         // Dropped now rather than when the replacement is ready. The audio
         // thread is stopped while this runs, so this is the one moment the
         // buffer can go without anybody hearing it played at the wrong pitch.
-        dropInstalled = installedRate > 0.0 && ! juce::exactlyEqual (installedRate, sampleRate);
-
-        if (dropInstalled)
+        // Under the lock, with the rate, so a worker cannot install between
+        // the two -- see install().
+        if (installedRate > 0.0 && ! juce::exactlyEqual (installedRate, sampleRate))
+        {
             installedRate = 0.0;
+            old = install (nullptr);
+        }
 
         // Also when nothing is installed yet: a load already running at the old
         // rate will see the rate move under it and decline to install, so
@@ -200,12 +205,8 @@ void InputFilePlayer::prepare (double sampleRate)
         jobNeeded = wantedFile != juce::File{} && ! juce::exactlyEqual (installedRate, sampleRate);
     }
 
-    if (dropInstalled)
-    {
-        // Freed here, outside the spin lock -- see install().
-        auto old = install (nullptr);
-        old.reset();
-    }
+    // Freed here, outside both locks.
+    old.reset();
 
     if (jobNeeded)
         startJob();
@@ -255,9 +256,13 @@ void InputFilePlayer::bringUpToDate()
         ++loadsFinished;
 
         // Back to what is actually loaded, so a later prepare() does not go
-        // looking for the file that failed.
+        // looking for the file that failed -- and a file that did not read
+        // switches nothing on.
         if (wantedFile == file)
+        {
+            switchToFileOnLoad.store (false);
             wantedFile = installedRate > 0.0 ? installedFile : juce::File{};
+        }
     };
 
     juce::AudioFormatManager formats;
@@ -292,26 +297,36 @@ void InputFilePlayer::bringUpToDate()
 
     raw.setSize (0, 0);
 
-    // Asked again before installing: if a different file or rate was asked for
-    // while this one decoded, the job queued behind this one will do it, and
-    // installing this would only be heard as a blip of the wrong thing.
+    auto fresh = std::make_unique<juce::AudioBuffer<float>> (std::move (resampled));
+    std::unique_ptr<juce::AudioBuffer<float>> old;
+
     {
         const juce::ScopedLock lock (stateLock);
 
+        // Asked again before installing, and installed without letting go of
+        // the lock: if a different file or rate was asked for while this one
+        // decoded, the job queued behind this one will do it, and installing
+        // this would only be heard as the wrong thing -- at the wrong pitch,
+        // if it was the rate that moved.
         if (wantedFile != file || ! juce::exactlyEqual (wantedRate, rate))
             return;
+
+        old = install (std::move (fresh));
+
+        installedFile = file;
+        installedRate = rate;
+        installedSourceRate = reader->sampleRate;
+        installedTruncated = reader->lengthInSamples > cap;
+        problem.clear();
+        ++loadsFinished;
+
+        if (switchToFileOnLoad.exchange (false))
+            fileMode.store (true);
     }
 
-    auto old = install (std::make_unique<juce::AudioBuffer<float>> (std::move (resampled)));
+    // Freed outside both locks: the old buffer here, and the new one on the
+    // way out if it was never installed.
     old.reset();
-
-    const juce::ScopedLock lock (stateLock);
-    installedFile = file;
-    installedRate = rate;
-    installedSourceRate = reader->sampleRate;
-    installedTruncated = reader->lengthInSamples > cap;
-    problem.clear();
-    ++loadsFinished;
 }
 
 bool InputFilePlayer::waitUntilLoaded (int timeoutMilliseconds) const
@@ -332,6 +347,9 @@ bool InputFilePlayer::waitUntilLoaded (int timeoutMilliseconds) const
 //==============================================================================
 void InputFilePlayer::setFileMode (bool shouldPlayFile) noexcept
 {
+    // The later word: a load still decoding no longer gets to change this.
+    switchToFileOnLoad.store (false);
+
     if (! shouldPlayFile)
         stop();
 
