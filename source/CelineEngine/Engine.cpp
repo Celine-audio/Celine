@@ -386,7 +386,8 @@ Circuit::OpAmp Circuit::addOpAmp(const juce::String& name,
     // The rails do not -- see sharedRail().
     OpAmp amp;
 
-    // Differential input resistance -- the only thing loading the input pins.
+    // Differential input resistance -- the only thing loading the input pins
+    // besides their bias currents, below.
     amp.inputResistor = addResistor(inPlus, inMinus, model.inputResistance);
 
     // Gain stage: current into the gain node proportional to the differential
@@ -429,18 +430,48 @@ Circuit::OpAmp Circuit::addOpAmp(const juce::String& name,
     // Rails, with a diode each way clamping the gain node between them. This is
     // the whole of the saturation behaviour, and it is two ordinary diodes.
     //
-    // The clamp nodes sit a diode drop further in than the headroom figure asks
-    // for, because the diode only starts conducting once it is that far past
-    // them -- without the offset, every op-amp would swing a volt wider than its
-    // railHeadroom said. The clamp stays soft either way, which is what a real
-    // output stage does as it runs out of room.
-    constexpr double clampDiodeDrop = 0.7;
+    // Not ordinary *signal* diodes, though. What flows through a clamp is the
+    // gain stage's current, gm times however far the inputs are apart, and gm
+    // is the open-loop gain over an impedance that is not physical -- hundreds
+    // of amps per volt. A 1N4148 there conducted milliamps on the verge of
+    // clipping and a hundred amps hard driven, and its 0.45 V across those five
+    // decades moved the clip level with the drive: a TL072 on 9 V clipped
+    // 0.4 V wider at 1.5 V in than at 0.3, where TI's card moves 70 mV. So the
+    // clamp's saturation current is scaled by gm -- it conducts according to
+    // the overdrive in volts, whatever gainNodeResistance is -- and its knee is
+    // sharp, a quarter of a junction's: across the overdrives from a millivolt
+    // to a volt it moves 45 mV. Leakage is gm x 1e-12 V, a fraction of a
+    // microvolt on the gain node. The clamp node sits in by the drop at 10 mV
+    // of overdrive, so the clip lands on the sheet's swing within about
+    // +/-25 mV from just clipping to hard driven.
+    DiodeModel clamp;
+    clamp.emissionCoefficient = 0.25;
+    clamp.saturationCurrent = model.inputTransconductance() * 1.0e-12;
+    const double clampDrop = clamp.emissionCoefficient * clamp.thermalVoltage
+                           * std::log(model.inputTransconductance() * 0.01 / clamp.saturationCurrent);
 
-    const juce::String highClamp = sharedRail(model.positiveRail - model.railHeadroom - clampDiodeDrop);
-    const juce::String lowClamp = sharedRail(model.negativeRail + model.railHeadroom + clampDiodeDrop);
+    const double reachUp = model.positiveExcursion() - clampDrop;
+    const double reachDown = model.negativeExcursion() - clampDrop;
+    const juce::String highClamp = sharedRail(model.midpoint() + reachUp);
+    const juce::String lowClamp = sharedRail(model.midpoint() - reachDown);
 
-    amp.positiveClamp = addDiode(gainNode, highClamp, DiodeModel::silicon());
-    amp.negativeClamp = addDiode(lowClamp, gainNode, DiodeModel::silicon());
+    amp.positiveClamp = addDiode(gainNode, highClamp, clamp);
+    amp.negativeClamp = addDiode(lowClamp, gainNode, clamp);
+
+    // Input bias current: a constant current out of each pin and into the
+    // part. The engine has no current source, so each is a Vccs reading the
+    // two clamp rails, a fixed voltage apart, with the current over that gap
+    // as its transconductance -- linear, so it costs nothing per sample, and
+    // it reads rails that already exist. A rail of its own cost a node and a
+    // constraint row, which on the mid-hump overdrive was 7% of its CPU. The
+    // current leaves through ground rather than through the tail to the
+    // negative supply, which to an ideal rail is the same thing.
+    if (model.inputBiasCurrent != 0.0 && reachUp + reachDown > 0.0)
+    {
+        const double perVolt = model.inputBiasCurrent / (reachUp + reachDown);
+        amp.positiveBias = addVccs(inPlus, "gnd", highClamp, lowClamp, perVolt);
+        amp.negativeBias = addVccs(inMinus, "gnd", highClamp, lowClamp, perVolt);
+    }
 
     // The second pole: a copy of the gain node, buffered so it draws nothing
     // from it, through one RC. What the output follows is this rather than the

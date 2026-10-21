@@ -239,7 +239,7 @@ namespace SchematicModel
             // which is how a 9 V pedal is wired.
             {"OP-Amp", 3, {{-4, -2}, {-4, 2}, {4, 0}}, "V", "Supply", 0.0,
              "celine:opamp-tl072|TL071/TL072|JFET input, 3 MHz;"
-             "celine:opamp-jrc4558|JRC4558|Distortion pedal OpAmp, 2.8 MHz;"
+             "celine:opamp-jrc4558|JRC4558|Distortion pedal OpAmp, 3 MHz;"
              "celine:opamp-ne5532|NE5532|Low noise, 12 MHz;"
              "celine:opamp-lm308|LM308|Distortion pedal OpAmp, 1 MHz;"
              "celine:opamp-ideal|Ideal|No gain limit, bandwidth or clipping;"
