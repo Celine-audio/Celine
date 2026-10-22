@@ -43,6 +43,14 @@ public:
         Call it from a test main, before anything else. */
     static void redirectSettingsForTesting (const juce::File& settingsFile);
 
+    /** The settings file this reads and writes -- the machine's, or the test
+        redirect. Shared with UpdateCheck::Preferences: it is the one place the
+        choices that belong to the person at this computer are kept. */
+    const juce::File& getSettingsFile() const noexcept { return settingsFile; }
+
+    /** How that file is opened, for anything else that keeps a choice in it. */
+    static juce::PropertiesFile::Options getSettingsOptions();
+
     //==========================================================================
     /** True once a folder has been chosen and it still exists. A folder that
         has been deleted or unmounted since counts as no folder rather than as

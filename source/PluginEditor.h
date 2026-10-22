@@ -225,6 +225,25 @@ private:
         was. */
     void offerPresetFolderOnFirstRun();
 
+    //==========================================================================
+    // Update checks -- see UpdateCheck.h for what is asked of whom, and when.
+
+    /** Asks, once ever on this machine, whether to check for updates at launch.
+        Off unless the user says yes; closing the question is a no. */
+    void offerUpdateChecksOnFirstRun();
+
+    /** Starts this launch's one check, if the user has turned checks on. */
+    void startUpdateCheckIfEnabled();
+
+    /** "A new update is available": Download, Remind me later, or turn the
+        checks off. */
+    void announceUpdate (const juce::String& version);
+
+    /** A themed question in a window of its own, and the window it went up in.
+        One at a time: the first-run questions wait for each other rather than
+        stacking up on a fresh install. */
+    juce::DialogWindow* launchPrompt (const juce::String& title, std::unique_ptr<juce::Component> content);
+
     PluginProcessor& processorRef;
 
     /** Declared before every child component on purpose: members are destroyed
@@ -237,10 +256,9 @@ private:
     juce::TooltipWindow tooltips { this, 600 };
 
     //==========================================================================
-    /** Only the canvas grows. The panels float over it at the size of what they
-        show, and the control strip is a row of knobs -- stretching any of them buys
-        nothing, so the whole of a resize goes to the sheet. */
-    static constexpr int paletteWidth = Celine::Theme::paletteWidth;
+    // Only the canvas grows. The panels float over it at the size of what they
+    // show, and the control strip is a row of knobs -- stretching any of them buys
+    // nothing, so the whole of a resize goes to the sheet.
 
     // Toolbar. What a click on the sheet does -- the three are mutually
     // exclusive and the active one is lit, because with several modes it has to
@@ -300,6 +318,12 @@ private:
         those are the editor's own children -- so the editor paints the band and
         the strip paints its part of it. */
     juce::Rectangle<int> controlBandBounds;
+
+    /** The two rules in the bottom band, between INPUT and the circuit's own
+        controls and between those and OUTPUT. Worked out in resized(), drawn in
+        paint() -- by the editor rather than the strip, because each stands in a
+        gap the layout leaves beside the strip rather than on the strip itself. */
+    std::array<juce::Line<float>, 2> bandDividers;
 
     /** Kept alive for the duration of an async file dialog. */
     std::unique_ptr<juce::FileChooser> fileChooser;
@@ -379,6 +403,13 @@ private:
     /** Whether this window has already got as far as considering the first-run
         preset question. One window asks at most once, however long it lives. */
     bool presetFolderChecked = false;
+
+    /** And the first-run update question, which waits for the preset one. */
+    bool updateQuestionChecked = false;
+
+    /** The prompt this window has up, if any -- see launchPrompt. Null once the
+        user has answered it, so the next can go up. */
+    juce::Component::SafePointer<juce::DialogWindow> openPrompt;
 
     bool nativeTitleBarChecked = false;
 

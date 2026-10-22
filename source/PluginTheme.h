@@ -128,10 +128,6 @@
         inline constexpr int presetWidth = 302;
         inline constexpr int rebuildWidth = 91;
 
-        /** The column INPUT sits in at the left of the bottom band. Named for the palette
-            because that is the column it used to stand under; the palette floats over the
-            sheet now, and this keeps INPUT where the design draws it. */
-        inline constexpr int paletteWidth = 188;
 
         /** The inspector card's width, whatever it is showing -- a part's fields or the
             shortcut list -- so it never jumps sideways as the selection changes. */

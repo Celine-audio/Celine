@@ -86,6 +86,11 @@ void PresetLibrary::redirectSettingsForTesting (const juce::File& settingsFile)
     getSettingsOverride() = settingsFile;
 }
 
+juce::PropertiesFile::Options PresetLibrary::getSettingsOptions()
+{
+    return makeSettingsOptions();
+}
+
 PresetLibrary::PresetLibrary (const juce::File& file)
     : settingsFile (file)
 {

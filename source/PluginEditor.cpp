@@ -9,6 +9,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
 #include "Schematic/ExampleSchematics.h"
+#include "UpdateCheck.h"
 
 #include <CelineUI/EmbeddedAssets.h>
 #include <CelineUI/AboutPanel.h>
@@ -19,6 +20,93 @@ namespace
     /** One character, not three full stops. The house sets it in the menus, and a
         run of periods is a different glyph at a different width. */
     const juce::String ellipsis = juce::String::fromUTF8 ("\xe2\x80\xa6");
+
+    /** A message and a row of buttons, drawn in the theme.
+
+        Built rather than asked for, as the preset folder's question is:
+        juce::AlertWindow is drawn by the platform's look and feel and follows none of
+        the palette. The first button is the one the question is asking about, and
+        wears the accent; the rest are plain. Each button reports its index through
+        onChoice, and the window is the caller's to close. */
+    class ChoicePrompt : public juce::Component
+    {
+       public:
+        ChoicePrompt (PluginLookAndFeel& lnf, const juce::String& text, const juce::StringArray& choices)
+        {
+            setLookAndFeel (&lnf);
+
+            message.setText (text, juce::dontSendNotification);
+            message.setFont (Celine::Fonts::light (14.0f));
+            message.setColour (juce::Label::textColourId, Celine::Theme::text());
+            message.setJustificationType (juce::Justification::topLeft);
+            addAndMakeVisible (message);
+
+            for (int i = 0; i < choices.size(); ++i)
+            {
+                auto* button = buttons.add (new juce::TextButton (choices[i]));
+
+                if (i == 0)
+                {
+                    button->setColour (juce::TextButton::buttonColourId, Celine::Theme::accent());
+                    button->setColour (juce::TextButton::textColourOffId, Celine::Theme::text());
+                }
+
+                button->onClick = [this, i] { if (onChoice) onChoice (i); };
+                addAndMakeVisible (button);
+            }
+
+            // Wide enough for the buttons side by side, and tall enough for the text
+            // wrapped to that width -- measured, so no wording can be cut off.
+            int rowWidth = 0;
+
+            for (auto* button : buttons)
+            {
+                button->changeWidthToFitText (buttonHeight);
+                button->setSize (juce::jmax (button->getWidth() + 16, 96), buttonHeight);
+                rowWidth += button->getWidth() + buttonGap;
+            }
+
+            const int width = juce::jmax (360, rowWidth - buttonGap + 2 * margin);
+
+            juce::AttributedString wrapped;
+            wrapped.append (text, message.getFont());
+            juce::TextLayout layout;
+            layout.createLayout (wrapped, static_cast<float> (width - 2 * margin - 10));
+
+            setSize (width, 2 * margin + juce::roundToInt (layout.getHeight()) + 14 + 14 + buttonHeight);
+        }
+
+        ~ChoicePrompt() override { setLookAndFeel (nullptr); }
+
+        void paint (juce::Graphics& g) override { g.fillAll (Celine::Theme::chrome()); }
+
+        void resized() override
+        {
+            auto area = getLocalBounds().reduced (margin);
+            auto row = area.removeFromBottom (buttonHeight);
+
+            // Right to left, so the first choice -- the one asked about -- sits leftmost
+            // of the row and the way out is at the end, where a dialog's way out is.
+            for (int i = buttons.size(); --i >= 0;)
+            {
+                buttons[i]->setBounds (row.removeFromRight (buttons[i]->getWidth()));
+                row.removeFromRight (buttonGap);
+            }
+
+            area.removeFromBottom (14);
+            message.setBounds (area);
+        }
+
+        std::function<void (int choice)> onChoice;
+
+       private:
+        static constexpr int margin = 18;
+        static constexpr int buttonHeight = 32;
+        static constexpr int buttonGap = 8;
+
+        juce::Label message;
+        juce::OwnedArray<juce::TextButton> buttons;
+    };
 }
 
 
@@ -639,10 +727,26 @@ void PluginEditor::timerCallback()
     // yet the window.
     adoptNativeTitleBar();
 
-    if (! presetFolderChecked && isShowing())
+    // The first-run questions, and anything this launch's update check found --
+    // only with a window genuinely in front of a person (see
+    // offerPresetFolderOnFirstRun), and one dialog at a time.
+    if (isShowing() && openPrompt == nullptr)
     {
-        presetFolderChecked = true;
-        offerPresetFolderOnFirstRun();
+        if (! presetFolderChecked)
+        {
+            presetFolderChecked = true;
+            offerPresetFolderOnFirstRun();
+        }
+        else if (! updateQuestionChecked)
+        {
+            updateQuestionChecked = true;
+            offerUpdateChecksOnFirstRun();
+            startUpdateCheckIfEnabled();
+        }
+        else if (const auto release = UpdateCheck::Session::takeUpdateToAnnounce())
+        {
+            announceUpdate (release->version);
+        }
     }
 
     // Keep switch buttons showing what the parameter actually says, since they
@@ -1301,6 +1405,7 @@ void PluginEditor::offerPresetFolderOnFirstRun()
 
     // Async, because a plugin must never spin a modal loop inside its host.
     auto* window = options.launchAsync();
+    openPrompt = window;
 
     const juce::Component::SafePointer<PluginEditor> safe (this);
 
@@ -1323,6 +1428,124 @@ void PluginEditor::offerPresetFolderOnFirstRun()
     {
         if (dialog != nullptr)
             dialog->exitModalState (0);
+    };
+}
+
+//==============================================================================
+juce::DialogWindow* PluginEditor::launchPrompt (const juce::String& title, std::unique_ptr<juce::Component> content)
+{
+    juce::DialogWindow::LaunchOptions options;
+    options.dialogTitle = title;
+    options.dialogBackgroundColour = Celine::Theme::chrome();
+    options.escapeKeyTriggersCloseButton = true;
+    options.useNativeTitleBar = true;
+    options.resizable = false;
+    options.content.setOwned (content.release());
+
+    // Async, because a plugin must never spin a modal loop inside its host -- and
+    // the window deletes itself when dismissed, so it is closed with
+    // exitModalState() and never deleted here. See offerPresetFolderOnFirstRun.
+    auto* window = options.launchAsync();
+    openPrompt = window;
+    return window;
+}
+
+void PluginEditor::offerUpdateChecksOnFirstRun()
+{
+    UpdateCheck::Preferences preferences;
+
+    if (preferences.hasBeenOffered())
+        return;
+
+    // Only with a window in front of a person, and marked when it goes up rather
+    // than when it comes back -- both for the reasons the preset folder's question
+    // gives. Closing it unanswered leaves the checks off, which is their default.
+    jassert (isShowing());
+    preferences.markOffered();
+
+    const auto name = PresetLibrary::getProductName();
+
+    auto prompt = std::make_unique<ChoicePrompt> (
+        lookAndFeel,
+        "Check for a newer version of " + name + " when it starts?\n\n"
+            "Once per launch, " + name + " asks GitHub for its newest release and tells "
+            "you if it is newer than the one you have. Nothing about you or your "
+            "sessions is sent.\n\n"
+            "You can change this later in the Settings menu.",
+        juce::StringArray { "Check for updates", "No thanks" });
+
+    auto* raw = prompt.get();
+    const juce::Component::SafePointer<juce::DialogWindow> dialog (launchPrompt (name + " updates", std::move (prompt)));
+    const juce::Component::SafePointer<PluginEditor> safe (this);
+
+    raw->onChoice = [safe, dialog] (int choice)
+    {
+        if (dialog != nullptr)
+            dialog->exitModalState (0);
+
+        if (choice != 0)
+            return;
+
+        UpdateCheck::Preferences().setEnabled (true);
+
+        // This launch counts: the user has just said yes, so the check is not left
+        // until the next time the plugin starts.
+        if (safe != nullptr)
+            safe->startUpdateCheckIfEnabled();
+    };
+}
+
+void PluginEditor::startUpdateCheckIfEnabled()
+{
+    // Already asked this launch -- or not wanted -- and the file is not read again
+    // to find out. A no-op after the first call either way.
+    if (UpdateCheck::Session::hasStarted() || ! UpdateCheck::Preferences().isEnabled())
+        return;
+
+    UpdateCheck::Session::startIfNeeded();
+}
+
+void PluginEditor::announceUpdate (const juce::String& version)
+{
+    // Turned off in another window since the check started: the answer is no
+    // longer wanted.
+    if (! UpdateCheck::Preferences().isEnabled())
+        return;
+
+    const auto name = PresetLibrary::getProductName();
+
+    auto prompt = std::make_unique<ChoicePrompt> (
+        lookAndFeel,
+        "A new update is available.\n\n"
+            + name + " " + version + " is out. You have " + UpdateCheck::installedVersion() + ".",
+        juce::StringArray { "Download", "Remind me later", "Turn off update checks" });
+
+    auto* raw = prompt.get();
+    const juce::Component::SafePointer<juce::DialogWindow> dialog (launchPrompt (name + " update", std::move (prompt)));
+    const juce::Component::SafePointer<PluginEditor> safe (this);
+
+    raw->onChoice = [safe, dialog] (int choice)
+    {
+        if (dialog != nullptr)
+            dialog->exitModalState (0);
+
+        if (choice == 0)
+        {
+            // The releases page rather than a file: which download is right depends
+            // on the machine, and the page says what changed.
+            UpdateCheck::releasesPage().launchInDefaultBrowser();
+        }
+        else if (choice == 2)
+        {
+            UpdateCheck::Preferences().setEnabled (false);
+
+            if (safe != nullptr)
+                safe->setStatus ("Update checks turned off. Turn them back on from the Settings menu.", false);
+        }
+
+        // "Remind me later" is the absence of anything else: the check keeps its
+        // setting, and the next launch asks again. This one has said its piece --
+        // see UpdateCheck::Session::takeUpdateToAnnounce.
     };
 }
 
@@ -1434,6 +1657,27 @@ void PluginEditor::showSettingsMenu()
     // the licence notice.
     menu.addSeparator();
 
+    // The update check, which the first-run question set and this can change.
+    juce::PopupMenu::Item updates ("Check for updates at launch");
+    updates.isTicked = UpdateCheck::Preferences().isEnabled();
+    updates.setAction ([this, wasOn = updates.isTicked]
+    {
+        UpdateCheck::Preferences().setEnabled (! wasOn);
+
+        if (wasOn)
+        {
+            setStatus ("Update checks off.", false);
+            return;
+        }
+
+        // Turned on: this launch counts, if it has not checked already.
+        setStatus ("Update checks on. " + PresetLibrary::getProductName()
+                       + " will look for a newer version once each time it starts.",
+                   false);
+        startUpdateCheckIfEnabled();
+    });
+    menu.addItem (updates);
+
     juce::PopupMenu::Item theme ("Theme" + ellipsis);
     theme.setAction ([this] { Celine::showThemeWindow (this); });
     menu.addItem (theme);
@@ -1539,6 +1783,13 @@ void PluginEditor::paint (juce::Graphics& g)
     {
         g.setColour (Celine::Theme::panel());
         g.fillRect (controlBandBounds);
+
+        // The two section rules, in the panel's ink taken right down, so they
+        // follow a theme and stay quieter than anything they divide.
+        g.setColour (Celine::Theme::textOnPanel().withAlpha (0.18f));
+
+        for (const auto& line : bandDividers)
+            g.drawLine (line, 1.0f);
     }
 
     // The shared housing for undo and redo, with the divider the design puts
@@ -1693,11 +1944,30 @@ void PluginEditor::layOutPanels (juce::Rectangle<int> area)
 
     // INPUT hard left, VOLUME hard right, the circuit's own knobs between: it
     // reads as signal flow, and bracketing the drawn controls says that neither
-    // is part of any circuit. The left column is where the design puts it.
-    placeKnob (strip.removeFromLeft (paletteWidth - 6), inputSlider, inputLabel);
+    // is part of any circuit. One knob cell wide, as OUTPUT is at the other end --
+    // it used to be as wide as the palette that stood over it, which left the
+    // knob adrift in the middle of a column four times its size.
+    placeKnob (strip.removeFromLeft (Strip::cellWidth), inputSlider, inputLabel);
 
     constexpr int channelsWidth = Strip::comboWidth + 12;
     auto fixed = strip.removeFromRight (Strip::cellWidth + channelsWidth);
+
+    // A thin rule either side of the circuit's own controls, each down the
+    // middle of a gap of its own: the strip paints its whole area, so a rule
+    // on its edge would be painted over. Inset top and bottom so it reads as a
+    // divider rather than as the edge of a box.
+    constexpr int dividerGap = 12;
+    constexpr float dividerInset = 14.0f;
+
+    auto divider = [&] (juce::Rectangle<int> gap)
+    {
+        const auto x = static_cast<float> (gap.getCentreX());
+        return juce::Line<float> (x, static_cast<float> (controlBandBounds.getY()) + dividerInset,
+                                  x, static_cast<float> (controlBandBounds.getBottom()) - dividerInset);
+    };
+
+    bandDividers[0] = divider (strip.removeFromLeft (dividerGap));
+    bandDividers[1] = divider (strip.removeFromRight (dividerGap));
 
     channelModeBox.setBounds (
         Strip::layOutCell (fixed.removeFromRight (channelsWidth), &channelModeLabel,
