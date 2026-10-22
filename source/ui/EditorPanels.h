@@ -122,8 +122,10 @@ namespace Celine
         on paper and typing 0.0000001 for a capacitor is a good way to get it
         wrong.
 
-        A card floating over the sheet, sized to what it is showing: a resistor
-        is a few fields and gets a short card, the shortcut list a tall one.
+        A card floating over the sheet, always the same width -- what it shows
+        is fitted to it, the shortcut list's lettering included -- and as tall
+        as what it is showing: a resistor is a few fields and gets a short card,
+        the shortcut list a tall one.
         The editor asks getPreferredSize() and caps it to the room there is;
         past that cap the fields scroll.
     */
@@ -135,9 +137,21 @@ namespace Celine
         /** Points the inspector at a part, or at nothing. */
         void setElement(SchematicModel::Element* element);
 
+        /** A live reading -- a current, a power, a scope's voltages -- in
+            engineering notation with exactly four digits after the point.
+
+            Not SymbolPainter::formatValue, which is for a part's value as it
+            is written on a schematic: that one trims to two decimals and falls
+            back to scientific notation below a pico, which is where a leakage
+            current through a big resistor lives -- it came out as
+            "-1.14447e-13A", cut off at the edge of its box. A fixed four
+            decimals also keeps the number from changing width as it changes
+            value, so a live readout does not shimmer. */
+        static juce::String formatReading(double value, const juce::String& unit);
+
         /** The card that shows everything currently visible without scrolling,
-            padding included. Fields are laid out at the fixed inspector width;
-            the shortcut list is as wide as its longest line. */
+            padding included. Always Theme::inspectorWidth wide; only the
+            height follows what is showing. */
         juce::Point<int> getPreferredSize();
 
         /** What the inspector shows changed in a way that may change its size --
@@ -254,9 +268,12 @@ namespace Celine
             cannot also size its contents to the card. */
         int hintHeight() const;
 
-        /** The shortcut list's longest line, which is what sets the card's
-            width when nothing is selected. */
+        /** The shortcut list's longest line, at its current size. */
         int hintWidth() const;
+
+        /** Sizes the shortcut list's lettering so its longest line fits the
+            card, scrollbar and all. */
+        void fitHintToWidth();
 
         void showNothingSelected();
         void fillFieldsFrom(const SchematicModel::Element& part);

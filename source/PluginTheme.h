@@ -133,27 +133,29 @@
             sheet now, and this keeps INPUT where the design draws it. */
         inline constexpr int paletteWidth = 188;
 
-        /** The inspector card's width while it is showing a part's fields. The shortcut
-            list it shows with nothing selected is as wide as its text instead. */
-        inline constexpr int inspectorWidth = 248;
+        /** The inspector card's width, whatever it is showing -- a part's fields or the
+            shortcut list -- so it never jumps sideways as the selection changes. */
+        inline constexpr int inspectorWidth = 220;
 
         /** One palette row's pitch; the pill inside it is four pixels shorter, which is
             the gap between rows. */
         inline constexpr int paletteRowHeight = 35;
 
         /** The palette's lettering, at most: the palette draws every name at the size at
-            which the longest one fits paletteColumnWidth, which with the shipped names
-            is a little smaller than this. */
-        inline constexpr float paletteFontHeight = 12.0f;
+            which the longest one fits paletteColumnWidth. With the shipped names that is
+            this size exactly -- the column is sized for it. */
+        inline constexpr float paletteFontHeight = 11.5f;
 
-        /** One of the palette's two columns. The width is the fixed thing and the
-            lettering fits it, so the grid keeps two to a row whatever the names are. */
-        inline constexpr int paletteColumnWidth = 112;
+        /** One of the palette's two columns: the symbol's square, the longest name at
+            paletteFontHeight (MOSFE Transistor, 76.7 px) and the air after it. Were a
+            longer name added, the lettering would shrink to fit rather than the grid
+            losing its two to a row. */
+        inline constexpr int paletteColumnWidth = 118;
 
         /** The bottom band's lettering: the captions over its controls, and the values
             under its knobs. */
-        inline constexpr float bandCaptionFontHeight = 12.0f;
-        inline constexpr float bandValueFontHeight = 11.0f;
+        inline constexpr float bandCaptionFontHeight = 12.6f;
+        inline constexpr float bandValueFontHeight = 11.55f;
 
         /** Between a floating panel and whatever it floats beside: the ruler, the edge of
             the sheet, the bottom band, another panel. One number, so the three panels sit

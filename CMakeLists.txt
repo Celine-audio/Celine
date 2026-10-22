@@ -46,7 +46,21 @@ include(PamplejuceLog)
 
 # JUCE and the CLAP wrapper are submodules: `git submodule update --init
 # --recursive` once after cloning. CI does it as part of actions/checkout.
-add_subdirectory(JUCE)
+#
+# JUCE is Celine's own fork (github.com/Celine-audio/JUCE). The submodule is what CI
+# and a release build against; to work on the fork, point CELINE_JUCE_DIR at a
+# checkout beside the plugins instead, as CELINE_UI_DIR does for the house kit below.
+set(CELINE_JUCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/JUCE" CACHE PATH "The JUCE checkout to build against")
+
+if (NOT EXISTS "${CELINE_JUCE_DIR}/CMakeLists.txt")
+    message(FATAL_ERROR "JUCE not found at ${CELINE_JUCE_DIR}. "
+                        "Run: git submodule update --init --recursive")
+endif ()
+
+# The binary directory is named, because a checkout outside this tree has no
+# default one -- and named JUCE, so a build against the submodule is laid out
+# exactly as it always was.
+add_subdirectory("${CELINE_JUCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/JUCE")
 add_subdirectory(modules/clap-juce-extensions EXCLUDE_FROM_ALL)
 
 # See `docs/CMake API.md` in the JUCE repo for all config options

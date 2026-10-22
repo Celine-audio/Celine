@@ -59,7 +59,67 @@ namespace Celine
             dropdown. Well clear of the real ones, which are `modelIndex + 1`
             and so run from 1 upwards. */
         constexpr int missingModelItemId = 10000;
+
+        /** The inspector's shortcut list, at most -- its lettering comes down
+            from here only if that is what it takes for the longest line to fit
+            the card. */
+        constexpr float hintFontHeight = 13.0f;
+
+        /** A reading drawn in its box at the largest size, up to `largest`,
+            at which it fits: a third of a narrow card is not much room, and a
+            number clipped at the edge reads as a different number. */
+        void drawReading(juce::Graphics& g, const juce::String& text, juce::Rectangle<float> box,
+                         float largest)
+        {
+            float height = largest;
+
+            while (height > 8.0f
+                   && juce::GlyphArrangement::getStringWidth(Fonts::light(height), text) > box.getWidth() - 4.0f)
+                height -= 0.5f;
+
+            g.setFont(Fonts::light(height));
+            g.drawText(text, box, juce::Justification::centred, false);
+        }
     } // namespace
+
+    juce::String ElementInspector::formatReading(double value, const juce::String& unit)
+    {
+        struct Prefix
+        {
+            double scale;
+            const char* suffix;
+        };
+
+        static const Prefix prefixes[] = {
+            {1.0e12, "T"}, {1.0e9, "G"}, {1.0e6, "M"}, {1.0e3, "k"}, {1.0, ""},
+            {1.0e-3, "m"}, {1.0e-6, "u"}, {1.0e-9, "n"}, {1.0e-12, "p"},
+        };
+
+        if (! std::isfinite(value))
+            return "--" + unit;
+
+        // The largest prefix the value reaches -- pico for anything smaller,
+        // where four decimals still show a few hundredths of a picoamp.
+        const auto* prefix = &prefixes[std::size(prefixes) - 1];
+
+        for (const auto& candidate : prefixes)
+        {
+            if (std::abs(value) >= candidate.scale * 0.99995)
+            {
+                prefix = &candidate;
+                break;
+            }
+        }
+
+        const double scaled = value / prefix->scale;
+
+        // Nothing to read, or so little it rounds to nothing: plain zero, with
+        // no prefix and no sign -- "-0.0000pV" says something that isn't so.
+        if (std::abs(scaled) < 0.00005)
+            return "0.0000" + unit;
+
+        return juce::String(scaled, 4) + prefix->suffix + unit;
+    }
 
     //==========================================================================
     // Palette
@@ -658,7 +718,7 @@ namespace Celine
         deleteButton.onClick = [this] { if (onDeleteRequested) onDeleteRequested(); };
         content.addAndMakeVisible(deleteButton);
 
-        hintLabel.setFont(Fonts::light(13.0f));
+        hintLabel.setFont(Fonts::light(hintFontHeight));
         hintLabel.setJustificationType(juce::Justification::topLeft);
         content.addAndMakeVisible(hintLabel);
 
@@ -706,6 +766,8 @@ namespace Celine
                             "Scroll to adjust zoom.\n"
                             "Middle-click to copy an element.",
                             juce::dontSendNotification);
+
+        fitHintToWidth();
     }
 
     /** Fills the model dropdown, grouped as the table groups it and sorted by
@@ -1065,18 +1127,14 @@ namespace Celine
             g.drawText(caption, box.removeFromTop(13.0f), juce::Justification::centred, false);
 
             g.setColour(colour);
-            g.setFont(Fonts::light(15.0f));
-            g.drawText(value, box, juce::Justification::centred, false);
+            drawReading(g, value, box, 15.0f);
         };
 
         const auto third = bounds.getWidth() / 3.0f;
 
-        cell(bounds.removeFromLeft(third), "CURRENT",
-             SymbolPainter::formatValue(amps, "A"), Theme::captionValue());
-        cell(bounds.removeFromLeft(third), "POWER",
-             SymbolPainter::formatValue(watts, "W"), Theme::captionValue());
-        cell(bounds, "PEAK",
-             SymbolPainter::formatValue(peak, "A"), Theme::captionValue());
+        cell(bounds.removeFromLeft(third), "CURRENT", ElementInspector::formatReading(amps, "A"), Theme::captionValue());
+        cell(bounds.removeFromLeft(third), "POWER", ElementInspector::formatReading(watts, "W"), Theme::captionValue());
+        cell(bounds, "PEAK", ElementInspector::formatReading(peak, "A"), Theme::captionValue());
     }
 
     /** A round number at or below `rough`, from the 1-2-5 sequence.
@@ -1211,13 +1269,11 @@ namespace Celine
             g.drawText(caption, box.removeFromTop(13.0f), juce::Justification::centred, false);
 
             g.setColour(Theme::captionValue());
-            g.setFont(Fonts::light(15.0f));
-            g.drawText(value, box, juce::Justification::centred, false);
+            drawReading(g, value, box, 15.0f);
         };
 
-        cell(readout.removeFromLeft(half), "DC",
-             SymbolPainter::formatValue(reading.dcAverage, "V"));
-        cell(readout, "PEAK-PEAK", SymbolPainter::formatValue(reading.peakToPeak, "V"));
+        cell(readout.removeFromLeft(half), "DC", formatReading(reading.dcAverage, "V"));
+        cell(readout, "PEAK-PEAK", formatReading(reading.peakToPeak, "V"));
     }
 
     /** What the value box shows for a part. One place, so the box the value is
@@ -1424,9 +1480,6 @@ namespace Celine
         constexpr int labelBorderX = 5;
         constexpr int labelBorderY = 1;
 
-        /** The narrowest the card gets while it shows the shortcut list, so a
-            short list does not leave a sliver. */
-        constexpr int minimumHintCardWidth = 180;
     } // namespace
 
     void ElementInspector::paint(juce::Graphics& g)
@@ -1458,20 +1511,31 @@ namespace Celine
 
     int ElementInspector::contentWidth() const
     {
-        if (element != nullptr)
-            return Theme::inspectorWidth - 2 * inspectorInsetX;
+        // One width whatever is showing, so the card does not jump sideways as
+        // the selection changes. What it shows is fitted to it instead.
+        return Theme::inspectorWidth - 2 * inspectorInsetX;
+    }
 
-        const int title = juce::roundToInt(std::ceil(
-                              juce::GlyphArrangement::getStringWidth(titleLabel.getFont(), titleLabel.getText())))
-                          + 2 * labelBorderX;
+    void ElementInspector::fitHintToWidth()
+    {
+        // The width a hint line has: the field column less the fields' own
+        // margin either side, as layOutFields leaves it, and a scrollbar's
+        // width spare -- on a short window the list scrolls, the bar takes its
+        // width from the text, and a line measured to fit exactly then wraps,
+        // pushing the last lines out of a label sized for one line each.
+        const int room = contentWidth() - 16 - viewport.getScrollBarThickness();
 
-        // The fields' own margin either side, as layOutFields leaves it, and a
-        // scrollbar's width spare: on a short window the list scrolls, the bar
-        // takes its width from the text, and a line measured to fit exactly
-        // then wraps -- pushing the last lines out of a label sized for one
-        // line each.
-        return juce::jmax(minimumHintCardWidth - 2 * inspectorInsetX,
-                          juce::jmax(title, hintWidth()) + 16 + viewport.getScrollBarThickness());
+        // The largest size, half a point at a time, at which the longest line
+        // fits. Measured rather than scaled, since lettering is hinted to the
+        // pixel and not quite proportional to its size.
+        float height = hintFontHeight;
+        hintLabel.setFont(Fonts::light(height));
+
+        while (height > 8.0f && hintWidth() > room)
+        {
+            height -= 0.5f;
+            hintLabel.setFont(Fonts::light(height));
+        }
     }
 
     juce::Point<int> ElementInspector::getPreferredSize()
@@ -1517,7 +1581,18 @@ namespace Celine
 
         if (modelDescription.isVisible())
         {
-            modelDescription.setBounds(area.removeFromTop(46));
+            // As many lines as the description wraps to at this width, rather
+            // than a fixed three: the card is narrow, and a fourth line under a
+            // three-line box is simply not drawn.
+            const auto font = modelDescription.getFont();
+            juce::AttributedString text;
+            text.append(modelDescription.getText(), font);
+            juce::TextLayout layout;
+            layout.createLayout(text, static_cast<float>(area.getWidth() - 2 * labelBorderX));
+
+            const int lines = juce::jmax(1, layout.getNumLines());
+            modelDescription.setBounds(area.removeFromTop(
+                juce::roundToInt(std::ceil(static_cast<float>(lines) * font.getHeight())) + 2 * labelBorderY + 2));
             area.removeFromTop(4);
         }
 

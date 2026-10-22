@@ -1742,15 +1742,14 @@ void PluginEditor::layOutFloatingPanels()
 
     //--------------------------------------------------------------------------
     // The palette down the left and the inspector down the right, both from the
-    // top. The inspector's column is reserved at the fixed width rather than
-    // whatever it is showing, so nothing shifts sideways every time the selection
-    // changes -- unless what it shows is wider.
+    // top. The inspector is one width whatever it is showing, so nothing shifts
+    // sideways as the selection changes.
     const auto wanted = inspector.getPreferredSize();
     const auto tallPalette = palette.getPreferredSize (room.getHeight());
     const int paletteFootprint = juce::jmin (tallPalette.x, room.getWidth() / 2);
 
     const int columnWidth = juce::jmin (room.getRight() - (room.getX() + paletteFootprint) - margin,
-                                        juce::jmax (Celine::Theme::inspectorWidth, wanted.x));
+                                        Celine::Theme::inspectorWidth);
     const auto column = room.withTrimmedLeft (room.getWidth() - columnWidth);
 
     // The console goes between the two. The window's minimum width is chosen so

@@ -61,20 +61,20 @@ namespace Celine
             with room left for the scrollbar when the knobs overflow. Everything
             in the band is sized off the numbers below, so the band is made
             smaller here and nowhere else. */
-        static constexpr int preferredHeight = 88;
+        static constexpr int preferredHeight = 92;
 
         /** Fixed rather than divided out of the available width -- that is the
             whole point of scrolling. */
-        static constexpr int cellWidth = 66;
+        static constexpr int cellWidth = 69;
 
         /** The knob cap. Smaller than the design draws it, so the band takes
             less of the window from the sheet. */
-        static constexpr int knobSize = 40;
+        static constexpr int knobSize = 42;
 
         /** The value under each knob, which the design did not have and the knobs
             turned out to need: a notch on a cap says roughly where it is, and
             two takes on a bench want to be compared at exactly the same setting. */
-        static constexpr int valueHeight = 14;
+        static constexpr int valueHeight = 15;
 
         /** Puts a value under `knob`, written by `format` and read back by `parse`
             -- the box is editable, so a setting can be typed as well as dialled.
@@ -96,8 +96,8 @@ namespace Celine
 
         /** The channel picker, which is the one control in the band that is a
             dropdown rather than a knob. */
-        static constexpr int comboWidth = 92;
-        static constexpr int comboHeight = 26;
+        static constexpr int comboWidth = 97;
+        static constexpr int comboHeight = 27;
 
         //======================================================================
         /** Caption over control, the pair centred in `cell`, and the control's
@@ -134,12 +134,12 @@ namespace Celine
         std::vector<Widget> widgets;
 
         /** The caption, and the air between it and what it names. */
-        static constexpr int labelHeight = 14;
+        static constexpr int labelHeight = 15;
         static constexpr int labelGap = 2;
 
         /** A switch's pill, which is shorter than a knob. */
-        static constexpr int toggleHeight = 17;
-        static constexpr int toggleWidth = 50;
+        static constexpr int toggleHeight = 18;
+        static constexpr int toggleWidth = 53;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ControlStrip)
     };

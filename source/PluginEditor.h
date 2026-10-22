@@ -116,7 +116,7 @@ private:
         constructor because resized() has to know it too -- it will not record a size
         below this as one worth reopening at.
 
-        1024 x 667 is the chosen floor. The height is the shortest window whose
+        1024 x 671 is the chosen floor. The height is the shortest window whose
         palette shows every row without scrolling -- its 469 px list, plus the
         toolbar, the top ruler, the bottom band and a margin above and below -- and
         "The smallest window shows the whole palette" holds it to that. The width can
@@ -125,7 +125,7 @@ private:
         console room between them. */
     int minimumWidth = 0;
     static constexpr int smallestWidth = 1024;
-    static constexpr int minimumHeight = 667;
+    static constexpr int minimumHeight = 671;
 
     /** The narrowest window in which the console fits between the palette and the
         inspector with every margin kept, so the palette can always run the full

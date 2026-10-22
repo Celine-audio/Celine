@@ -323,13 +323,13 @@ TEST_CASE ("Editor size rides with the session, not with a preset", "[plugin]")
 }
 
 
-TEST_CASE ("The window is never smaller than 1024 x 667", "[plugin]")
+TEST_CASE ("The window is never smaller than 1024 x 671", "[plugin]")
 {
     runWithinPluginEditor ([] (PluginProcessor& plugin) {
         auto* limits = plugin.getActiveEditor()->getConstrainer();
         REQUIRE (limits != nullptr);
         CHECK (limits->getMinimumWidth() == 1024);
-        CHECK (limits->getMinimumHeight() == 667);
+        CHECK (limits->getMinimumHeight() == 671);
     });
 
     // And a size remembered from before the floor rose opens at the floor
@@ -340,7 +340,7 @@ TEST_CASE ("The window is never smaller than 1024 x 667", "[plugin]")
 
     std::unique_ptr<juce::AudioProcessorEditor> editor (plugin.createEditor());
     CHECK (editor->getWidth() == 1024);
-    CHECK (editor->getHeight() == 667);
+    CHECK (editor->getHeight() == 671);
 }
 
 TEST_CASE ("The smallest window shows the whole palette", "[plugin][ui]")
@@ -460,11 +460,10 @@ TEST_CASE ("The palette is two to a row, with every name fitted to its column", 
 
     constexpr int column = Celine::Theme::paletteColumnWidth;
 
-    // One size for every name, no bigger than the design's, and small enough
-    // that the longest fits -- MOSFE Transistor, at the shipped sizes.
+    // One size for every name: the full size, since the column is sized for the
+    // longest of them -- MOSFE Transistor -- to fit at it.
     const float fontHeight = palette.getNameFontHeight();
-    CHECK (fontHeight <= Celine::Theme::paletteFontHeight);
-    CHECK (fontHeight >= 9.0f);
+    CHECK (juce::approximatelyEqual (fontHeight, Celine::Theme::paletteFontHeight));
 
     const auto font = Celine::Fonts::light (fontHeight);
     const float room = static_cast<float> (column - (Celine::Theme::paletteRowHeight - 4) - 10);
@@ -715,6 +714,131 @@ TEST_CASE ("The inspector card is the size of what it shows", "[plugin][ui]")
     inspector.setSize (hint.x, hint.y);
     CHECK (! viewport->getVerticalScrollBar().isVisible());
 }
+
+TEST_CASE ("The inspector is one width whatever it shows, and everything fits it", "[plugin][ui]")
+{
+    Celine::ElementInspector inspector;
+    auto* viewport = dynamic_cast<juce::Viewport*> (inspector.getChildComponent (0));
+    REQUIRE (viewport != nullptr);
+    auto* fields = viewport->getViewedComponent();
+
+    auto check = [&] (const juce::String& what)
+    {
+        INFO (what);
+        const auto size = inspector.getPreferredSize();
+        CHECK (size.x == Celine::Theme::inspectorWidth);
+
+        // Laid out at that size, nothing visible runs past the field column.
+        inspector.setSize (size.x, size.y);
+
+        for (auto* child : fields->getChildren())
+        {
+            if (! child->isVisible())
+                continue;
+
+            INFO (child->getName() << " at " << child->getBounds().toString());
+            CHECK (child->getRight() <= fields->getWidth());
+            CHECK (child->getX() >= 0);
+        }
+    };
+
+    inspector.setElement (nullptr);
+    check ("nothing selected");
+
+    for (int i = 0; i < SchematicModel::numElementTypes; ++i)
+    {
+        SchematicModel::Element part;
+        part.id = i + 1;
+        part.type = static_cast<SchematicModel::ElementType> (i);
+
+        inspector.setElement (&part);
+        check (SchematicModel::getElementInfo (part.type).name);
+        inspector.setElement (nullptr);
+    }
+}
+
+TEST_CASE ("Readings show four digits after the point", "[plugin][ui]")
+{
+    using Celine::ElementInspector;
+
+    // The readout that prompted it: a picoamp leak through 475k, which came out
+    // as "-1.14447e-13A" and was cut off at the edge of its box.
+    CHECK (ElementInspector::formatReading (-1.14447e-13, "A") == "-0.1144pA");
+    CHECK (ElementInspector::formatReading (-0.114447, "A") == "-114.4470mA");
+    CHECK (ElementInspector::formatReading (6.22162e-9, "W") == "6.2216nW");
+    CHECK (ElementInspector::formatReading (12.5, "V") == "12.5000V");
+    CHECK (ElementInspector::formatReading (0.0, "V") == "0.0000V");
+
+    // Rounding to zero does not leave a sign behind, and a value that rounds up
+    // to the next prefix is written in it.
+    CHECK (ElementInspector::formatReading (-1.0e-18, "A") == "0.0000A");
+    CHECK (ElementInspector::formatReading (0.99999999, "V") == "1.0000V");
+
+    // Always exactly four, whatever the size.
+    for (const double value : { 3.0e-15, 2.2e-11, 4.7e-7, 0.0331, 1.0, 47.0, 999.0, 12345.0, -8.2e5, 3.3e9 })
+    {
+        const auto text = ElementInspector::formatReading (value, "V");
+        INFO (value << " -> " << text);
+        const auto decimals = text.fromFirstOccurrenceOf (".", false, false)
+                                  .initialSectionContainingOnly ("0123456789");
+        CHECK (decimals.length() == 4);
+        CHECK (! text.containsChar ('e'));
+    }
+}
+
+#if JUCE_CELINE_TOOLTIP_FOR_COMPONENT
+TEST_CASE ("A tooltip sits at its control's corner, not at the pointer", "[plugin][ui]")
+{
+    // The placement is the house kit's (LookAndFeelBase::getTooltipBoundsForComponent),
+    // reached through Celine's JUCE, whose TooltipWindow hands the look and feel the
+    // component a tip belongs to. Checked here through the editor's own look and
+    // feel, since that is what the tooltip window asks.
+    runWithinPluginEditor ([] (PluginProcessor& plugin) {
+        auto* editor = plugin.getActiveEditor();
+        editor->setSize (1331, 929);
+
+        Celine::ElementPalette* palette = nullptr;
+        juce::Button* rebuild = nullptr;
+
+        for (auto* child : editor->getChildren())
+        {
+            if (auto* p = dynamic_cast<Celine::ElementPalette*> (child)) palette = p;
+            if (auto* b = dynamic_cast<juce::TextButton*> (child); b != nullptr && b->getButtonText() == "Rebuild") rebuild = b;
+        }
+
+        REQUIRE (palette != nullptr);
+        REQUIRE (rebuild != nullptr);
+
+        auto& lf = editor->getLookAndFeel();
+        const auto area = editor->getLocalBounds();
+        const juce::String tip ("Resistor");
+
+        // Not falling back to the pointer: a look and feel that left this empty
+        // would get stock JUCE's placement.
+        auto* resistor = PaletteParts (*palette).entryNamed ("Resistor");
+        REQUIRE (resistor != nullptr);
+
+        const auto entryArea = editor->getLocalArea (resistor, resistor->getLocalBounds());
+        const auto forEntry = lf.getTooltipBoundsForComponent (tip, entryArea, area);
+
+        REQUIRE (! forEntry.isEmpty());
+        CHECK (forEntry.getBottomLeft() == entryArea.getTopRight());
+
+        // The same size the pointer-placed tip has.
+        const auto atPointer = lf.getTooltipBounds (tip, area.getCentre(), area);
+        CHECK (forEntry.getWidth() == atPointer.getWidth());
+        CHECK (forEntry.getHeight() == atPointer.getHeight());
+
+        // A toolbar button has no room above, so it goes below, from the
+        // bottom-right corner, and stays inside the window.
+        const auto buttonArea = rebuild->getBounds();
+        const auto forButton = lf.getTooltipBoundsForComponent (tip, buttonArea, area);
+        CHECK (forButton.getY() == buttonArea.getBottom());
+        CHECK (forButton.getX() == juce::jmin (buttonArea.getRight(), area.getRight() - forButton.getWidth()));
+        CHECK (area.contains (forButton));
+    });
+}
+#endif
 
 TEST_CASE ("The console goes after a clean message and stays for a problem", "[plugin][ui]")
 {
