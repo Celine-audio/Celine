@@ -279,6 +279,13 @@ public:
     std::atomic<int> editorWidth { 1060 };
     std::atomic<int> editorHeight { 700 };
 
+    /** Whether the palette is folded to symbols. Here for the same reason the size
+        is -- the editor is rebuilt every time the window closes, and the panel
+        should come back as it was left -- but in neither the state nor the
+        document: it is how this window looks, not what the session sounds like.
+        Read and written on the message thread only. */
+    bool paletteCollapsed = false;
+
     /** Which preset the sheet came from, as the toolbar field shows it.
 
         Here for the same reason the size is: the editor is rebuilt every time the

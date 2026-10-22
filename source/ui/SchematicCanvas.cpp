@@ -106,7 +106,7 @@ namespace Celine
         if (const auto* element = schematic.findElement(elementId))
         {
             const auto centre = painter.toPixel({element->x, element->y});
-            const auto visible = getLocalBounds().toFloat().reduced(24.0f);
+            const auto visible = getFramingArea().toFloat().reduced(24.0f);
 
             if (! visible.contains(centre))
                 painter.origin += visible.getCentre() - centre;
@@ -362,16 +362,31 @@ namespace Celine
         // drawn outside the pin geometry the bounds are computed from.
         bounds = bounds.expanded(5);
 
-        const float scaleX = static_cast<float>(getWidth()) / static_cast<float>(juce::jmax(1, bounds.getWidth()));
-        const float scaleY = static_cast<float>(getHeight()) / static_cast<float>(juce::jmax(1, bounds.getHeight()));
+        const auto area = getFramingArea().toFloat();
+        const float scaleX = area.getWidth() / static_cast<float>(juce::jmax(1, bounds.getWidth()));
+        const float scaleY = area.getHeight() / static_cast<float>(juce::jmax(1, bounds.getHeight()));
 
         painter.gridSize = juce::jlimit(minGridSize, maxGridSize, juce::jmin(scaleX, scaleY));
-        painter.origin = {static_cast<float>(getWidth()) * 0.5f
-                              - (static_cast<float>(bounds.getCentreX()) * painter.gridSize),
-                          static_cast<float>(getHeight()) * 0.5f
-                              - (static_cast<float>(bounds.getCentreY()) * painter.gridSize)};
+        painter.origin = {area.getCentreX() - (static_cast<float>(bounds.getCentreX()) * painter.gridSize),
+                          area.getCentreY() - (static_cast<float>(bounds.getCentreY()) * painter.gridSize)};
 
         repaint();
+    }
+
+    juce::Rectangle<int> SchematicCanvas::getFramingArea() const
+    {
+        const auto area = framingInsets.subtractedFrom(getLocalBounds());
+
+        // Only when the panels leave a sliver does it frame in the whole canvas
+        // instead, under them. A fixed floor rather than a share of the canvas:
+        // a third of it was more than the gap the panels leave on the narrowest
+        // window, so fit-to-screen put the drawing under them there.
+        constexpr int narrowest = 120;
+
+        if (area.getWidth() < narrowest || area.getHeight() < narrowest)
+            return getLocalBounds();
+
+        return area;
     }
 
     void SchematicCanvas::resized()

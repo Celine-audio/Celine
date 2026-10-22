@@ -91,6 +91,7 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     updateActionButtons();
 
     setResizable (true, true);
+    minimumWidth = narrowestWindow();
     const int minWidth = minimumWidth;
     const int minHeight = minimumHeight;
 
@@ -209,10 +210,17 @@ void PluginEditor::buildToolbar()
 
 void PluginEditor::buildPanels()
 {
-    addAndMakeVisible (palette);
+    // The sheet first, so the three floating over it are in front of it. The
+    // console shows itself when it has something to say, so it starts hidden.
     addAndMakeVisible (canvas);
+    addChildComponent (console);
     addAndMakeVisible (inspector);
-    addAndMakeVisible (console);
+    addAndMakeVisible (palette);
+
+    // Both size themselves to what they are showing, so a new part or a new
+    // message can move them without the window having changed.
+    inspector.onPreferredSizeChanged = [this] { layOutFloatingPanels(); };
+    console.onPreferredSizeChanged = [this] { layOutFloatingPanels(); };
 
     // Clicking a message selects the part it names.
     console.onMessageClicked = [this] (int elementId)
@@ -223,6 +231,15 @@ void PluginEditor::buildPanels()
 
     palette.onTypeChosen = [this] (SchematicModel::ElementType type) { canvas.setPendingType (type); };
     palette.onWireChosen = [this] { canvas.setTool (Celine::SchematicCanvas::Tool::Wire); };
+
+    // Folded or not as it was left -- the processor outlives this window -- and
+    // folding it changes its width, so everything around it is placed again.
+    palette.setCollapsed (processorRef.paletteCollapsed);
+    palette.onCollapsedChanged = [this]
+    {
+        processorRef.paletteCollapsed = palette.isCollapsed();
+        layOutFloatingPanels();
+    };
 
     canvas.onSchematicChanged = [this]
     {
@@ -322,7 +339,7 @@ void PluginEditor::buildBottomBand()
 
     for (auto* label : { &inputLabel, &outputLabel, &channelModeLabel })
     {
-        label->setFont (Celine::Fonts::light (15.0f));
+        label->setFont (Celine::Fonts::light (Celine::Theme::bandCaptionFontHeight));
         label->setJustificationType (juce::Justification::centred);
         addAndMakeVisible (label);
     }
@@ -1676,9 +1693,7 @@ void PluginEditor::layOutPanels (juce::Rectangle<int> area)
 
     // INPUT hard left, VOLUME hard right, the circuit's own knobs between: it
     // reads as signal flow, and bracketing the drawn controls says that neither
-    // is part of any circuit. The left column is as wide as the palette above
-    // it, which puts INPUT over the palette's centre line and starts the drawn
-    // knobs at the sheet's left edge.
+    // is part of any circuit. The left column is where the design puts it.
     placeKnob (strip.removeFromLeft (paletteWidth - 6), inputSlider, inputLabel);
 
     constexpr int channelsWidth = Strip::comboWidth + 12;
@@ -1696,20 +1711,108 @@ void PluginEditor::layOutPanels (juce::Rectangle<int> area)
     controlStrip.setBounds (strip);
 
     //--------------------------------------------------------------------------
-    // Palette, canvas, inspector
-    palette.setBounds (area.removeFromLeft (paletteWidth));
-    // Right-hand column: the inspector on top, the console filling the rest.
-    auto rightColumn = area.removeFromRight (inspectorWidth);
-
-    // The inspector gets what it needs and the console takes the rest -- but the
-    // console never gets less than a few rows, which is what the second term
-    // buys on a short window. Halving the column instead, as this did, put the
-    // console's top a hundred pixels above where the design draws it on any
-    // window tall enough for the inspector to fit.
-    inspector.setBounds (rightColumn.removeFromTop (
-        juce::jmin (inspectorHeight, juce::jmax (120, rightColumn.getHeight() - 160))));
-    console.setBounds (rightColumn);
+    // The sheet takes everything between the toolbar and the band, edge to
+    // edge; the panels float over it.
     canvas.setBounds (area);
+    layOutFloatingPanels();
+}
+
+void PluginEditor::layOutFloatingPanels()
+{
+    const auto sheet = canvas.getBounds();
+
+    if (sheet.isEmpty())
+        return;
+
+    constexpr int margin = Celine::Theme::floatingMargin;
+
+    // The console always keeps room for one line, so a message has somewhere to
+    // go however tall the other two are -- the design's one-line pill.
+    constexpr int consoleLine = 43;
+
+    // What the panels are placed in: the sheet less its rulers and a margin all
+    // round. Nothing below is allowed outside it, which is what keeps every panel
+    // off the toolbar and the bottom band.
+    const auto room = sheet.withTrimmedTop (Celine::SchematicCanvas::topRulerThickness)
+                          .withTrimmedLeft (Celine::SchematicCanvas::leftRulerThickness)
+                          .reduced (margin);
+
+    if (room.getWidth() <= 0 || room.getHeight() <= 0)
+        return;
+
+    //--------------------------------------------------------------------------
+    // The palette down the left and the inspector down the right, both from the
+    // top. The inspector's column is reserved at the fixed width rather than
+    // whatever it is showing, so nothing shifts sideways every time the selection
+    // changes -- unless what it shows is wider.
+    const auto wanted = inspector.getPreferredSize();
+    const auto tallPalette = palette.getPreferredSize (room.getHeight());
+    const int paletteFootprint = juce::jmin (tallPalette.x, room.getWidth() / 2);
+
+    const int columnWidth = juce::jmin (room.getRight() - (room.getX() + paletteFootprint) - margin,
+                                        juce::jmax (Celine::Theme::inspectorWidth, wanted.x));
+    const auto column = room.withTrimmedLeft (room.getWidth() - columnWidth);
+
+    // The console goes between the two. The window's minimum width is chosen so
+    // there is always room for it there, and then the palette runs the full
+    // height of the sheet, as far from the band as from the ruler. Only a host
+    // that ignores the minimum gets the fallback: the palette stops short and the
+    // console goes underneath it.
+    const int betweenWidth = column.getX() - margin - (room.getX() + paletteFootprint + margin);
+    const bool consoleBetween = betweenWidth >= Celine::MessageConsole::minimumWidth;
+
+    const auto paletteSize = consoleBetween ? tallPalette
+                                            : palette.getPreferredSize (room.getHeight() - margin - consoleLine);
+    palette.setBounds (room.getX(), room.getY(), juce::jmin (paletteSize.x, room.getWidth() / 2), paletteSize.y);
+
+    const int inspectorWidth = juce::jmin (wanted.x, column.getWidth());
+    inspector.setBounds (column.getRight() - inspectorWidth, column.getY(),
+                         inspectorWidth, juce::jmin (wanted.y, column.getHeight()));
+
+    //--------------------------------------------------------------------------
+    // The console, along the bottom, as big as its messages -- centred on the
+    // sheet as the design has it when the panels leave room for that, otherwise
+    // in the space between them.
+    {
+        const auto span = consoleBetween ? room.withLeft (palette.getRight() + margin)
+                                                .withRight (column.getX() - margin)
+                                         : room.withRight (column.getX() - margin)
+                                                .withTop (palette.getBottom() + margin);
+
+        const auto size = console.getPreferredSize (span.getWidth());
+        const int width = juce::jmin (size.x, span.getWidth());
+        const int height = juce::jmin (size.y, span.getHeight(), juce::jmax (sheet.getHeight() / 3, consoleLine));
+
+        const int centre = sheet.getCentreX();
+        const int halfRoom = juce::jmin (centre - span.getX(), span.getRight() - centre);
+        const int x = width <= 2 * halfRoom ? centre - width / 2 : span.getCentreX() - width / 2;
+
+        console.setBounds (x, room.getBottom() - height, width, height);
+    }
+
+    //--------------------------------------------------------------------------
+    // Fit-to-screen frames the drawing in what the palette and the inspector
+    // leave uncovered. Not the console: it comes and goes on its own.
+    canvas.setFramingInsets ({ Celine::SchematicCanvas::topRulerThickness,
+                               palette.getRight() - sheet.getX(),
+                               0,
+                               sheet.getRight() - inspector.getX() });
+}
+
+int PluginEditor::narrowestWindow() const
+{
+    constexpr int margin = Celine::Theme::floatingMargin;
+
+    // Left to right: the ruler, the palette, the console at its narrowest, the
+    // inspector's column, with a margin either side of each.
+    const int floating = Celine::SchematicCanvas::leftRulerThickness
+                       + margin + palette.getMaximumWidth()
+                       + margin + Celine::MessageConsole::minimumWidth
+                       + margin + Celine::Theme::inspectorWidth + margin;
+
+    // And never narrower than the chosen floor, which is what decides it today:
+    // the panels need about 800.
+    return juce::jmax (floating, smallestWidth);
 }
 
 void PluginEditor::resized()

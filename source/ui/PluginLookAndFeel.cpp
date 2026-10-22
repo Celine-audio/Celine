@@ -87,7 +87,7 @@ juce::Label* PluginLookAndFeel::createSliderTextBox(juce::Slider& slider)
         label->setColour(juce::CaretComponent::caretColourId, Theme::textOnPanel());
         label->setColour(juce::TextEditor::highlightColourId, Theme::accent().withAlpha(0.35f));
         label->setColour(juce::TextEditor::highlightedTextColourId, Theme::textOnPanel());
-        label->setFont(Fonts::light(13.0f));
+        label->setFont(Fonts::light(Theme::bandValueFontHeight));
 
         // Typed where it is read. A label's editor starts left-aligned whatever
         // the label is, so a click made the value jump to the cell's edge.

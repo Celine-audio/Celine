@@ -5,6 +5,7 @@
 #include <ui/ControlStrip.h>
 #include <ui/EditorPanels.h>
 #include <ui/SchematicCanvas.h>
+#include <CelineUI/Fonts.h>
 #include <CelineUI/Theme.h>
 #include <juce_dsp/juce_dsp.h>
 #include <set>
@@ -322,33 +323,73 @@ TEST_CASE ("Editor size rides with the session, not with a preset", "[plugin]")
 }
 
 
+TEST_CASE ("The window is never smaller than 1024 x 667", "[plugin]")
+{
+    runWithinPluginEditor ([] (PluginProcessor& plugin) {
+        auto* limits = plugin.getActiveEditor()->getConstrainer();
+        REQUIRE (limits != nullptr);
+        CHECK (limits->getMinimumWidth() == 1024);
+        CHECK (limits->getMinimumHeight() == 667);
+    });
+
+    // And a size remembered from before the floor rose opens at the floor
+    // rather than below it.
+    PluginProcessor plugin;
+    plugin.editorWidth = 900;
+    plugin.editorHeight = 500;
+
+    std::unique_ptr<juce::AudioProcessorEditor> editor (plugin.createEditor());
+    CHECK (editor->getWidth() == 1024);
+    CHECK (editor->getHeight() == 667);
+}
+
+TEST_CASE ("The smallest window shows the whole palette", "[plugin][ui]")
+{
+    // The minimum height is chosen for exactly this, so a row added to the
+    // palette, a taller toolbar or band, or a wider margin shows up here as a
+    // floor that no longer fits rather than as a scrollbar nobody expected.
+    runWithinPluginEditor ([] (PluginProcessor& plugin) {
+        auto* editor = plugin.getActiveEditor();
+        auto* limits = editor->getConstrainer();
+        REQUIRE (limits != nullptr);
+
+        Celine::ElementPalette* palette = nullptr;
+
+        for (auto* child : editor->getChildren())
+            if (auto* p = dynamic_cast<Celine::ElementPalette*> (child))
+                palette = p;
+
+        REQUIRE (palette != nullptr);
+
+        editor->setSize (limits->getMinimumWidth(), limits->getMinimumHeight());
+        CHECK (! palette->isScrolling());
+
+        // And it is the floor rather than merely enough: a pixel shorter scrolls.
+        editor->setSize (limits->getMinimumWidth(), limits->getMinimumHeight() - 1);
+        CHECK (palette->isScrolling());
+    });
+}
+
 TEST_CASE ("Resizing the editor gives every extra pixel to the canvas", "[plugin]")
 {
     runWithinPluginEditor ([] (PluginProcessor& plugin) {
         auto* editor = plugin.getActiveEditor();
         REQUIRE (editor->isResizable());
 
-        // The panels are lists of fixed-width things and the strip is a row of
-        // knobs, so the sheet is the only part of the window worth growing.
+        // The panels float over the sheet and the strip is a row of knobs, so
+        // the sheet is the only part of the window worth growing -- and it runs
+        // edge to edge between the toolbar and the band.
         auto canvasBounds = [] (int width, int height)
         {
-            // Read from the theme rather than restated. These were four literals
+            // Read from the theme rather than restated. These were literals
             // copied out of the layout code, which is a test that stops testing
             // the moment the design moves: every one of them went stale in the
             // Figma pass and the failure said "no child has these bounds" rather
-            // than "the palette is a different width now".
-            //
-            // What is actually under test is the *rule* -- the four fixed edges
-            // keep their sizes and the sheet takes the rest -- so the numbers
-            // should come from wherever the rule reads them.
-            constexpr int palette = Celine::Theme::paletteWidth;
-            constexpr int inspector = Celine::Theme::inspectorWidth;
+            // than "the toolbar is a different height now".
             constexpr int toolbar = Celine::Theme::toolbarHeight;
             constexpr int strip = Celine::ControlStrip::preferredHeight;
 
-            return juce::Rectangle<int> { palette, toolbar,
-                                          width - palette - inspector,
-                                          height - toolbar - strip };
+            return juce::Rectangle<int> { 0, toolbar, width, height - toolbar - strip };
         };
 
         auto hasChildAt = [editor] (juce::Rectangle<int> bounds)
@@ -360,7 +401,7 @@ TEST_CASE ("Resizing the editor gives every extra pixel to the canvas", "[plugin
             return false;
         };
 
-        for (auto size : { juce::Point<int> { 1000, 700 }, juce::Point<int> { 1400, 900 } })
+        for (auto size : { juce::Point<int> { 1100, 700 }, juce::Point<int> { 1400, 900 } })
         {
             editor->setSize (size.x, size.y);
             INFO ("at " << size.x << "x" << size.y);
@@ -374,50 +415,375 @@ TEST_CASE ("Resizing the editor gives every extra pixel to the canvas", "[plugin
     });
 }
 
-TEST_CASE ("The palette's rows never run under its scrollbar", "[plugin][ui]")
+namespace
 {
-    // A viewport decides its scrollbar from the list's current size, so a
-    // width asked of it during layout describes the list as it was. On the
-    // first layout that is an empty list: no bar, full width -- and then the
-    // bar arrives on top of rows laid out without it, clipping their rounded
-    // right-hand ends square until the next resize puts them right. Which is
-    // why it came and went.
-    const auto check = [] (Celine::ElementPalette& palette, bool shouldScroll)
+    /** The palette's list and its fold tab, which are its two children. */
+    struct PaletteParts
     {
-        auto* viewport = dynamic_cast<juce::Viewport*> (palette.getChildComponent (0));
-        REQUIRE (viewport != nullptr);
+        juce::Viewport* viewport = nullptr;
+        juce::Component* list = nullptr;
+        juce::Button* tab = nullptr;
 
-        const int listWidth = viewport->getViewedComponent()->getWidth();
-        const int visibleWidth = viewport->getMaximumVisibleWidth();
+        explicit PaletteParts (Celine::ElementPalette& palette)
+        {
+            for (auto* child : palette.getChildren())
+            {
+                if (auto* v = dynamic_cast<juce::Viewport*> (child)) viewport = v;
+                else if (auto* b = dynamic_cast<juce::Button*> (child)) tab = b;
+            }
 
-        INFO ("palette " << palette.getWidth() << "x" << palette.getHeight() << ": rows "
-                         << listWidth << " px wide, " << visibleWidth << " px visible");
-        CHECK (viewport->getVerticalScrollBar().isVisible() == shouldScroll);
+            if (viewport != nullptr)
+                list = viewport->getViewedComponent();
+        }
 
-        // Exactly, not merely within: narrower would leave a dead strip down
-        // the right where the bar isn't.
-        CHECK (listWidth == visibleWidth);
+        juce::Component* entryNamed (const juce::String& name) const
+        {
+            for (auto* entry : list->getChildren())
+                if (entry->getName() == name)
+                    return entry;
+
+            return nullptr;
+        }
     };
+}
 
-    SECTION ("growing a list that fits into one that scrolls")
+TEST_CASE ("The palette is two to a row, with every name fitted to its column", "[plugin][ui]")
+{
+    Celine::ElementPalette palette;
+    const PaletteParts parts (palette);
+    REQUIRE (parts.list != nullptr);
+    REQUIRE (parts.tab != nullptr);
+
+    const auto size = palette.getPreferredSize();
+    palette.setSize (size.x, size.y);
+    CHECK (! palette.isScrolling());
+
+    constexpr int column = Celine::Theme::paletteColumnWidth;
+
+    // One size for every name, no bigger than the design's, and small enough
+    // that the longest fits -- MOSFE Transistor, at the shipped sizes.
+    const float fontHeight = palette.getNameFontHeight();
+    CHECK (fontHeight <= Celine::Theme::paletteFontHeight);
+    CHECK (fontHeight >= 9.0f);
+
+    const auto font = Celine::Fonts::light (fontHeight);
+    const float room = static_cast<float> (column - (Celine::Theme::paletteRowHeight - 4) - 10);
+
+    // Every entry is one column wide, two to a row, the pairs side by side.
+    const int count = parts.list->getNumChildComponents();
+
+    for (int i = 0; i < count; ++i)
     {
-        Celine::ElementPalette palette;
-        palette.setSize (200, 4000);
-        check (palette, false);
+        auto* entry = parts.list->getChildComponent (i);
+        INFO (entry->getName());
+        CHECK (entry->getWidth() == column);
+        CHECK (juce::GlyphArrangement::getStringWidth (font, entry->getName()) <= room);
 
-        palette.setSize (200, 300);
-        check (palette, true);
-
-        palette.setSize (200, 4000);
-        check (palette, false);
+        if (i % 2 == 1)
+        {
+            auto* partner = parts.list->getChildComponent (i - 1);
+            CHECK (partner->getY() == entry->getY());
+            CHECK (partner->getRight() < entry->getX());
+        }
     }
 
-    SECTION ("opened straight into a window too short for it")
+    for (auto pair : { std::pair { "Transformer", "Transformer (CT)" }, std::pair { "MOSFE Transistor", "Diode" },
+                       std::pair { "BJ Transistor", "JFE Transistor" } })
     {
-        Celine::ElementPalette palette;
-        palette.setSize (200, 300);
-        check (palette, true);
+        INFO (pair.first << " | " << pair.second);
+        REQUIRE (parts.entryNamed (pair.first) != nullptr);
+        REQUIRE (parts.entryNamed (pair.second) != nullptr);
+        CHECK (parts.entryNamed (pair.first)->getY() == parts.entryNamed (pair.second)->getY());
     }
+
+    // Nothing overlaps and nothing leaves the list.
+    for (int i = 0; i < parts.list->getNumChildComponents(); ++i)
+    {
+        const auto a = parts.list->getChildComponent (i)->getBounds();
+        INFO ("entry " << i << " at " << a.toString());
+        CHECK (parts.list->getLocalBounds().contains (a));
+
+        for (int j = i + 1; j < parts.list->getNumChildComponents(); ++j)
+            CHECK (! a.intersects (parts.list->getChildComponent (j)->getBounds()));
+    }
+
+    // The tab stands off the panel's right-hand edge, and the empty corners
+    // beside it are the sheet's, not the panel's.
+    const auto body = palette.getBodyBounds();
+    CHECK (parts.tab->getX() == body.getRight());
+    CHECK (palette.getLocalBounds().contains (parts.tab->getBounds()));
+    CHECK (palette.hitTest (parts.tab->getBounds().getCentreX(), parts.tab->getBounds().getCentreY()));
+    CHECK (! palette.hitTest (parts.tab->getBounds().getCentreX(), 1));
+    CHECK (palette.hitTest (body.getCentreX(), body.getCentreY()));
+}
+
+TEST_CASE ("The palette folds to symbols when asked, and only then", "[plugin][ui]")
+{
+    Celine::ElementPalette palette;
+    const PaletteParts parts (palette);
+    REQUIRE (parts.tab != nullptr);
+
+    const auto unfolded = palette.getPreferredSize();
+
+    // However small it is made, it does not fold on its own -- it scrolls.
+    palette.setSize (unfolded.x, 150);
+    CHECK (! palette.isCollapsed());
+    CHECK (palette.isScrolling());
+    CHECK (parts.entryNamed ("Resistor")->getWidth() == Celine::Theme::paletteColumnWidth);
+
+    int announcements = 0;
+    palette.onCollapsedChanged = [&announcements] { ++announcements; };
+
+    // The tab folds it, says so, and every entry becomes its symbol's square.
+    parts.tab->onClick();
+    CHECK (palette.isCollapsed());
+    CHECK (announcements == 1);
+
+    const auto folded = palette.getPreferredSize();
+    palette.setSize (folded.x, folded.y);
+    CHECK (folded.x < unfolded.x / 2);
+
+    // The same rows either way, so folding never moves an entry up or down.
+    CHECK (folded.y == unfolded.y);
+
+    for (auto* entry : parts.list->getChildren())
+        CHECK (entry->getWidth() == entry->getHeight());
+
+    // And back.
+    parts.tab->onClick();
+    CHECK (! palette.isCollapsed());
+    CHECK (announcements == 2);
+    CHECK (palette.getPreferredSize() == unfolded);
+}
+
+TEST_CASE ("A palette taller than its room scrolls rather than growing", "[plugin][ui]")
+{
+    Celine::ElementPalette palette;
+    const PaletteParts parts (palette);
+    REQUIRE (parts.viewport != nullptr);
+
+    const auto natural = palette.getPreferredSize();
+    const auto size = palette.getPreferredSize (natural.y / 2);
+    palette.setSize (size.x, size.y);
+
+    CHECK (size.y == natural.y / 2);
+    CHECK (palette.isScrolling());
+    CHECK (parts.viewport->getVerticalScrollBar().isVisible());
+
+    // The bar is beside the rows, not over them.
+    CHECK (parts.list->getWidth() <= parts.viewport->getMaximumVisibleWidth());
+}
+
+TEST_CASE ("The floating panels sit on the sheet and clear of one another", "[plugin][ui]")
+{
+    runWithinPluginEditor ([] (PluginProcessor& plugin) {
+        auto* editor = plugin.getActiveEditor();
+
+        Celine::SchematicCanvas* canvas = nullptr;
+        Celine::ElementPalette* palette = nullptr;
+        Celine::ElementInspector* inspector = nullptr;
+        Celine::MessageConsole* console = nullptr;
+
+        for (auto* child : editor->getChildren())
+        {
+            if (auto* c = dynamic_cast<Celine::SchematicCanvas*> (child)) canvas = c;
+            if (auto* p = dynamic_cast<Celine::ElementPalette*> (child)) palette = p;
+            if (auto* i = dynamic_cast<Celine::ElementInspector*> (child)) inspector = i;
+            if (auto* m = dynamic_cast<Celine::MessageConsole*> (child)) console = m;
+        }
+
+        REQUIRE (canvas != nullptr);
+        REQUIRE (palette != nullptr);
+        REQUIRE (inspector != nullptr);
+        REQUIRE (console != nullptr);
+
+        // In front of the sheet, or the sheet takes their clicks.
+        auto index = [editor] (juce::Component* c) { return editor->getIndexOfChildComponent (c); };
+        CHECK (index (palette) > index (canvas));
+        CHECK (index (inspector) > index (canvas));
+        CHECK (index (console) > index (canvas));
+
+        // Something to say, so the console has a size worth checking.
+        console->setMessages ("Built 15 parts", false, {});
+
+        // The smallest window the editor allows, up to a large one, with the
+        // sizes between where the arrangement changes.
+        auto* limits = editor->getConstrainer();
+        REQUIRE (limits != nullptr);
+        const int minWidth = limits->getMinimumWidth();
+        const int minHeight = limits->getMinimumHeight();
+
+        std::vector<juce::Point<int>> sizes { { minWidth, minHeight } };
+
+        for (int width = minWidth; width <= 2000; width += 97)
+            for (int height = minHeight; height <= 1200; height += 83)
+                sizes.push_back ({ width, height });
+
+        SchematicModel::Element resistor;
+        resistor.id = 1;
+        resistor.type = SchematicModel::ElementType::Resistor;
+
+        for (const bool folded : { false, true })
+        for (auto* selected : { (SchematicModel::Element*) nullptr, &resistor })
+        {
+            palette->setCollapsed (folded);
+            inspector->setElement (selected);
+
+            for (auto size : sizes)
+            {
+                editor->setSize (size.x, size.y);
+                editor->resized();
+                INFO ((folded ? "folded, " : "") << (selected ? "resistor" : "nothing") << " selected, at " << size.x << "x" << size.y
+                          << ": sheet " << canvas->getBounds().toString()
+                          << ", palette " << palette->getBounds().toString()
+                          << ", inspector " << inspector->getBounds().toString()
+                          << ", console " << console->getBounds().toString());
+
+                // On the sheet, clear of its rulers -- so off the toolbar and
+                // the bottom band too.
+                const auto open = canvas->getBounds()
+                                      .withTrimmedTop (Celine::SchematicCanvas::topRulerThickness)
+                                      .withTrimmedLeft (Celine::SchematicCanvas::leftRulerThickness);
+
+                for (auto* panel : { (juce::Component*) palette, (juce::Component*) inspector, (juce::Component*) console })
+                {
+                    CHECK (! panel->getBounds().isEmpty());
+                    CHECK (open.contains (panel->getBounds()));
+                }
+
+                // The palette down the left, the inspector down the right.
+                CHECK (palette->getX() < inspector->getX());
+
+                // A palette with more rows than room runs all the way down, as
+                // far from the band as it is from the ruler -- no space held
+                // back under it for the console, which goes between the two.
+                const int margin = Celine::Theme::floatingMargin;
+                CHECK (palette->getY() - open.getY() == margin);
+
+                if (palette->isScrolling())
+                    CHECK (canvas->getBottom() - palette->getBottom() == margin);
+
+                CHECK (console->getX() >= palette->getRight() + margin);
+
+                CHECK (! palette->getBounds().intersects (inspector->getBounds()));
+                CHECK (! palette->getBounds().intersects (console->getBounds()));
+                CHECK (! inspector->getBounds().intersects (console->getBounds()));
+
+                // And the console always has its line.
+                CHECK (console->getHeight() >= 40);
+            }
+        }
+
+        inspector->setElement (nullptr);
+        palette->setCollapsed (false);
+    });
+}
+
+TEST_CASE ("The inspector card is the size of what it shows", "[plugin][ui]")
+{
+    Celine::ElementInspector inspector;
+
+    int announcements = 0;
+    inspector.onPreferredSizeChanged = [&announcements] { ++announcements; };
+
+    const auto nothing = inspector.getPreferredSize();
+
+    // A note is a text field and a delete button: a short card, and the
+    // inspector says it has changed so the editor can resize it.
+    SchematicModel::Element note;
+    note.id = 1;
+    note.type = SchematicModel::ElementType::Text;
+    inspector.setElement (&note);
+
+    CHECK (announcements == 1);
+    const auto forNote = inspector.getPreferredSize();
+    CHECK (forNote.y < nothing.y);
+
+    // Every field it laid out fits in that card without scrolling.
+    inspector.setSize (forNote.x, forNote.y);
+    auto* viewport = dynamic_cast<juce::Viewport*> (inspector.getChildComponent (0));
+    REQUIRE (viewport != nullptr);
+    CHECK (! viewport->getVerticalScrollBar().isVisible());
+
+    // A card too short for its fields scrolls rather than clipping.
+    inspector.setSize (forNote.x, forNote.y / 2);
+    CHECK (viewport->getVerticalScrollBar().isVisible());
+
+    // And with nothing selected, the shortcut list fits whole.
+    inspector.setElement (nullptr);
+    const auto hint = inspector.getPreferredSize();
+    inspector.setSize (hint.x, hint.y);
+    CHECK (! viewport->getVerticalScrollBar().isVisible());
+}
+
+TEST_CASE ("The console goes after a clean message and stays for a problem", "[plugin][ui]")
+{
+    Celine::MessageConsole console;
+
+    // Nothing has happened yet, so there is nothing to show.
+    CHECK (! console.isVisible());
+
+    SECTION ("a clean build shows, and starts the clock")
+    {
+        console.setMessages ("Built 15 parts", false, {});
+        CHECK (console.isVisible());
+        CHECK (! console.hasProblems());
+        CHECK (console.isWaitingToHide());
+    }
+
+    SECTION ("a failed build stays until something clean replaces it")
+    {
+        console.setMessages ("Build failed", true, {});
+        CHECK (console.isVisible());
+        CHECK (console.hasProblems());
+        CHECK (! console.isWaitingToHide());
+
+        console.setMessages ("Built 15 parts", false, {});
+        CHECK (console.isWaitingToHide());
+    }
+
+    SECTION ("a warning holds it up too, through a headline that only changes the top line")
+    {
+        SchematicModel::Diagnostic warning;
+        warning.severity = SchematicModel::Diagnostic::Severity::Warning;
+        warning.text = "Pin 2 touches nothing else.";
+
+        console.setMessages ("Built 15 parts, 1 note", false, { warning });
+        CHECK (! console.isWaitingToHide());
+
+        // The warning is still listed beneath, so it is still unresolved.
+        console.setHeadline ("Circuit changed. Press \"Rebuild\" to load it.", false);
+        CHECK (! console.isWaitingToHide());
+    }
+
+    SECTION ("a notice is not a problem")
+    {
+        SchematicModel::Diagnostic notice;
+        notice.severity = SchematicModel::Diagnostic::Severity::Info;
+        notice.text = "Something worth knowing.";
+
+        console.setMessages ("Built 15 parts, 1 note", false, { notice });
+        CHECK (console.isWaitingToHide());
+    }
+}
+
+TEST_CASE ("The console is as big as its messages and wraps past its limit", "[plugin][ui]")
+{
+    Celine::MessageConsole console;
+
+    console.setMessages ("Built 15 parts", false, {});
+    const auto oneLine = console.getPreferredSize (2000);
+
+    // The design's pill: one line, a little over forty pixels tall, and much
+    // narrower than it was allowed to be.
+    CHECK (oneLine.y < 60);
+    CHECK (oneLine.x < 400);
+
+    // A long message at a narrow limit is held to it and wraps instead.
+    console.setHeadline (juce::String::repeatedString ("This message is far too long to fit on one line. ", 6), false);
+    const auto wrapped = console.getPreferredSize (400);
+    CHECK (wrapped.x <= 400);
+    CHECK (wrapped.y > oneLine.y);
 }
 
 //==============================================================================

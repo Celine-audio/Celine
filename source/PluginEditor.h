@@ -81,9 +81,15 @@ private:
     /** The strip along the top; takes its band off `area`. */
     void layOutToolbar (juce::Rectangle<int>& area);
 
-    /** The control band along the bottom, then the palette, inspector, console
-        and sheet in what is left. */
+    /** The control band along the bottom, then the sheet in what is left, and
+        the floating panels over it. */
     void layOutPanels (juce::Rectangle<int> area);
+
+    /** The palette, inspector and console, each sized to what it is showing and
+        placed over the sheet. Separate from layOutPanels because two of them
+        change size on their own -- a part selected, a build reported -- and the
+        window has not moved. */
+    void layOutFloatingPanels();
 
     void buildToolbar();
     void buildPanels();
@@ -108,10 +114,24 @@ private:
         as well as what a change writes through to. */
     /** The smallest the window is allowed to be. Named here rather than left in the
         constructor because resized() has to know it too -- it will not record a size
-        below this as one worth reopening at. */
-    static constexpr int minimumWidth = Celine::Theme::paletteWidth
-                                      + Celine::Theme::inspectorWidth + 400;
-    static constexpr int minimumHeight = 460;
+        below this as one worth reopening at.
+
+        1024 x 667 is the chosen floor. The height is the shortest window whose
+        palette shows every row without scrolling -- its 469 px list, plus the
+        toolbar, the top ruler, the bottom band and a margin above and below -- and
+        "The smallest window shows the whole palette" holds it to that. The width can
+        still come out wider -- see narrowestWindow(), which is why it is a member
+        rather than a constant -- if the panels ever need more than that to keep the
+        console room between them. */
+    int minimumWidth = 0;
+    static constexpr int smallestWidth = 1024;
+    static constexpr int minimumHeight = 667;
+
+    /** The narrowest window in which the console fits between the palette and the
+        inspector with every margin kept, so the palette can always run the full
+        height of the sheet. Measured from the palette at its widest -- unfolded and
+        scrolling -- because its scrollbar's width is the look and feel's to decide. */
+    int narrowestWindow() const;
 
     void showPresetFromProcessor();
 
@@ -217,11 +237,10 @@ private:
     juce::TooltipWindow tooltips { this, 600 };
 
     //==========================================================================
-    /** Only the canvas grows. The palette and the inspector are lists of fixed-
-        width things, and the control strip is a row of knobs -- stretching any of
-        them buys nothing, so the whole of a resize goes to the sheet. */
+    /** Only the canvas grows. The panels float over it at the size of what they
+        show, and the control strip is a row of knobs -- stretching any of them buys
+        nothing, so the whole of a resize goes to the sheet. */
     static constexpr int paletteWidth = Celine::Theme::paletteWidth;
-    static constexpr int inspectorWidth = Celine::Theme::inspectorWidth;
 
     // Toolbar. What a click on the sheet does -- the three are mutually
     // exclusive and the active one is lit, because with several modes it has to
@@ -324,18 +343,14 @@ private:
     PresetLibrary presets;
 
     //==========================================================================
-    // Main panels
+    // Main panels. The sheet fills the middle of the window and the other three
+    // float over it -- see layOutFloatingPanels.
     Celine::ElementPalette palette;
     Celine::SchematicCanvas canvas;
     Celine::ElementInspector inspector;
 
     /** Everything the last build had to say, one message per row. */
     Celine::MessageConsole console;
-
-    /** How much of the right-hand panel the console gets. The inspector is a
-        fixed list of fields and needs a known amount; the console takes what is
-        left, which on a tall window is most of it. */
-    static constexpr int inspectorHeight = 456;
 
     //==========================================================================
     /** The knobs the circuit turned out to have. Owns its own widgets and the

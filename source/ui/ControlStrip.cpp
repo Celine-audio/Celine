@@ -49,7 +49,7 @@ namespace Celine
             // the shouting rather than asking people to type in capitals.
             widget.label = std::make_unique<juce::Label>(juce::String{},
                                                         control.name.toUpperCase());
-            widget.label->setFont(Fonts::light(15.0f));
+            widget.label->setFont(Fonts::light(Theme::bandCaptionFontHeight));
             widget.label->setJustificationType(juce::Justification::centred);
             widget.label->setColour(juce::Label::textColourId, Theme::textOnPanel());
             content.addAndMakeVisible(widget.label.get());
@@ -261,7 +261,7 @@ namespace Celine
             {
                 const auto pill = layOutCell(cell, widget.label.get(), toggleHeight);
                 widget.toggle->setBounds(
-                    pill.withSizeKeepingCentre(juce::jmin(63, cell.getWidth() - 4), toggleHeight));
+                    pill.withSizeKeepingCentre(juce::jmin(toggleWidth, cell.getWidth() - 4), toggleHeight));
             }
         }
     }

@@ -226,6 +226,13 @@ namespace Celine
         /** Frames the whole drawing in the visible area. */
         void zoomToFit();
 
+        /** How far in from each edge the floating panels reach -- the palette
+            along the top, the inspector down the right. zoomToFit() frames the
+            drawing in what is left, and selectElement() brings a part into it,
+            so neither puts what you asked to see underneath a panel. Drawing
+            still happens edge to edge; this only says where to look. */
+        void setFramingInsets(juce::BorderSize<int> insets) { framingInsets = insets; }
+
         //======================================================================
         void paint(juce::Graphics&) override;
         void resized() override;
@@ -246,6 +253,13 @@ namespace Celine
         static constexpr int leftRulerThickness = 29;
 
        private:
+        /** See setFramingInsets. */
+        juce::BorderSize<int> framingInsets;
+
+        /** The canvas less the floating panels -- or the whole canvas, when
+            they leave too little of it to frame anything in. */
+        juce::Rectangle<int> getFramingArea() const;
+
         //======================================================================
         /**
             One ruler, as its own opaque component.

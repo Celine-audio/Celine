@@ -14,23 +14,46 @@ namespace Celine
     namespace
     {
 
-        /** Every type, in the order the palette lists them: terminals first,
-            because a drawing needs them and a blank sheet gives no clue that
-            ground is a part you place. */
+        /** Every type, in the order the palette lists them, after the wire.
+            Written in pairs, and each line here is one row of the panel.
+            Ground pairs with the wire, the first two things any drawing needs,
+            and a blank sheet gives no other clue that ground is a part you
+            place. */
         constexpr ElementType paletteOrder[] = {
-            ElementType::Ground,        ElementType::Input,       ElementType::Output,     ElementType::Node,
-            ElementType::Resistor,      ElementType::Capacitor,   ElementType::Inductor,
-            ElementType::Potentiometer, ElementType::Switch,      ElementType::Spdt,      ElementType::VoltageSource,
+            /* Wire */                  ElementType::Ground,
+            ElementType::Input,         ElementType::Output,
+            ElementType::Capacitor,     ElementType::Resistor,
+            ElementType::Switch,        ElementType::Inductor,
+            ElementType::Spdt,          ElementType::Potentiometer,
+            ElementType::VacuumDiode,   ElementType::VoltageSource,
             ElementType::Transformer,   ElementType::CenterTapTransformer,
-            ElementType::Diode,         ElementType::Transistor,  ElementType::Jfet,       ElementType::Mosfet,
+            ElementType::Transistor,    ElementType::Jfet,
+            ElementType::Mosfet,        ElementType::Diode,
+            ElementType::Triode,        ElementType::Pentode,
             ElementType::OpAmp,         ElementType::PowerAmp,
-            ElementType::Triode,        ElementType::Pentode,     ElementType::VacuumDiode,
             ElementType::Text,          ElementType::Rectangle,
-            ElementType::Scope,
+            ElementType::Scope,         ElementType::Node,
         };
 
         constexpr int paletteCount = static_cast<int>(std::size(paletteOrder));
         static_assert(paletteCount == numElementTypes, "every element type should be reachable from the palette");
+
+        /** The panel's own padding, and the gap between its two columns. The
+            gap between rows is in Theme::paletteRowHeight. */
+        constexpr int palettePadX = 10;
+        constexpr int palettePadY = 9;
+        constexpr int paletteColumnGap = 4;
+        constexpr int paletteEntryHeight = Theme::paletteRowHeight - 4;
+
+        /** The tab standing off the panel's right-hand edge: how far out, how
+            tall, and how round its outer corners are. */
+        constexpr int paletteTabWidth = 14;
+        constexpr int paletteTabHeight = 44;
+        constexpr float paletteTabCornerRadius = 6.0f;
+
+        /** After the lettering, so the longest name in a column does not run
+            into the end of its pill. */
+        constexpr int paletteTextTrailing = 10;
 
         /** Item id for the "model this build hasn't got" entry in the model
             dropdown. Well clear of the real ones, which are `modelIndex + 1`
@@ -62,18 +85,30 @@ namespace Celine
             setWantsKeyboardFocus(false);
         }
 
+        juce::String getLabel() const { return isWire ? "Wire" : getElementInfo(type).name; }
+
+        /** The name's width at a given size, for finding the size at which
+            every name fits its column. */
+        float getNameWidth(float size) const
+        {
+            return juce::GlyphArrangement::getStringWidth(Fonts::light(size), getLabel());
+        }
+
+        /** The size the names are drawn at, the same for every entry -- see
+            ElementPalette::getNameFontHeight. */
+        float fontHeight = Theme::paletteFontHeight;
+
         void paintButton(juce::Graphics& g, bool highlighted, bool down) override
         {
-            auto bounds = getLocalBounds().toFloat().reduced(2.0f);
+            auto bounds = getLocalBounds().toFloat();
 
-            // A pill per row, on the light panel. The mockup gives every row a
-            // filled pill rather than the hover-only tint this had, so the list
-            // reads as a stack of buttons at rest and not only under the mouse.
+            // A filled pill per entry, on the light shelf, so the palette reads as
+            // a set of buttons at rest and not only under the mouse.
             g.setColour(active            ? Theme::accent()
                         : down            ? Theme::pill().darker(0.12f)
                         : highlighted     ? Theme::pill().darker(0.05f)
                                           : Theme::pill());
-            g.fillRoundedRectangle(bounds, Theme::cornerRadius);
+            g.fillRoundedRectangle(bounds, Theme::paletteEntryCornerRadius);
 
             // Ink is dark here: this is one of the two light surfaces, and
             // Theme::text() on it is invisible -- which is exactly what the
@@ -98,23 +133,89 @@ namespace Celine
                 SymbolPainter::drawPreview(g, type, symbolArea, ink);
             }
 
-            g.setColour(ink);
-            g.setFont(Fonts::light(15.0f));
-            g.drawText(isWire ? "Wire" : getElementInfo(type).name, bounds.reduced(6.0f, 0.0f),
-                       juce::Justification::centredLeft, true);
+            // Icons only, the pill is the swatch and nothing is left for the
+            // name -- which the tooltip still gives.
+            if (! iconOnly)
+            {
+                g.setColour(ink);
+                g.setFont(Fonts::light(fontHeight));
+                g.drawText(getLabel(), bounds, juce::Justification::centredLeft, true);
+            }
         }
 
         ElementType type{};
         bool isWire = false;
         bool active = false;
+        bool iconOnly = false;
+    };
+
+    //==========================================================================
+
+    /** The arrow on the panel's edge that folds it to symbols and back.
+
+        Drawn as a tab standing off the panel rather than as a button inside
+        it, so it reads as a handle on the panel instead of one more part. */
+    class ElementPalette::CollapseTab : public juce::Button
+    {
+       public:
+        CollapseTab() : juce::Button("Fold palette")
+        {
+            // Like every palette entry: the canvas keeps the keyboard.
+            setWantsKeyboardFocus(false);
+            setCollapsed(false);
+        }
+
+        void setCollapsed(bool isNowCollapsed)
+        {
+            collapsed = isNowCollapsed;
+            setTooltip(collapsed ? "Show the parts' names" : "Show the parts as symbols only");
+            repaint();
+        }
+
+        void paintButton(juce::Graphics& g, bool highlighted, bool down) override
+        {
+            const auto bounds = getLocalBounds().toFloat();
+
+            // Square where it meets the panel, so the two read as one piece;
+            // rounded on the side that stands free.
+            juce::Path shape;
+            shape.addRoundedRectangle(bounds.getX(), bounds.getY(), bounds.getWidth(), bounds.getHeight(),
+                                      paletteTabCornerRadius, paletteTabCornerRadius,
+                                      false, true, false, true);
+
+            g.setColour(down          ? Theme::pill()
+                        : highlighted ? Theme::pill().brighter(0.4f)
+                                      : Theme::panel());
+            g.fillPath(shape);
+
+            // A chevron pointing the way the panel will go: in towards the
+            // edge to fold, back out to unfold.
+            const auto centre = bounds.getCentre();
+            const float half = 4.0f;
+            const float reach = 2.5f;
+            const float pointX = collapsed ? centre.x + reach : centre.x - reach;
+            const float backX = collapsed ? centre.x - reach : centre.x + reach;
+
+            juce::Path chevron;
+            chevron.startNewSubPath(backX, centre.y - half);
+            chevron.lineTo(pointX, centre.y);
+            chevron.lineTo(backX, centre.y + half);
+
+            g.setColour(Theme::textOnPanel());
+            g.strokePath(chevron, juce::PathStrokeType(1.5f, juce::PathStrokeType::curved,
+                                                       juce::PathStrokeType::rounded));
+        }
+
+       private:
+        bool collapsed = false;
     };
 
     //==========================================================================
 
     ElementPalette::ElementPalette()
     {
-        // Wire first, above the parts: it is the thing you reach for most, and
-        // it is the one row whose position never changes as parts are added.
+        // Wire first: it is the thing you reach for most, and it is the one
+        // entry whose position never changes as parts are added.
         {
             auto* wire = entries.add(new Entry());
             wire->onClick = [this] { if (onWireChosen) onWireChosen(); };
@@ -128,12 +229,33 @@ namespace Celine
             content.addAndMakeVisible(entry);
         }
 
-        // Vertical only: the entries are as wide as the panel, so a horizontal
-        // bar would only ever be dead space.
+        // One size for every name, the largest at which the longest still fits
+        // its column -- so the list reads as a set rather than as names
+        // shrunk one by one.
+        nameFontHeight = fittingFontHeight();
+
+        for (auto* entry : entries)
+            entry->fontHeight = nameFontHeight;
+
+        // Vertical only: the list is exactly as wide as its two columns.
         viewport.setViewedComponent(&content, false);
         viewport.setScrollBarsShown(true, false);
         viewport.setWantsKeyboardFocus(false);
         addAndMakeVisible(viewport);
+
+        tab = std::make_unique<CollapseTab>();
+        tab->onClick = [this]
+        {
+            setCollapsed(! collapsed);
+
+            if (onCollapsedChanged)
+                onCollapsedChanged();
+        };
+        addAndMakeVisible(*tab);
+
+        // Rounded, and with a tab standing off one edge, so the sheet shows
+        // at the corners and beside the tab.
+        setOpaque(false);
     }
 
     ElementPalette::~ElementPalette() = default;
@@ -147,34 +269,141 @@ namespace Celine
         repaint();
     }
 
+    void ElementPalette::setCollapsed(bool shouldBeCollapsed)
+    {
+        if (collapsed == shouldBeCollapsed)
+            return;
+
+        collapsed = shouldBeCollapsed;
+        tab->setCollapsed(collapsed);
+
+        for (auto* entry : entries)
+        {
+            entry->iconOnly = collapsed;
+            entry->repaint();
+        }
+
+        resized();
+        repaint();
+    }
+
+    float ElementPalette::fittingFontHeight() const
+    {
+        // The room a name has: the column, less the symbol's square and the
+        // air after the lettering.
+        constexpr float room = static_cast<float>(Theme::paletteColumnWidth - paletteEntryHeight - paletteTextTrailing);
+
+        auto widest = [this](float height)
+        {
+            float width = 0.0f;
+
+            for (const auto* entry : entries)
+                width = juce::jmax(width, entry->getNameWidth(height));
+
+            return width;
+        };
+
+        // Lettering is not quite proportional to its size -- glyphs are hinted
+        // to the pixel -- so the estimate is checked, and stepped down by
+        // half a point until the longest name really fits.
+        float height = Theme::paletteFontHeight;
+        const float atFull = widest(height);
+
+        if (atFull > room)
+            height = std::floor(height * room / atFull * 2.0f) / 2.0f;
+
+        while (height > 6.0f && widest(height) > room)
+            height -= 0.5f;
+
+        return height;
+    }
+
+    std::vector<juce::Rectangle<int>> ElementPalette::layOutGrid() const
+    {
+        // Two to a row, always: a symbol's square each when folded, the fixed
+        // column otherwise -- the names are sized to fit it rather than the
+        // other way round, since a name given a row of its own left the grid
+        // ragged.
+        const int column = collapsed ? paletteEntryHeight : Theme::paletteColumnWidth;
+
+        std::vector<juce::Rectangle<int>> cells;
+        cells.reserve(static_cast<size_t>(entries.size()));
+
+        for (int i = 0; i < entries.size(); ++i)
+            cells.push_back({palettePadX + (i % 2) * (column + paletteColumnGap),
+                             palettePadY + (i / 2) * Theme::paletteRowHeight,
+                             column, paletteEntryHeight});
+
+        return cells;
+    }
+
+    int ElementPalette::listWidth() const
+    {
+        const int column = collapsed ? paletteEntryHeight : Theme::paletteColumnWidth;
+        return 2 * palettePadX + 2 * column + paletteColumnGap;
+    }
+
+    int ElementPalette::listHeight() const
+    {
+        const auto cells = layOutGrid();
+        const int lastBottom = cells.empty() ? palettePadY : cells.back().getBottom();
+        return lastBottom + palettePadY;
+    }
+
+    juce::Point<int> ElementPalette::getPreferredSize(int maxHeight) const
+    {
+        const int height = listHeight();
+
+        if (height <= maxHeight)
+            return {listWidth() + paletteTabWidth, height};
+
+        // Scrolling: the bar takes its width beside the rows, not out of them.
+        return {listWidth() + viewport.getScrollBarThickness() + paletteTabWidth, juce::jmax(0, maxHeight)};
+    }
+
+    int ElementPalette::getMaximumWidth() const
+    {
+        return 2 * palettePadX + 2 * Theme::paletteColumnWidth + paletteColumnGap
+               + viewport.getScrollBarThickness() + paletteTabWidth;
+    }
+
+    bool ElementPalette::isScrolling() const
+    {
+        return listHeight() > getHeight();
+    }
+
+    juce::Rectangle<int> ElementPalette::getBodyBounds() const
+    {
+        return getLocalBounds().withTrimmedRight(paletteTabWidth);
+    }
+
+    bool ElementPalette::hitTest(int x, int y)
+    {
+        return getBodyBounds().contains(x, y) || tab->getBounds().contains(x, y);
+    }
+
     void ElementPalette::paint(juce::Graphics& g)
     {
-        g.fillAll(Theme::panel());
+        g.setColour(Theme::panel());
+        g.fillRoundedRectangle(getBodyBounds().toFloat(), Theme::paletteCornerRadius);
     }
 
     void ElementPalette::resized()
     {
-        constexpr int rowHeight = Theme::paletteRowHeight;
+        const auto body = getBodyBounds();
 
-        viewport.setBounds(getLocalBounds().reduced(4));
+        viewport.setBounds(body);
+        content.setSize(listWidth(), listHeight());
 
-        // Decided here, not asked of the viewport. Whether a scrollbar takes
-        // width depends on the height we are about to set, but the viewport
-        // answers getMaximumVisibleWidth() for the list's *current* height. On
-        // the first layout that is zero, so it reports the full width, the bar
-        // then arrives on top of rows laid out without it, and their rounded
-        // right-hand ends sit clipped square underneath until the next resize.
-        // The inspector and the console work it out the same way.
-        const int listHeight = rowHeight * entries.size();
-        const bool scrolls = listHeight > viewport.getHeight();
-        content.setSize(scrolls ? viewport.getWidth() - viewport.getScrollBarThickness()
-                                : viewport.getWidth(),
-                        listHeight);
+        const auto cells = layOutGrid();
 
-        auto area = content.getLocalBounds();
+        for (int i = 0; i < entries.size(); ++i)
+            entries[i]->setBounds(cells[static_cast<size_t>(i)]);
 
-        for (auto* entry : entries)
-            entry->setBounds(area.removeFromTop(rowHeight));
+        // Halfway down the edge, or the panel's whole height when it is
+        // shorter than the tab.
+        const int tabHeight = juce::jmin(paletteTabHeight, body.getHeight());
+        tab->setBounds(body.getRight(), body.getCentreY() - tabHeight / 2, paletteTabWidth, tabHeight);
     }
 
     //==========================================================================
@@ -218,6 +447,7 @@ namespace Celine
         addAndMakeVisible(viewport);
 
         titleLabel.setFont(Fonts::light(17.0f));
+        titleLabel.setJustificationType(juce::Justification::centred);
         content.addAndMakeVisible(titleLabel);
 
         for (auto* caption : captionLabels())
@@ -432,6 +662,9 @@ namespace Celine
         hintLabel.setJustificationType(juce::Justification::topLeft);
         content.addAndMakeVisible(hintLabel);
 
+        // A rounded card: the sheet shows at the corners.
+        setOpaque(false);
+
         applyColours();
         setElement(nullptr);
     }
@@ -440,8 +673,16 @@ namespace Celine
     {
         element = newElement;
         rebuildForElement();
-        resized();
+        contentChanged();
         repaint();
+    }
+
+    void ElementInspector::contentChanged()
+    {
+        resized();
+
+        if (onPreferredSizeChanged)
+            onPreferredSizeChanged();
     }
 
     void ElementInspector::showNothingSelected()
@@ -463,7 +704,7 @@ namespace Celine
                             "Delete  removes the selection.\n\n"
                             "Right-drag to move the canvas.\n"
                             "Scroll to adjust zoom.\n"
-                            "Middle-click to copy an element.\n",
+                            "Middle-click to copy an element.",
                             juce::dontSendNotification);
     }
 
@@ -1105,7 +1346,7 @@ namespace Celine
         if (wasAuto != element->scopeAutoScale)
         {
             rebuildForElement();
-            resized();
+            contentChanged();
             repaint();
         }
         else
@@ -1170,9 +1411,79 @@ namespace Celine
             onEdited();
     }
 
+    namespace
+    {
+        /** Between the card's edge and the viewport the fields scroll in. The
+            fields keep their own 8 px inside that, which puts the text where the
+            design has it; the extra vertical room clears the rounded corners. */
+        constexpr int inspectorInsetX = 12;
+        constexpr int inspectorInsetY = 14;
+
+        /** A Label's own border either side of its text, which a measurement of
+            the text alone leaves out. */
+        constexpr int labelBorderX = 5;
+        constexpr int labelBorderY = 1;
+
+        /** The narrowest the card gets while it shows the shortcut list, so a
+            short list does not leave a sliver. */
+        constexpr int minimumHintCardWidth = 180;
+    } // namespace
+
     void ElementInspector::paint(juce::Graphics& g)
     {
-        g.fillAll(Theme::chrome());
+        // A plain filled card, like the palette and the console: no outline.
+        g.setColour(Theme::chrome());
+        g.fillRoundedRectangle(getLocalBounds().toFloat(), Theme::inspectorCornerRadius);
+    }
+
+    int ElementInspector::hintWidth() const
+    {
+        const auto font = hintLabel.getFont();
+        float widest = 0.0f;
+
+        for (const auto& line : juce::StringArray::fromLines(hintLabel.getText()))
+            widest = juce::jmax(widest, juce::GlyphArrangement::getStringWidth(font, line));
+
+        return juce::roundToInt(std::ceil(widest)) + 2 * labelBorderX;
+    }
+
+    int ElementInspector::hintHeight() const
+    {
+        // One line per line: a Label lays its lines out at the font's height,
+        // and the card is sized to the longest line, so nothing wraps.
+        const auto lines = juce::StringArray::fromLines(hintLabel.getText()).size();
+        return juce::roundToInt(std::ceil(static_cast<float>(lines) * hintLabel.getFont().getHeight()))
+               + 2 * labelBorderY + 2;
+    }
+
+    int ElementInspector::contentWidth() const
+    {
+        if (element != nullptr)
+            return Theme::inspectorWidth - 2 * inspectorInsetX;
+
+        const int title = juce::roundToInt(std::ceil(
+                              juce::GlyphArrangement::getStringWidth(titleLabel.getFont(), titleLabel.getText())))
+                          + 2 * labelBorderX;
+
+        // The fields' own margin either side, as layOutFields leaves it, and a
+        // scrollbar's width spare: on a short window the list scrolls, the bar
+        // takes its width from the text, and a line measured to fit exactly
+        // then wraps -- pushing the last lines out of a label sized for one
+        // line each.
+        return juce::jmax(minimumHintCardWidth - 2 * inspectorInsetX,
+                          juce::jmax(title, hintWidth()) + 16 + viewport.getScrollBarThickness());
+    }
+
+    juce::Point<int> ElementInspector::getPreferredSize()
+    {
+        const int width = contentWidth();
+        const int height = layOutFields(width);
+
+        // Measuring lays the fields out in a scratch area, so put them back where
+        // the card actually is.
+        resized();
+
+        return {width + 2 * inspectorInsetX, height + 2 * inspectorInsetY};
     }
 
     int ElementInspector::layOutFields(int width)
@@ -1293,19 +1604,16 @@ namespace Celine
             deleteButton.setBounds(area.removeFromTop(26));
 
         // The hint only shows when nothing is selected, so it never competes
-        // with the fields for room -- it just wants enough to read.
+        // with the fields for room -- it is as tall as its lines.
         if (hintLabel.isVisible())
-        {
-            const int wanted = juce::jmax(200, viewport.getHeight() - area.getY() - 8);
-            hintLabel.setBounds(area.removeFromTop(wanted));
-        }
+            hintLabel.setBounds(area.removeFromTop(hintHeight()));
 
         return area.getY() + 8;
     }
 
     void ElementInspector::resized()
     {
-        viewport.setBounds(getLocalBounds());
+        viewport.setBounds(getLocalBounds().reduced(inspectorInsetX, inspectorInsetY));
 
         // Same two-pass as the console: a scrollbar takes width, and whether one
         // is needed depends on the height. Field heights here don't depend on
@@ -1337,9 +1645,30 @@ namespace Celine
             drawn in it. The rows start after it, so the icon is beside the first
             message rather than above it -- which is what lets the panel be named
             without a heading spending a row on saying so. */
-        constexpr int gutterWidth = 57;
-        constexpr int promptSize = 22;
-        constexpr int promptTop = 12;
+        constexpr int gutterWidth = 60;
+        constexpr int promptLeft = 16;
+        constexpr int promptSize = 26;
+        constexpr int promptTop = 7;
+
+        /** The rows' list inside the pill. With one message the pill comes to
+            the design's 43 px, the glyph centred on the line beside it. */
+        constexpr int listTop = 7;
+        constexpr int listBottom = 4;
+        constexpr int listRight = 11;
+
+        /** Narrower than this and a message is a column of single words. */
+        constexpr int minimumTextWidth = 120;
+
+        static_assert(MessageConsole::minimumWidth == gutterWidth + 2 * rowPadding + listRight + minimumTextWidth,
+                      "the console's published minimum must be what it actually lays out at");
+
+        /** While the pointer rests on the console, how often it looks again. */
+        constexpr int hoverRecheckMs = 1000;
+
+        /** How long the console takes to fade once it does go. */
+        constexpr int fadeOutMs = 400;
+
+        juce::Font consoleFont() { return Fonts::light(13.5f); }
     } // namespace
 
     MessageConsole::MessageConsole()
@@ -1349,7 +1678,82 @@ namespace Celine
         viewport.setWantsKeyboardFocus(false);
         addAndMakeVisible(viewport);
 
+        // A rounded, translucent pill: the sheet shows through it and at its
+        // corners.
+        setOpaque(false);
+
+        // Nothing to say until something happens.
+        setVisible(false);
+
         applyColours();
+    }
+
+    bool MessageConsole::hasProblems() const
+    {
+        if (statusIsError)
+            return true;
+
+        return std::any_of(messages.begin(), messages.end(), [](const SchematicModel::Diagnostic& m)
+                           { return m.severity == SchematicModel::Diagnostic::Severity::Error
+                                    || m.severity == SchematicModel::Diagnostic::Severity::Warning; });
+    }
+
+    void MessageConsole::announce()
+    {
+        setAlpha(1.0f);
+        setVisible(true);
+
+        // A problem holds the console up until something without one replaces
+        // it; anything else goes on its own.
+        if (hasProblems())
+            stopTimer();
+        else
+            startTimer(hideDelayMs);
+
+        if (onPreferredSizeChanged)
+            onPreferredSizeChanged();
+    }
+
+    void MessageConsole::timerCallback()
+    {
+        // Not out from under the pointer: someone reading it, or about to click
+        // a row, gets to finish.
+        if (isMouseOverOrDragging(true))
+        {
+            startTimer(hoverRecheckMs);
+            return;
+        }
+
+        stopTimer();
+
+        // Fades a stand-in and hides this at once, so the console is gone as
+        // far as anything asking is concerned.
+        juce::Desktop::getInstance().getAnimator().fadeOut(this, fadeOutMs);
+    }
+
+    juce::Point<int> MessageConsole::getPreferredSize(int maxWidth)
+    {
+        // Every row laid out on one line, to find the widest.
+        measureRows(1 << 16);
+
+        float widest = 0.0f;
+
+        for (const auto& row : rows)
+            widest = juce::jmax(widest, juce::GlyphArrangement::getStringWidth(consoleFont(), row.text));
+
+        const int chrome = gutterWidth + 2 * rowPadding + listRight;
+
+        // A couple of pixels' slack, or a line measured to exactly its width
+        // can wrap its last word when it is laid out again.
+        const int natural = juce::roundToInt(std::ceil(widest)) + 2;
+        const int textWidth = juce::jmax(minimumTextWidth, juce::jmin(natural, maxWidth - chrome));
+        const int listHeight = measureRows(textWidth);
+
+        // Measuring replaced the rows; lay them out again for the size the
+        // console actually is.
+        layOutRows();
+
+        return {textWidth + chrome, listTop + listHeight + listBottom};
     }
 
     void MessageConsole::applyColours()
@@ -1369,6 +1773,7 @@ namespace Celine
 
         layOutRows();
         repaint();
+        announce();
     }
 
     void MessageConsole::setHeadline(juce::String text, bool isError)
@@ -1377,13 +1782,14 @@ namespace Celine
         statusIsError = isError;
         layOutRows();
         repaint();
+        announce();
     }
 
     int MessageConsole::measureRows(int width)
     {
         rows.clear();
 
-        const juce::Font font(Fonts::light(13.5f));
+        const juce::Font font(consoleFont());
         int y = rowPadding;
 
         // Measures a row and advances down the list. Everything goes through
@@ -1465,18 +1871,24 @@ namespace Celine
 
     void MessageConsole::resized()
     {
-        viewport.setBounds(getLocalBounds().withTrimmedLeft(gutterWidth).withTrimmedTop(promptTop
-                                                                                       - rowPadding));
+        viewport.setBounds(getLocalBounds()
+                               .withTrimmedLeft(gutterWidth)
+                               .withTrimmedTop(listTop)
+                               .withTrimmedBottom(listBottom)
+                               .withTrimmedRight(listRight));
         layOutRows();
     }
 
     void MessageConsole::paint(juce::Graphics& g)
     {
-        g.fillAll(Theme::consoleBackground());
+        // The window's darkest ground, let a little of the sheet through -- the
+        // design's 80%.
+        g.setColour(Theme::consoleBackground().withMultipliedAlpha(0.8f));
+        g.fillRoundedRectangle(getLocalBounds().toFloat(), Theme::consoleCornerRadius);
 
         if (promptIcon != nullptr)
             promptIcon->drawWithin(g,
-                                   juce::Rectangle<float>(static_cast<float>(rowPadding * 3),
+                                   juce::Rectangle<float>(static_cast<float>(promptLeft),
                                                           static_cast<float>(promptTop),
                                                           static_cast<float>(promptSize),
                                                           static_cast<float>(promptSize)),
@@ -1487,7 +1899,7 @@ namespace Celine
 
     void MessageConsole::Rows::paint(juce::Graphics& g)
     {
-        g.setFont(Fonts::light(13.5f));
+        g.setFont(consoleFont());
 
         for (const auto& row : owner.rows)
         {

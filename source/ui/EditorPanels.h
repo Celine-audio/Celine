@@ -13,6 +13,18 @@ namespace Celine
     /**
         The parts bin: one button per element type, each drawing its own symbol
         so the palette reads as a set of parts rather than a list of words.
+
+        A panel floating down the left of the sheet, two columns wide. Each row
+        is one of the pairs written on a line of `paletteOrder` -- Input beside
+        Output, Capacitor beside Resistor -- and the names are drawn at the one
+        size at which the longest still fits its column, so every row holds two
+        entries and the grid stays even.
+
+        The tab on its right-hand edge folds it to symbols alone and back. That
+        is the user's choice, never the window's: an earlier version folded on
+        its own whenever the names did not fit, and a panel that changes what
+        it shows as you resize is one you cannot learn. A window too short for
+        the list scrolls it instead.
     */
     class ElementPalette : public juce::Component
     {
@@ -37,20 +49,65 @@ namespace Celine
             call rather than two setters, so the two can't disagree. */
         void setActive(const SchematicModel::ElementType* type, bool wire);
 
+        /** Symbols alone, or symbols and names. */
+        void setCollapsed(bool shouldBeCollapsed);
+        bool isCollapsed() const noexcept { return collapsed; }
+
+        /** The tab was clicked, so the panel has changed width and whoever
+            places it should place it again. */
+        std::function<void()> onCollapsedChanged;
+
+        /** How big the panel wants to be, tab included, when it may be no
+            taller than `maxHeight`: as wide as its two columns, and as tall as
+            its rows -- or `maxHeight`, scrolling, with the scrollbar's width
+            added so the rows keep theirs. */
+        juce::Point<int> getPreferredSize(int maxHeight = std::numeric_limits<int>::max()) const;
+
+        /** Whether the list is taller than the panel and scrolls. */
+        bool isScrolling() const;
+
+        /** The widest the panel can be, folded or not: unfolded, with its
+            scrollbar showing. What the window's minimum width allows for. */
+        int getMaximumWidth() const;
+
+        /** The size every name is drawn at: Theme::paletteFontHeight, or less
+            if that is what it takes for the longest name to fit its column. */
+        float getNameFontHeight() const noexcept { return nameFontHeight; }
+
+        /** The panel itself, without the tab standing off its edge. */
+        juce::Rectangle<int> getBodyBounds() const;
+
+        /** Only the panel and its tab, not the empty corners beside the tab,
+            so the sheet under those still takes its clicks. */
+        bool hitTest(int x, int y) override;
+
         void resized() override;
         void paint(juce::Graphics&) override;
 
        private:
         class Entry;
+        class CollapseTab;
 
-        /** The list scrolls, because the window is resizable and the part list
-            is longer than a short window. Without this the last few parts --
-            the valves, which are the ones you go looking for -- are simply
-            unreachable at some window sizes, with nothing on screen to say so. */
+        /** Where every entry goes in the list, in order, for the current mode. */
+        std::vector<juce::Rectangle<int>> layOutGrid() const;
+
+        /** Works out getNameFontHeight() from the names. */
+        float fittingFontHeight() const;
+
+        float nameFontHeight = 12.0f;
+
+        int listWidth() const;
+        int listHeight() const;
+
+        bool collapsed = false;
+
+        /** The rows live in here, so a window too short for them scrolls the
+            list rather than the panel running into the band below. */
         juce::Viewport viewport;
         juce::Component content;
 
         juce::OwnedArray<Entry> entries;
+        std::unique_ptr<CollapseTab> tab;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ElementPalette)
     };
@@ -64,6 +121,11 @@ namespace Celine
         notation -- "4k7", "100n", "2.2M" -- because that is how they are written
         on paper and typing 0.0000001 for a capacitor is a good way to get it
         wrong.
+
+        A card floating over the sheet, sized to what it is showing: a resistor
+        is a few fields and gets a short card, the shortcut list a tall one.
+        The editor asks getPreferredSize() and caps it to the room there is;
+        past that cap the fields scroll.
     */
     class ElementInspector : public juce::Component
     {
@@ -72,6 +134,15 @@ namespace Celine
 
         /** Points the inspector at a part, or at nothing. */
         void setElement(SchematicModel::Element* element);
+
+        /** The card that shows everything currently visible without scrolling,
+            padding included. Fields are laid out at the fixed inspector width;
+            the shortcut list is as wide as its longest line. */
+        juce::Point<int> getPreferredSize();
+
+        /** What the inspector shows changed in a way that may change its size --
+            a different part, or a field shown or hidden. */
+        std::function<void()> onPreferredSizeChanged;
 
         /** A field changed. The part is already updated. */
         std::function<void()> onEdited;
@@ -168,6 +239,24 @@ namespace Celine
         std::array<juce::Label*, 14> captionLabels();
 
         void rebuildForElement();
+
+        /** Lays the fields out again and tells the editor the card's size may
+            have moved. */
+        void contentChanged();
+
+        /** The width of the field column inside the card, padding excluded, for
+            what is showing now. */
+        int contentWidth() const;
+
+        /** The shortcut list's height, one line per line of text. Measured
+            rather than given whatever the panel had left, which is what it was
+            when the panel was a fixed column -- a card sized to its contents
+            cannot also size its contents to the card. */
+        int hintHeight() const;
+
+        /** The shortcut list's longest line, which is what sets the card's
+            width when nothing is selected. */
+        int hintWidth() const;
 
         void showNothingSelected();
         void fillFieldsFrom(const SchematicModel::Element& part);
@@ -310,10 +399,9 @@ namespace Celine
         juce::TextButton deleteButton{"Delete"};
         juce::Label hintLabel;
 
-        /** The fields live inside this, so a part with a lot of them -- a
-            transformer has two values, a model, a description and a label --
-            scrolls rather than running off the bottom. The console took half
-            this panel's height, which is what made it necessary. */
+        /** The fields live inside this, so a part with more of them than the
+            window has room for -- a scope, with its picture and three axes --
+            scrolls rather than running off the bottom of the card. */
         juce::Viewport viewport;
         juce::Component content;
 
@@ -331,11 +419,42 @@ namespace Celine
         part it is about and where that part sits, and clicking one selects it
         on the sheet. Finding the resistor at 35,-67 is then a click rather than
         a hunt.
+
+        A pill floating above the bottom band, as wide and tall as what it has to
+        say. It comes up whenever there is something new and goes again
+        `hideDelayMs` later -- unless what it is showing includes an error or a
+        warning, in which case it stays until a message without one replaces it,
+        since a problem that hides itself is one you only find by ear. It also
+        waits while the pointer is over it, so a row is never pulled out from
+        under a click.
     */
-    class MessageConsole : public juce::Component
+    class MessageConsole : public juce::Component, private juce::Timer
     {
        public:
         MessageConsole();
+
+        /** How long a message with nothing wrong in it stays up. */
+        static constexpr int hideDelayMs = 5000;
+
+        /** The narrowest the pill goes -- its glyph, its padding, and a line of
+            text wide enough not to be a column of single words. Whoever places
+            it has to leave it at least this much room. */
+        static constexpr int minimumWidth = 201;
+
+        /** The pill that shows everything without scrolling, wrapping only
+            where a line is wider than `maxWidth`. */
+        juce::Point<int> getPreferredSize(int maxWidth);
+
+        /** The text changed, so the pill's size may have. */
+        std::function<void()> onPreferredSizeChanged;
+
+        /** True while what is showing includes an error or a warning -- the
+            failed build's headline counts -- which is what keeps the console up. */
+        bool hasProblems() const;
+
+        /** True between a message arriving and the console hiding itself. False
+            while a problem is holding it up, and once it has gone. */
+        bool isWaitingToHide() const { return isTimerRunning(); }
 
         /** Replaces everything shown. `headline` is the one-line summary that
             goes at the top -- "Built: 42 parts" or the reason it didn't. */
@@ -360,6 +479,14 @@ namespace Celine
         void lookAndFeelChanged() override { applyColours(); }
 
        private:
+        /** Something new arrived: bring the console up, and start the clock
+            unless a problem is holding it there. */
+        void announce();
+
+        /** The clock ran out. Hides the console, or looks again shortly if the
+            pointer is resting on it. */
+        void timerCallback() override;
+
         /** One laid-out row: what to draw, in what colour, and what it points
             at. Laid out once when the messages change rather than per paint,
             because a message can wrap to several lines and the wrapping decides

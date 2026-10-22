@@ -128,10 +128,41 @@
         inline constexpr int presetWidth = 302;
         inline constexpr int rebuildWidth = 91;
 
-        /** The two side panels, both fixed: they are lists of fixed-width things, so the
-            whole of a resize goes to the sheet. */
+        /** The column INPUT sits in at the left of the bottom band. Named for the palette
+            because that is the column it used to stand under; the palette floats over the
+            sheet now, and this keeps INPUT where the design draws it. */
         inline constexpr int paletteWidth = 188;
-        inline constexpr int inspectorWidth = 263;
 
-        /** One palette row, and the pill inside it. */
+        /** The inspector card's width while it is showing a part's fields. The shortcut
+            list it shows with nothing selected is as wide as its text instead. */
+        inline constexpr int inspectorWidth = 248;
+
+        /** One palette row's pitch; the pill inside it is four pixels shorter, which is
+            the gap between rows. */
         inline constexpr int paletteRowHeight = 35;
+
+        /** The palette's lettering, at most: the palette draws every name at the size at
+            which the longest one fits paletteColumnWidth, which with the shipped names
+            is a little smaller than this. */
+        inline constexpr float paletteFontHeight = 12.0f;
+
+        /** One of the palette's two columns. The width is the fixed thing and the
+            lettering fits it, so the grid keeps two to a row whatever the names are. */
+        inline constexpr int paletteColumnWidth = 112;
+
+        /** The bottom band's lettering: the captions over its controls, and the values
+            under its knobs. */
+        inline constexpr float bandCaptionFontHeight = 12.0f;
+        inline constexpr float bandValueFontHeight = 11.0f;
+
+        /** Between a floating panel and whatever it floats beside: the ruler, the edge of
+            the sheet, the bottom band, another panel. One number, so the three panels sit
+            on one rhythm. Tighter than the design's 27, to give the sheet more room. */
+        inline constexpr int floatingMargin = 16;
+
+        /** The floating panels' corners, which differ because the panels do: a shelf, a
+            card and a pill. And the palette's entries, which are smaller again. */
+        inline constexpr float paletteCornerRadius = 9.0f;
+        inline constexpr float paletteEntryCornerRadius = 4.0f;
+        inline constexpr float inspectorCornerRadius = 24.0f;
+        inline constexpr float consoleCornerRadius = 13.0f;
