@@ -156,6 +156,14 @@ namespace SchematicModel
             cleanly; null means one value, or none. */
         const char* valueLabelB = nullptr;
         double defaultValueB = 1.0;
+
+        /** True when the second value is a **rail**: a voltage at or below
+            ground, where zero is an answer -- the rail *is* ground -- rather
+            than "not filled in". So it is neither drawn red nor refused, a
+            sheet that has no second value reads it as zero, and whatever is
+            typed is taken as the rail's size below ground. The op-amp's
+            negative supply. */
+        bool valueBIsRail = false;
     };
 
     /** Pin geometry note: two-pin parts run vertically by default, pins two grid
@@ -235,15 +243,19 @@ namespace SchematicModel
              "celine:triode-12ax7-ge|12AX7 GE|MU 103, fitted to 18 measured stages|Koren"},
 
             // in+, in-, out -- the order addOpAmp() wants. The rails aren't
-            // drawn: `value` is the positive one and the negative is ground,
-            // which is how a 9 V pedal is wired.
-            {"OP-Amp", 3, {{-4, -2}, {-4, 2}, {4, 0}}, "V", "Supply", 0.0,
+            // drawn, they are numbers: `value` is the positive one and `valueB`
+            // the negative, which is 0 -- ground -- unless set. 9 V and 0 is a
+            // pedal; +15 and -15 is a studio or bass amp's preamp, built as
+            // drawn, ground and all, with no virtual ground to thread through
+            // the sheet. See valueBIsRail.
+            {"OP-Amp", 3, {{-4, -2}, {-4, 2}, {4, 0}}, "V", "Supply +", 0.0,
              "celine:opamp-tl072|TL071/TL072|JFET input, 3 MHz;"
              "celine:opamp-jrc4558|JRC4558|Distortion pedal OpAmp, 3 MHz;"
              "celine:opamp-ne5532|NE5532|Low noise, 12 MHz;"
              "celine:opamp-lm308|LM308|Distortion pedal OpAmp, 1 MHz;"
              "celine:opamp-ideal|Ideal|No gain limit, bandwidth or clipping;"
-             "celine:opamp-lm741|LM741|General purpose, 0.9 MHz"},
+             "celine:opamp-lm741|LM741|General purpose, 0.9 MHz",
+             "Supply -", 0.0, true},
 
             // Primary A/B then secondary A/B, the order addTransformer() wants.
             // Two turns counts rather than one ratio: a single box cannot take
@@ -784,6 +796,15 @@ namespace SchematicModel
             const auto* caption = getElementInfo(type).valueLabelB;
             return caption != nullptr && caption[0] != 0;
         }
+
+        /** True when the second value is a rail -- see ElementInfo::valueBIsRail. */
+        bool isSecondValueRail() const noexcept { return getElementInfo(type).valueBIsRail; }
+
+        /** A negative rail from what was typed for it. The field is labelled as
+            the negative supply, so "15" and "-15" both mean 15 V below ground:
+            asking someone to type the sign of a thing whose name already says
+            it would only make "15" a mistake. */
+        static double railBelowGround(double typed) noexcept { return -std::abs(typed); }
 
         /** Primary turns over secondary turns. Guarded because the secondary box
             is free text and 0 would divide the circuit by zero rather than

@@ -2055,3 +2055,183 @@ TEST_CASE("A drawn LM386 builds, amplifies, and leaves its gain pins open quietl
 
     CHECK(amplitudeOf(circuit, 1000.0, 2.0e-3f, sampleRate, 0.3) / 2.0e-3f == Catch::Approx(21.0).epsilon(0.03));
 }
+
+//==============================================================================
+// Op-amp supplies
+
+namespace
+{
+    using namespace SchematicModel;
+
+    /** A drawn non-inverting stage with a gain of 101 -- 100k over 1k -- its
+        input coupled through 10u and biased by 1M, as a preamp's is. The 1M
+        and the 1k go to `reference`: "com" (ground) for a split supply, or
+        "vg" for the single-supply workaround, which adds a source holding vg
+        `virtualGround` volts above ground. Returns the circuit, unprepared
+        offsets and all, so a test can read the output node -- which the
+        Output terminal names "out" -- directly. */
+    std::unique_ptr<Circuit> drawSupplyStage(double plus, double minus, double virtualGround)
+    {
+        Schematic schematic;
+
+        auto pin = [&schematic](int id, int index) { return schematic.findElement(id)->getPinPosition(index); };
+
+        auto label = [&schematic](juce::Point<int> at, const char* name, int dx)
+        {
+            const auto id = schematic.addElement(ElementType::Node, at.x + dx - 2, at.y);
+            schematic.findElement(id)->label = name;
+
+            if (dx != 0)
+                schematic.addWire(at, { at.x + dx, at.y });
+        };
+
+        auto twoPin = [&](ElementType type, int x, const char* top, const char* bottom, double value)
+        {
+            const auto id = schematic.addElement(type, x, 40);
+            schematic.findElement(id)->value = value;
+            label(pin(id, 0), top, -4);
+            label(pin(id, 1), bottom, -4);
+            return id;
+        };
+
+        const auto amp = schematic.addElement(ElementType::OpAmp, 0, 0);
+        schematic.findElement(amp)->value = plus;
+        schematic.findElement(amp)->valueB = minus;
+
+        label(pin(amp, 0), "bias", -4);
+        label(pin(amp, 1), "fb", -4);
+        label(pin(amp, 2), "amp", 4);
+
+        const auto ground = schematic.addElement(ElementType::Ground, 50, 22);
+        label(pin(ground, 0), "com", 0);
+
+        const char* reference = virtualGround > 0.0 ? "vg" : "com";
+
+        if (virtualGround > 0.0)
+            twoPin(ElementType::VoltageSource, 0, "vg", "com", virtualGround);
+
+        twoPin(ElementType::Capacitor, 10, "src", "bias", 10.0e-6);
+        twoPin(ElementType::Resistor, 20, "bias", reference, 1.0e6);
+        twoPin(ElementType::Resistor, 30, "amp", "fb", 100000.0);
+        twoPin(ElementType::Resistor, 40, "fb", reference, 1000.0);
+
+        const auto input = schematic.addElement(ElementType::Input, -40, 60);
+        label(pin(input, 0), "src", 4);
+
+        const auto output = schematic.addElement(ElementType::Output, 0, 80);
+        label(pin(output, 0), "amp", -4);
+
+        auto result = buildCircuits(schematic, sampleRate, 1);
+        INFO(result.error);
+        REQUIRE(result.isValid());
+        REQUIRE(result.circuits[0]->foundOperatingPoint());
+        return std::move(result.circuits[0]);
+    }
+
+    /** The voltage at the output node, sample by sample, under a 100 Hz sine. */
+    std::vector<double> driveSupplyStage(Circuit& circuit, float amplitude)
+    {
+        std::vector<double> out;
+
+        for (int n = 0; n < 4800; ++n)
+        {
+            circuit.process(amplitude * static_cast<float>(std::sin(2.0 * std::numbers::pi * 100.0 * n / sampleRate)));
+            out.push_back(circuit.getNodeVoltage("out"));
+        }
+
+        return out;
+    }
+}
+
+TEST_CASE("A drawn op-amp runs on a split supply", "[plugin][schematic][opamp]")
+{
+    // A bass amp's preamp is drawn on +15 and -15 with its references at
+    // ground. Both rails reach the engine: the stage rests at ground, and
+    // driven hard it clips at both, each where the model's headroom puts it.
+    auto split = drawSupplyStage(15.0, -15.0, 0.0);
+    CHECK(std::abs(split->getNodeVoltage("out")) < 0.05);
+
+    const auto swing = driveSupplyStage(*split, 0.3f);
+    const auto [low, high] = std::minmax_element(swing.begin(), swing.end());
+
+    const auto model = OpAmpModel::tl072().withRails(15.0, -15.0);
+    INFO("clips at " << *high << " and " << *low << " V");
+    CHECK(*high == Catch::Approx(15.0 - model.positiveHeadroom()).margin(0.5));
+    CHECK(*low == Catch::Approx(-15.0 + model.negativeHeadroom()).margin(0.5));
+
+    // Before the negative supply could be set, this circuit had to be drawn on
+    // 30 V with every reference moved to a 15 V virtual ground. The model sees
+    // only its rails, so the two are the same circuit 15 V apart, but for
+    // 1.5 mV: the bias solve conditions every node with gmin (1e-12 S) to
+    // ground, which on the shifted drawing is 15 pA out of a node biased
+    // through 1M, times a gain of 101. That offset rides on the linear part of
+    // the waveform and not on the clipped part, where the rails set the level,
+    // so it is the bound on the whole of it -- 0.006% of the swing.
+    auto shifted = drawSupplyStage(30.0, 0.0, 15.0);
+    const auto workaround = driveSupplyStage(*shifted, 0.3f);
+
+    double worst = 0.0;
+    for (size_t i = 0; i < swing.size(); ++i)
+        worst = std::max(worst, std::abs(swing[i] - (workaround[i] - 15.0)));
+
+    INFO("the two drawings part by " << worst << " V");
+    CHECK(worst < 2.0e-3);
+}
+
+TEST_CASE("An op-amp's negative supply is ground unless it is set", "[plugin][schematic][opamp]")
+{
+    // A freshly placed op-amp, and one from a sheet saved before the field
+    // existed, are single-supply parts -- zero is the rail being ground, not a
+    // value left unfilled, so neither draws red nor refuses to build.
+    Schematic sheet;
+    const auto id = sheet.addElement(ElementType::OpAmp, 0, 0);
+    CHECK(juce::exactlyEqual(sheet.findElement(id)->valueB, 0.0));
+    CHECK(sheet.findElement(id)->isSecondValueRail());
+
+    sheet.findElement(id)->value = 15.0;
+    sheet.findElement(id)->valueB = -15.0;
+
+    Schematic reloaded;
+    reloaded.restoreFromValueTree(sheet.toValueTree());
+    CHECK(juce::exactlyEqual(reloaded.getElements()[0].valueB, -15.0));
+
+    auto older = sheet.toValueTree();
+    older.getChild(0).removeProperty("valueB", nullptr);
+    Schematic old;
+    old.restoreFromValueTree(older);
+    CHECK(juce::exactlyEqual(old.getElements()[0].valueB, 0.0));
+
+    // A transformer still reads an absent secondary as 1, as it always did.
+    Schematic transformer;
+    transformer.addElement(ElementType::Transformer, 0, 0);
+    auto tree = transformer.toValueTree();
+    tree.getChild(0).removeProperty("valueB", nullptr);
+    transformer.restoreFromValueTree(tree);
+    CHECK(juce::exactlyEqual(transformer.getElements()[0].valueB, 1.0));
+
+    // Typed into the inspector, the size is what counts: the field is the
+    // negative supply, so "15" means 15 V below ground.
+    CHECK(juce::exactlyEqual(Element::railBelowGround(15.0), -15.0));
+    CHECK(juce::exactlyEqual(Element::railBelowGround(-15.0), -15.0));
+    CHECK(juce::exactlyEqual(Element::railBelowGround(0.0), 0.0));
+}
+
+TEST_CASE("A negative supply above ground is refused by name", "[plugin][schematic][opamp]")
+{
+    // Only a hand-edited file can carry one. It is not a circuit, so it is
+    // refused, pointing at the part, rather than handed to the clamps.
+    Schematic sheet;
+    const auto amp = sheet.addElement(ElementType::OpAmp, 0, 0);
+    sheet.findElement(amp)->value = 15.0;
+    sheet.findElement(amp)->valueB = 5.0;
+    sheet.addElement(ElementType::Ground, 20, 20);
+    sheet.addElement(ElementType::Input, -20, 0);
+    sheet.addElement(ElementType::Output, 20, 0);
+
+    const auto result = buildCircuits(sheet, sampleRate, 1);
+    CHECK_FALSE(result.isValid());
+
+    const auto named = std::find_if(result.diagnostics.begin(), result.diagnostics.end(), [amp](const Diagnostic& d)
+                                    { return d.isError() && d.elementId == amp && d.text.contains("above ground"); });
+    CHECK(named != result.diagnostics.end());
+}

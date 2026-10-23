@@ -49,7 +49,14 @@ namespace Celine
                 }
             }
 
-            if (element.hasSecondValue())
+            if (element.isSecondValueRail())
+            {
+                // "9V" on a single supply, as it always read; "±15V" on a split
+                // one -- the way a schematic labels its rails.
+                out[count++] = {SymbolPainter::formatSupply(element.value, element.valueB, info.unit),
+                                element.value > 0.0 ? Theme::captionValue() : Theme::captionUnset()};
+            }
+            else if (element.hasSecondValue())
             {
                 const bool set = element.value > 0.0 && element.valueB > 0.0;
                 out[count++] = {SymbolPainter::formatRatio(element.value, element.valueB),
@@ -863,6 +870,18 @@ namespace Celine
 
     //==========================================================================
 
+
+    juce::String SymbolPainter::formatSupply(double positive, double negative, const juce::String& unit)
+    {
+        if (negative == 0.0)
+            return formatValue(positive, unit);
+
+        // The usual case, said the usual way.
+        if (juce::approximatelyEqual(positive, -negative))
+            return juce::String(juce::CharPointer_UTF8("\xc2\xb1")) + formatValue(positive, unit);
+
+        return "+" + formatValue(positive, unit) + " / " + formatValue(negative, unit);
+    }
 
     juce::String SymbolPainter::formatRatio(double primary, double secondary)
     {

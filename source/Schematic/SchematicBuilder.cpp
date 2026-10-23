@@ -398,9 +398,17 @@ namespace SchematicModel
                     result.add(Severity::Error, "Part has no value.", {}, &element);
                     ++unset;
                 }
-                else if (element.hasSecondValue() && element.valueB <= 0.0)
+                else if (element.hasSecondValue() && ! element.isSecondValueRail() && element.valueB <= 0.0)
                 {
                     result.add(Severity::Error, "Part is missing a value.", {}, &element);
+                    ++unset;
+                }
+                else if (element.isSecondValueRail() && element.valueB > 0.0)
+                {
+                    // The inspector cannot enter one -- it takes what is typed
+                    // as a size below ground -- but a file can carry anything,
+                    // and a "negative" rail above ground is not a circuit.
+                    result.add(Severity::Error, "Negative supply is above ground.", {}, &element);
                     ++unset;
                 }
                 else if (element.type == ElementType::Node && element.label.trim().isEmpty())
@@ -433,7 +441,7 @@ namespace SchematicModel
                 double range = 1.0;
 
                 if (element.type == ElementType::OpAmp && element.modelIndex != idealOpAmpIndex)
-                    range = opAmpModelFor(element.modelIndex).withRails(element.value, 0.0).outputRange();
+                    range = opAmpModelFor(element.modelIndex).withRails(element.value, element.valueB).outputRange();
                 else if (element.type == ElementType::PowerAmp)
                     range = Circuit::PowerAmpModel::lm386().withSupply(element.value).outputRange();
 
@@ -445,9 +453,16 @@ namespace SchematicModel
                                     ? models[element.modelIndex]
                                     : juce::String("part");
 
+                // What it needs is a span between its rails, which for a single
+                // supply is just the supply. Only a rail counts as the bottom
+                // one: the LM386's second value is not a rail and is not set.
+                const double bottom = element.isSecondValueRail() ? element.valueB : 0.0;
+                const double needed = element.value - bottom - range;
+
                 result.add(Severity::Error,
                            "Supply too low for the " + name + ": it needs more than "
-                               + juce::String(element.value - range, 1) + " V.",
+                               + juce::String(needed, 1)
+                               + (bottom < 0.0 ? " V between its two supplies." : " V."),
                            {}, &element);
                 ++starved;
             }
@@ -768,7 +783,7 @@ namespace SchematicModel
                     else
                     {
                         // The name must be unique on the sheet; the element id is.
-                        auto model = opAmpModelFor(element.modelIndex).withRails(element.value, 0.0);
+                        auto model = opAmpModelFor(element.modelIndex).withRails(element.value, element.valueB);
 
                         // A part too fast to slew at the rate this circuit runs
                         // at gets the linear input stage it had before -- not as

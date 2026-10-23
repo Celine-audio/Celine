@@ -931,8 +931,10 @@ namespace SchematicModel
                 element.value = node.getProperty("value", 0.0);
 
                 // Defaults to 1, so a transformer saved when `value` was the
-                // whole ratio still reads as value:1.
-                element.valueB = node.getProperty("valueB", 1.0);
+                // whole ratio still reads as value:1 -- and to 0 for a rail, so
+                // an op-amp saved before it had a negative supply reads as the
+                // single-supply part it was drawn as, rather than at -1 V.
+                element.valueB = node.getProperty("valueB", element.isSecondValueRail() ? 0.0 : 1.0);
 
                 // Defaulted from the freshly-placed size rather than from zero,
                 // so a node missing them -- anything that isn't a Rectangle --

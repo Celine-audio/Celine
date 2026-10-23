@@ -538,8 +538,7 @@ namespace Celine
             if (part.hasSecondValue())
             {
                 valueCaptionB.setText(info.valueLabelB, juce::dontSendNotification);
-                valueEditorB.setText(SymbolPainter::formatValue(part.valueB, ""),
-                                     juce::dontSendNotification);
+                valueEditorB.setText(secondValueText(part), juce::dontSendNotification);
             }
 
             valueEditor.setText(valueTextFor(part), juce::dontSendNotification);
@@ -991,6 +990,13 @@ namespace Celine
         return SymbolPainter::formatValue(e.value, getElementInfo(e.type).unit);
     }
 
+    /** The same for the second box. A rail is a voltage and says so, sign and
+        all; a turns count is a bare number. */
+    juce::String ElementInspector::secondValueText(const Element& e)
+    {
+        return SymbolPainter::formatValue(e.valueB, e.isSecondValueRail() ? getElementInfo(e.type).unit : "");
+    }
+
     void ElementInspector::commitValue()
     {
         if (element == nullptr || ! element->hasNumericValue())
@@ -1026,11 +1032,20 @@ namespace Celine
             changed = true;
         }
 
-        if (element->hasSecondValue()
-            && SymbolPainter::parseValue(valueEditorB.getText(), parsed) && parsed > 0.0)
+        if (element->hasSecondValue() && SymbolPainter::parseValue(valueEditorB.getText(), parsed))
         {
-            element->valueB = parsed;
-            changed = true;
+            // A rail takes zero -- ground -- and whatever sign was typed; a
+            // count of turns has to be more than none.
+            if (element->isSecondValueRail())
+            {
+                element->valueB = Element::railBelowGround(parsed);
+                changed = true;
+            }
+            else if (parsed > 0.0)
+            {
+                element->valueB = parsed;
+                changed = true;
+            }
         }
 
         if (changed && onEdited)
@@ -1041,8 +1056,7 @@ namespace Celine
         valueEditor.setText(valueTextFor(*element), juce::dontSendNotification);
 
         if (element->hasSecondValue())
-            valueEditorB.setText(SymbolPainter::formatValue(element->valueB, ""),
-                                 juce::dontSendNotification);
+            valueEditorB.setText(secondValueText(*element), juce::dontSendNotification);
     }
 
     void ElementInspector::commitScopeAxes()

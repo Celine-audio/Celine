@@ -177,6 +177,7 @@ namespace Celine
             they came to. */
         int layOutFields(int width);
         static juce::String valueTextFor(const SchematicModel::Element& e);
+        static juce::String secondValueText(const SchematicModel::Element& e);
         void commitValue();
         void commitOrder();
         void commitKnob();
