@@ -204,6 +204,10 @@ namespace Celine
             is unreadable on a drawing. */
         static juce::String formatValue(double value, const juce::String& unit);
 
+        /** An amplifier's rails: "9V" on a single supply, "±15V" on a split
+            one, and both when they differ -- "+12V / -9V". */
+        static juce::String formatSupply(double positive, double negative, const juce::String& unit);
+
         /** A turns ratio, written the way a schematic writes one: "10:1", "1:8".
             No engineering prefixes -- a ratio is dimensionless, so the milli in
             "100m:1" is meaningless, and that is what a single-box ratio field

@@ -263,7 +263,8 @@ namespace
         circuit.setOutputNode("a");
         circuit.prepare(sampleRate);
 
-        double lo = 0.0, hi = 1.5;
+        // Up to 4 V, so an LED's drop is inside the bracket.
+        double lo = 0.0, hi = 4.0;
 
         for (int i = 0; i < 80; ++i)
         {
@@ -365,15 +366,54 @@ TEST_CASE("The BC107-109 / BC547-550 grades reproduce their datasheet", "[bjt][m
     CHECK(BjtModel::npnBC108B().forwardEarlyVoltage > BjtModel::npnBC109C().forwardEarlyVoltage);
 }
 
+TEST_CASE("The 2N3904 and 2N3906 land on Fairchild's typical curves", "[bjt][model]")
+{
+    // Fairchild's own curves (docs/specs/transistors, 25 C), digitised from the
+    // vector paths: pulsed current gain and base-emitter on voltage. The 2N3904
+    // at Vce 5 V, the 2N3906 at Vce 1 V. Fairchild's SPICE card printed on the
+    // same 2N3904 sheet gives 0.6 times this gain, and the model that took only
+    // its IS and BF gave twice it.
+    struct Point { double ic, hfe, vbe; };
+
+    const Point npn[] = { { 0.1e-3, 231.0, 0.608 }, { 1.0e-3, 228.0, 0.667 }, { 10.0e-3, 223.0, 0.727 }, { 100.0e-3, 159.0, -1.0 } };
+    const Point pnp[] = { { 0.1e-3, 109.0, 0.600 }, { 1.0e-3, 126.0, 0.662 }, { 10.0e-3, 138.0, 0.726 }, { 100.0e-3, 88.0, -1.0 } };
+
+    for (const auto& p : npn)
+    {
+        const auto at = npnAt(BjtModel::npnSilicon(), p.ic, 5.0);
+        INFO("2N3904 at " << p.ic << " A: hFE " << at.hfe << ", Vbe " << at.vbe);
+        CHECK(at.hfe == Catch::Approx(p.hfe).epsilon(0.02));
+
+        if (p.vbe > 0.0)
+            CHECK(at.vbe == Catch::Approx(p.vbe).margin(0.003));
+    }
+
+    // A PNP is the same device with every sign turned round, so the NPN helper
+    // reads it with the polarity flipped.
+    auto mirrored = BjtModel::pnpSilicon();
+    mirrored.polarity = BjtModel::Polarity::NPN;
+
+    for (const auto& p : pnp)
+    {
+        const auto at = npnAt(mirrored, p.ic, 1.0);
+        INFO("2N3906 at " << p.ic << " A: hFE " << at.hfe << ", Vbe " << at.vbe);
+        CHECK(at.hfe == Catch::Approx(p.hfe).epsilon(0.04));
+
+        if (p.vbe > 0.0)
+            CHECK(at.vbe == Catch::Approx(p.vbe).margin(0.005));
+    }
+}
+
 TEST_CASE("The 2N5088 and 2N5089 reproduce Fairchild's card and sheet", "[bjt][model]")
 {
-    // The datasheet's own SPICE card, run through the engine. Its minima:
+    // The datasheet's own SPICE card, run through the engine -- which now gives
+    // ngspice's gains for it to the decimal. Its minima:
     // 2N5088 300 / 350 / 300 at 0.1 / 1 / 10 mA (900 max at 0.1 mA), 2N5089
     // 400 / 450 / 400 (1200 max).
     struct Point { double ic, card, minimum; };
 
-    const Point p5088[] = { { 100.0e-6, 487.3, 300.0 }, { 1.0e-3, 649.9, 350.0 }, { 10.0e-3, 554.0, 300.0 } };
-    const Point p5089[] = { { 100.0e-6, 650.9, 400.0 }, { 1.0e-3, 869.9, 450.0 }, { 10.0e-3, 741.8, 400.0 } };
+    const Point p5088[] = { { 100.0e-6, 483.7, 300.0 }, { 1.0e-3, 643.9, 350.0 }, { 10.0e-3, 546.2, 300.0 } };
+    const Point p5089[] = { { 100.0e-6, 646.0, 400.0 }, { 1.0e-3, 861.8, 450.0 }, { 10.0e-3, 731.4, 400.0 } };
 
     for (const auto& p : p5088)
     {
@@ -671,6 +711,223 @@ TEST_CASE("The KT88 reproduces the JJ sheet", "[valve][model]")
     CHECK(std::sqrt(squares / std::size(family)) < 10.0e-3);
 }
 
+namespace
+{
+    /** A point read off a datasheet's plate characteristics: control-grid
+        volts, plate volts, plate milliamps. */
+    struct SheetPoint
+    {
+        double ug1, ua, ia;
+    };
+
+    struct PlateFamily
+    {
+        const char* name;
+        PentodeModel model;
+        double screen;           // the sheet's Ug2 for the whole family
+        double boundRms;         // mA
+        double korenFormRms;      // mA, the model before the plate-slope term
+        std::vector<SheetPoint> points;
+    };
+}
+
+TEST_CASE("Every pentode lands on its sheet's plate family", "[valve][model]")
+{
+    // Digitised from the vector paths in docs/specs/tubes, each curve at 50,
+    // 100, 200, 300 and 400 V where the sheet draws it -- and above the bottom
+    // of the dip, on the beam tetrodes' low curves that have one, since that
+    // is secondary emission and nothing here models it. The rms each valve
+    // had in Koren's form, before the plate-slope term, is recorded beside
+    // its bound, so a refit that gives the improvement back is visible.
+    const std::vector<PlateFamily> families = {
+        { "EL34", PentodeModel::el34(), 250.0, 9.0, 22.31,
+          { { 0, 50, 217.5 }, { 0, 100, 254.3 }, { 0, 200, 271.2 }, { -5, 50, 147.5 },
+            { -5, 100, 178.6 }, { -5, 200, 195.4 }, { -5, 300, 204.0 }, { -10, 50, 87.8 },
+            { -10, 100, 110.4 }, { -10, 200, 127.8 }, { -10, 300, 133.2 }, { -10, 400, 140.3 },
+            { -15, 50, 39.8 }, { -15, 100, 55.4 }, { -15, 200, 68.1 }, { -15, 300, 73.0 },
+            { -15, 400, 78.4 }, { -20, 50, 14.1 }, { -20, 100, 23.4 }, { -20, 200, 30.8 },
+            { -20, 300, 33.3 }, { -20, 400, 35.8 }, { -25, 50, 4.2 }, { -25, 100, 7.4 },
+            { -25, 200, 12.2 }, { -25, 300, 13.2 }, { -25, 400, 14.3 } } },
+        { "6L6GC", PentodeModel::u6l6gc(), 400.0, 10.5, 17.39,
+          { { 0, 50, 214.5 }, { 0, 100, 304.2 }, { 0, 200, 325.1 }, { 0, 300, 335.1 }, { 0, 400, 339.7 },
+            { -4, 100, 261.8 }, { -4, 200, 278.5 }, { -4, 300, 287.9 }, { -4, 400, 293.9 },
+            { -8, 50, 201.6 }, { -8, 100, 226.1 }, { -8, 200, 235.2 }, { -8, 300, 243.4 },
+            { -8, 400, 250.4 }, { -12, 50, 173.9 }, { -12, 100, 189.6 }, { -12, 200, 202.8 },
+            { -12, 300, 210.4 }, { -12, 400, 215.2 }, { -16, 50, 142.5 }, { -16, 100, 153.6 },
+            { -16, 200, 166.2 }, { -16, 300, 173.7 }, { -16, 400, 178.4 }, { -20, 50, 113.0 },
+            { -20, 100, 124.1 }, { -20, 200, 135.7 }, { -20, 300, 144.3 }, { -20, 400, 149.8 },
+            { -25, 50, 84.6 }, { -25, 100, 88.6 }, { -25, 200, 102.4 }, { -25, 300, 110.6 },
+            { -25, 400, 115.8 }, { -30, 50, 57.3 }, { -30, 100, 62.4 }, { -30, 200, 74.8 },
+            { -30, 300, 81.6 }, { -30, 400, 85.9 }, { -35, 50, 39.1 }, { -35, 100, 43.0 },
+            { -35, 200, 51.4 }, { -35, 300, 58.7 }, { -35, 400, 64.2 }, { -40, 50, 25.2 },
+            { -40, 100, 27.1 }, { -40, 200, 33.4 }, { -40, 300, 39.8 }, { -40, 400, 44.4 },
+            { -45, 50, 15.6 }, { -45, 100, 16.5 }, { -45, 200, 21.2 }, { -45, 300, 25.3 },
+            { -45, 400, 28.9 }, { -50, 50, 9.1 }, { -50, 100, 10.4 }, { -50, 200, 13.7 },
+            { -50, 300, 17.1 }, { -50, 400, 20.2 }, { -60, 50, 3.2 }, { -60, 100, 3.1 },
+            { -60, 200, 3.3 }, { -60, 300, 5.1 }, { -60, 400, 6.8 } } },
+        { "EL84", PentodeModel::el84(), 250.0, 7.0, 18.97,
+          { { 0, 50, 132.0 }, { 0, 100, 145.2 }, { -2, 50, 104.8 }, { -2, 100, 114.0 },
+            { -2, 200, 120.8 }, { -4, 50, 76.0 }, { -4, 100, 85.2 }, { -4, 200, 90.8 }, { -6, 50, 52.0 },
+            { -6, 100, 59.2 }, { -6, 200, 64.0 }, { -8, 50, 32.4 }, { -8, 100, 37.2 }, { -8, 200, 40.8 },
+            { -10, 50, 14.8 }, { -10, 100, 19.6 }, { -10, 200, 22.0 } } },
+        { "KT66", PentodeModel::kt66(), 400.0, 22.0, 36.67,
+          { { 0, 50, 300.5 }, { 0, 100, 373.2 }, { -5, 50, 250.2 }, { -5, 100, 306.9 },
+            { -5, 200, 335.9 }, { -5, 300, 351.9 }, { -5, 400, 359.9 }, { -10, 50, 221.7 },
+            { -10, 100, 253.9 }, { -10, 200, 275.8 }, { -10, 300, 288.0 }, { -10, 400, 293.6 },
+            { -15, 50, 175.5 }, { -15, 100, 197.8 }, { -15, 200, 213.7 }, { -15, 300, 226.5 },
+            { -15, 400, 232.7 }, { -20, 200, 168.4 }, { -20, 300, 176.6 }, { -20, 400, 178.5 },
+            { -25, 200, 126.0 }, { -25, 300, 130.8 }, { -25, 400, 132.4 }, { -35, 300, 67.0 },
+            { -35, 400, 71.6 }, { -50, 400, 18.7 } } },
+        { "KT77", PentodeModel::kt77(), 250.0, 9.5, 9.86,
+          { { 0, 50, 176.8 }, { -2.5, 50, 169.3 }, { -2.5, 100, 229.3 }, { -2.5, 200, 246.6 },
+            { -5, 50, 155.0 }, { -5, 100, 193.4 }, { -5, 200, 208.5 }, { -7.5, 50, 133.7 },
+            { -7.5, 100, 161.3 }, { -7.5, 200, 173.2 }, { -10, 50, 113.0 }, { -10, 100, 130.5 },
+            { -10, 200, 142.3 }, { -10, 300, 148.2 }, { -12.5, 50, 87.2 }, { -12.5, 100, 103.0 },
+            { -12.5, 200, 114.8 }, { -12.5, 300, 120.0 }, { -12.5, 400, 123.3 }, { -15, 50, 69.6 },
+            { -15, 100, 80.7 }, { -15, 200, 89.9 }, { -15, 300, 93.5 }, { -15, 400, 96.4 },
+            { -17.5, 50, 48.6 }, { -17.5, 100, 59.2 }, { -17.5, 200, 68.4 }, { -17.5, 300, 72.9 },
+            { -17.5, 400, 75.3 }, { -20, 50, 31.9 }, { -20, 100, 39.4 }, { -20, 200, 50.0 },
+            { -20, 300, 52.4 }, { -20, 400, 54.1 }, { -22.5, 50, 16.3 }, { -22.5, 100, 23.1 },
+            { -22.5, 200, 33.6 }, { -22.5, 300, 35.2 }, { -22.5, 400, 36.6 }, { -25, 50, 7.2 },
+            { -25, 100, 12.1 }, { -25, 200, 19.4 }, { -25, 300, 21.3 }, { -25, 400, 21.6 } } },
+        { "KT88", PentodeModel::kt88(), 300.0, 11.0, 25.44,
+          { { -5, 50, 301.1 }, { -5, 100, 317.1 }, { -5, 200, 340.9 }, { -5, 300, 359.8 },
+            { -10, 50, 229.3 }, { -10, 100, 245.3 }, { -10, 200, 263.0 }, { -10, 300, 276.3 },
+            { -10, 400, 289.2 }, { -15, 50, 162.1 }, { -15, 100, 175.1 }, { -15, 200, 189.4 },
+            { -15, 300, 199.8 }, { -15, 400, 208.6 }, { -20, 50, 114.2 }, { -20, 100, 127.8 },
+            { -20, 200, 140.8 }, { -20, 300, 150.1 }, { -20, 400, 157.5 }, { -25, 50, 81.1 },
+            { -25, 100, 89.6 }, { -25, 200, 103.3 }, { -25, 300, 113.3 }, { -25, 400, 121.5 },
+            { -30, 50, 46.8 }, { -30, 100, 54.1 }, { -30, 200, 68.5 }, { -30, 300, 78.6 },
+            { -30, 400, 86.8 }, { -35, 100, 23.0 }, { -35, 200, 33.4 }, { -35, 300, 44.0 },
+            { -35, 400, 54.1 }, { -40, 100, 3.0 }, { -40, 200, 9.5 }, { -40, 300, 15.2 },
+            { -40, 400, 18.7 } } },
+    };
+
+    for (const auto& family : families)
+    {
+        double squares = 0.0;
+
+        for (const auto& [ug1, ua, ia] : family.points)
+            squares += std::pow(pentodeAt(family.model, ug1, family.screen, ua).plate * 1.0e3 - ia, 2.0);
+
+        const double rms = std::sqrt(squares / static_cast<double>(family.points.size()));
+        INFO(family.name << ": " << rms << " mA rms against the sheet, " << family.korenFormRms
+                         << " in Koren's form");
+        CHECK(rms < family.boundRms);
+        CHECK(rms < family.korenFormRms);
+    }
+}
+
+TEST_CASE("The refitted pentodes keep their datasheet operating points", "[valve][model]")
+{
+    // The plate-slope refit was made with these held exactly; this is what
+    // stops a later refit trading the operating point for a better family.
+    struct Point
+    {
+        const char* name;
+        PentodeModel model;
+        double ua, ug2, ug1;
+        double ia, ig2, s, ri; // mA, mA, mA/V, kohm; 0 where the sheet is silent
+    };
+
+    const Point points[] = {
+        { "EL34", PentodeModel::el34(), 250.0, 265.0, -13.5, 100.0, 14.9, 11.0, 15.0 },
+        { "6L6GC", PentodeModel::u6l6gc(), 250.0, 250.0, -14.0, 72.0, 5.0, 6.0, 22.5 },
+        { "EL84", PentodeModel::el84(), 250.0, 250.0, -7.3, 48.0, 5.5, 0.0, 40.0 },
+        { "KT66", PentodeModel::kt66(), 250.0, 250.0, -15.0, 85.0, 7.0, 6.0, 22.5 },
+        { "KT77", PentodeModel::kt77(), 250.0, 250.0, -13.5, 100.0, 10.0, 10.5, 23.0 },
+        { "6V6S", PentodeModel::u6v6(), 250.0, 250.0, -12.5, 45.0, 5.0, 4.1, 50.0 },
+    };
+
+    const double h = 1.0e-3;
+
+    for (const auto& p : points)
+    {
+        INFO(p.name);
+        const auto at = pentodeAt(p.model, p.ug1, p.ug2, p.ua);
+        CHECK(at.plate * 1.0e3 == Catch::Approx(p.ia).epsilon(1.0e-3));
+        CHECK(at.screen * 1.0e3 == Catch::Approx(p.ig2).epsilon(1.0e-3));
+
+        const double s = (pentodeAt(p.model, p.ug1 + h, p.ug2, p.ua).plate
+                          - pentodeAt(p.model, p.ug1 - h, p.ug2, p.ua).plate) / (2.0 * h);
+        const double ri = 2.0 * h / (pentodeAt(p.model, p.ug1, p.ug2, p.ua + h).plate
+                                     - pentodeAt(p.model, p.ug1, p.ug2, p.ua - h).plate);
+
+        if (p.s > 0.0)
+            CHECK(s * 1.0e3 == Catch::Approx(p.s).epsilon(1.0e-3));
+
+        CHECK(ri / 1.0e3 == Catch::Approx(p.ri).epsilon(1.0e-3));
+    }
+
+    // The EL84's quoted S is the one figure the form cannot reach; it has sat
+    // at 11.06 against 11.3 since its first fit.
+    const double s84 = (pentodeAt(PentodeModel::el84(), -7.3 + h, 250.0, 250.0).plate
+                        - pentodeAt(PentodeModel::el84(), -7.3 - h, 250.0, 250.0).plate) / (2.0 * h);
+    CHECK(s84 * 1.0e3 == Catch::Approx(11.3).epsilon(0.03));
+}
+
+TEST_CASE("Two pentode checks no fit ever saw", "[valve][model]")
+{
+    // The 6L6GC's push-pull column on JJ's sheet: Ua = Ug2 270 V, Ug1 -17.5 V,
+    // 134 mA for the pair.
+    const auto pushPull = pentodeAt(PentodeModel::u6l6gc(), -17.5, 270.0, 270.0);
+    CHECK(pushPull.plate * 1.0e3 == Catch::Approx(67.0).epsilon(0.03));
+
+    // The 6V6S sheet's only plate family is triode-connected -- screen strapped
+    // to plate -- so it reads the cathode current. Ug1 0 to -40 V.
+    const SheetPoint triode[] = {
+        { 0, 50, 15.9 }, { 0, 100, 36.4 }, { 0, 150, 61.9 }, { 0, 200, 92.1 }, { 0, 250, 126.3 },
+        { -10, 100, 5.8 }, { -10, 150, 20.5 }, { -10, 200, 40.5 }, { -10, 250, 64.8 },
+        { -10, 300, 92.5 }, { -20, 200, 9.3 }, { -20, 250, 24.4 }, { -20, 300, 44.5 },
+        { -20, 350, 67.9 }, { -20, 400, 93.7 }, { -30, 250, 3.8 }, { -30, 300, 13.2 },
+        { -30, 350, 27.8 }, { -30, 400, 48.7 }, { -30, 450, 76.0 }, { -40, 350, 6.1 },
+        { -40, 400, 14.9 }, { -40, 450, 31.7 }
+    };
+
+    double squares = 0.0;
+
+    for (const auto& [ug1, ua, ia] : triode)
+    {
+        const auto c = pentodeAt(PentodeModel::u6v6(), ug1, ua, ua);
+        squares += std::pow((c.plate + c.screen) * 1.0e3 - ia, 2.0);
+    }
+
+    const double rms = std::sqrt(squares / static_cast<double>(std::size(triode)));
+    INFO("6V6S triode-connected: " << rms << " mA rms");
+    CHECK(rms < 4.5);
+}
+
+TEST_CASE("The plate-slope term's derivative is the derivative of its current", "[valve][model]")
+{
+    // Newton converges on whatever the Jacobian says, so a slope that does not
+    // match its current is a model that quietly solves something else. Checked
+    // through the knee, across it and below the cathode.
+    for (const auto& model : { PentodeModel::el34(), PentodeModel::el84(), PentodeModel::kt88(),
+                               PentodeModel::u6l6gc() })
+    {
+        for (const double vp : { -5.0, 0.5, 3.0, 12.0, 40.0, 250.0, 480.0 })
+        {
+            Pentode p {};
+            p.model = model;
+            DeviceLinearisation out {};
+            double v[3] = { -10.0, 250.0, vp };
+            linearise(p, v, out);
+
+            const double h = 1.0e-4;
+            const auto plateAt = [&](double g1, double g2, double a)
+            { return pentodeAt(model, g1, g2, a).plate; };
+
+            INFO("Vp " << vp);
+            CHECK(out.jacobian[8] == Catch::Approx((plateAt(-10.0, 250.0, vp + h) - plateAt(-10.0, 250.0, vp - h)) / (2.0 * h))
+                                         .epsilon(1.0e-5).margin(1.0e-12));
+            CHECK(out.jacobian[6] == Catch::Approx((plateAt(-10.0 + h, 250.0, vp) - plateAt(-10.0 - h, 250.0, vp)) / (2.0 * h))
+                                         .epsilon(1.0e-5).margin(1.0e-12));
+            CHECK(out.jacobian[7] == Catch::Approx((plateAt(-10.0, 250.0 + h, vp) - plateAt(-10.0, 250.0 - h, vp)) / (2.0 * h))
+                                         .epsilon(1.0e-5).margin(1.0e-12));
+        }
+    }
+}
+
 //==============================================================================
 // Diodes
 //==============================================================================
@@ -692,6 +949,35 @@ TEST_CASE("The 1N4001 reproduces its card and the Diodes Inc curve", "[diode][mo
     CHECK(diodeVoltageAt(m, 10.0e-6) < diodeVoltageAt(sig, 10.0e-6));
     CHECK(diodeVoltageAt(m, 10.0e-3) - diodeVoltageAt(m, 10.0e-6)
           > diodeVoltageAt(sig, 10.0e-3) - diodeVoltageAt(sig, 10.0e-6));
+}
+
+TEST_CASE("The 1N4148, 1N5817 and LEDs land on their makers' curves", "[diode][model]")
+{
+    // Each from its maker's typical forward curve at 25 C, digitised from the
+    // sheet's vector paths (docs/specs/diodes): Vishay's 1N4148 and 1N5817,
+    // and Kingbright's WP7113 red (GaAsP), green (GaP) and blue (InGaN).
+    struct Point { double current, volts, margin; };
+
+    const auto check = [](const char* name, const DiodeModel& model, std::initializer_list<Point> points)
+    {
+        for (const auto& p : points)
+        {
+            const double v = diodeVoltageAt(model, p.current);
+            INFO(name << " at " << p.current << " A: " << v << " V, sheet " << p.volts);
+            CHECK(v == Catch::Approx(p.volts).margin(p.margin));
+        }
+    };
+
+    check("1N4148", DiodeModel::d1n4148(),
+          { { 10.0e-6, 0.380, 0.005 }, { 100.0e-6, 0.497, 0.005 }, { 1.0e-3, 0.609, 0.005 },
+            { 10.0e-3, 0.729, 0.005 }, { 100.0e-3, 0.844, 0.005 } });
+
+    // Vishay's curve starts at 10 mA; below that the fit is extrapolation.
+    check("1N5817", DiodeModel::schottky(), { { 10.0e-3, 0.172, 0.003 }, { 100.0e-3, 0.250, 0.003 }, { 1.0, 0.392, 0.003 } });
+
+    check("WP7113ID", DiodeModel::redLed(), { { 1.0e-3, 1.645, 0.02 }, { 5.0e-3, 1.802, 0.02 }, { 10.0e-3, 1.903, 0.02 } });
+    check("WP7113GD", DiodeModel::greenLed(), { { 1.0e-3, 1.857, 0.02 }, { 5.0e-3, 1.942, 0.02 }, { 10.0e-3, 2.033, 0.02 } });
+    check("WP7113QBC", DiodeModel::blueLed(), { { 1.0e-3, 2.571, 0.03 }, { 5.0e-3, 2.806, 0.03 }, { 10.0e-3, 3.000, 0.03 } });
 }
 
 TEST_CASE("The BAT41 reproduces ST's typical curve", "[diode][model]")
@@ -778,14 +1064,15 @@ TEST_CASE("The BAT46 reproduces ST's typical curve", "[diode][model]")
     CHECK(leakage < 0.5e-6);
 }
 
-TEST_CASE("A BAT46 clips lowest of all the diodes", "[diode][model]")
+TEST_CASE("A BAT46 clips lowest of the small-signal diodes", "[diode][model]")
 {
-    // 0.26 V at a milliamp: 130 mV under a BAT41, and under germanium and the
-    // 1N5817 too.
+    // 0.26 V at a milliamp: 130 mV under a BAT41, and under germanium. Only
+    // the 1N5817 goes lower -- a 1 A Schottky, whose large die puts a
+    // milliamp at a tenth of a volt (Vishay's curve, extrapolated).
     const double bat46 = diodeVoltageAt(DiodeModel::bat46(), 1.0e-3);
     CHECK(bat46 < diodeVoltageAt(DiodeModel::bat41(), 1.0e-3) - 0.1);
     CHECK(bat46 < diodeVoltageAt(DiodeModel::germanium(), 1.0e-3));
-    CHECK(bat46 < diodeVoltageAt(DiodeModel::schottky(), 1.0e-3));
+    CHECK(bat46 > diodeVoltageAt(DiodeModel::schottky(), 1.0e-3));
 
     // But with a Schottky's sharp knee rather than germanium's soft one: less
     // voltage across the three decades below a milliamp.
@@ -957,6 +1244,45 @@ namespace
         }
 
         return lo;
+    }
+}
+
+TEST_CASE("The JFETs are InterFET's measured models", "[jfet][model]")
+{
+    // InterFET's own SPICE models, measured on their parts, run in ngspice-47
+    // with the drain 10 V up: Idss, and the gate voltage where the drain current
+    // falls to a microamp. The engine's channel is SPICE's, so these are the
+    // models' own figures; they used to be round numbers 1.7-1.8 times too
+    // much current on the J201 and 2N5457.
+    struct Reference { const char* name; JfetModel model; double idss, cutoff; };
+
+    const Reference references[] = {
+        { "J201", JfetModel::j201(), 0.393e-3, -0.650 },
+        { "2N5457", JfetModel::n2n5457(), 2.124e-3, -1.220 },
+        { "2N5485", JfetModel::n2n5485(), 6.137e-3, -2.130 },
+        { "2N5460", JfetModel::p2n5460(), 2.715e-3, 2.110 },
+    };
+
+    for (const auto& r : references)
+    {
+        const double p = r.model.polaritySign();
+        Jfet j {};
+        j.model = r.model;
+
+        const auto drain = [&](double vgs)
+        {
+            DeviceLinearisation out {};
+            double v[2] = { vgs, p * 9.96 }; // ngspice's Vds, through its 10 ohm drain resistor
+            linearise(j, v, out);
+            return p * out.current[1];
+        };
+
+        INFO(r.name << ": Idss " << drain(0.0) * 1e3 << " mA");
+        CHECK(drain(0.0) == Catch::Approx(r.idss).epsilon(0.003));
+
+        // A microamp at the cutoff, within the 10 mV the sweep stepped by.
+        CHECK(drain(r.cutoff - p * 0.01) < 1.0e-6);
+        CHECK(drain(r.cutoff + p * 0.01) > 1.0e-6);
     }
 }
 
@@ -1508,6 +1834,69 @@ namespace
         REQUIRE(std::isfinite(peak));
         return peak;
     }
+
+    /** A non-inverting op-amp stage with a gain of 101, drawn, on a single 9 V
+        supply with its input at ground -- so the output rests on the low clamp
+        and swings up from it. Driven at 10 kHz hard enough to clip, which puts
+        both the gain-bandwidth product (the closed loop's corner is GBW / 101,
+        a few times 10 kHz) and the output headroom into the answer. Returns
+        the settled amplitude at the output. */
+    float probeOpAmpStage(int modelIndex)
+    {
+        Schematic schematic;
+
+        const auto amp = schematic.addElement(ElementType::OpAmp, 0, 0);
+        schematic.findElement(amp)->modelIndex = modelIndex;
+        schematic.findElement(amp)->value = 9.0;
+
+        auto pin = [&schematic](int id, int index) { return schematic.findElement(id)->getPinPosition(index); };
+
+        auto label = [&schematic](juce::Point<int> at, const char* name, int dx)
+        {
+            const auto id = schematic.addElement(ElementType::Node, at.x + dx - 2, at.y);
+            schematic.findElement(id)->label = name;
+
+            if (dx != 0)
+                schematic.addWire(at, { at.x + dx, at.y });
+        };
+
+        // In+, in-, out.
+        label(pin(amp, 0), "src", -4);
+        label(pin(amp, 1), "fb", -4);
+        label(pin(amp, 2), "amp", 4);
+
+        const auto ground = schematic.addElement(ElementType::Ground, 50, 22);
+        label(pin(ground, 0), "com", 0);
+
+        auto resistor = [&](int x, const char* top, const char* bottom, double ohms)
+        {
+            const auto r = schematic.addElement(ElementType::Resistor, x, 40);
+            schematic.findElement(r)->value = ohms;
+            label(pin(r, 0), top, -4);
+            label(pin(r, 1), bottom, -4);
+        };
+
+        resistor(10, "amp", "fb", 100000.0);
+        resistor(20, "fb", "com", 1000.0);
+
+        const auto input = schematic.addElement(ElementType::Input, -40, 60);
+        label(pin(input, 0), "src", 4);
+
+        const auto output = schematic.addElement(ElementType::Output, 0, 80);
+        label(pin(output, 0), "amp", -4);
+
+        auto result = buildCircuits(schematic, sampleRate, 1);
+        INFO(result.error);
+        REQUIRE(result.isValid());
+
+        auto& circuit = *result.circuits[0];
+        REQUIRE(circuit.foundOperatingPoint());
+        circuit.setOutputOffsetToOperatingPoint();
+
+        const float peak = amplitudeOf(circuit, 10000.0, 0.05f, sampleRate, 0.2);
+        REQUIRE(std::isfinite(peak));
+        return peak;
+    }
 }
 
 TEST_CASE("Every transistor and MOSFET model in the palette reaches the engine", "[plugin][schematic]")
@@ -1527,6 +1916,82 @@ TEST_CASE("Every transistor and MOSFET model in the palette reaches the engine",
             INFO(getElementInfo(type).name << " model " << i << " (" << choices[i] << ") behaves as model 0");
             CHECK(std::abs(probeStage(type, i) - first) > 1.0e-6f);
         }
+    }
+}
+
+TEST_CASE("Every op-amp model in the palette reaches the engine", "[plugin][schematic]")
+{
+    // The op-amp switch ends in `default:` like the others, so an index it
+    // forgot builds as the TL072 -- still an op-amp, still a sound, and nothing
+    // on the sheet to say so. The ideal one is built by a different call
+    // altogether, and is in the loop to show that branch is reached as well.
+    const auto choices = getModelChoices(ElementType::OpAmp);
+    REQUIRE(choices.size() > 1);
+
+    const float first = probeOpAmpStage(0);
+
+    for (int i = 1; i < choices.size(); ++i)
+    {
+        INFO("op-amp model " << i << " (" << choices[i] << ") behaves as model 0");
+        CHECK(std::abs(probeOpAmpStage(i) - first) > 1.0e-6f);
+    }
+}
+
+TEST_CASE("An amplifier with too low a supply is refused by name", "[plugin][schematic]")
+{
+    // Below its model's limit the two clamps overlap and pin the output, which
+    // builds and plays as a fixed level. Refused, naming the part, instead.
+    const auto stage = [](ElementType type, double supply)
+    {
+        Schematic schematic;
+
+        const auto amp = schematic.addElement(type, 0, 0);
+        schematic.findElement(amp)->value = supply;
+
+        auto pin = [&schematic](int id, int index) { return schematic.findElement(id)->getPinPosition(index); };
+
+        auto label = [&schematic](juce::Point<int> at, const char* name, int dx)
+        {
+            const auto id = schematic.addElement(ElementType::Node, at.x + dx - 2, at.y);
+            schematic.findElement(id)->label = name;
+
+            if (dx != 0)
+                schematic.addWire(at, { at.x + dx, at.y });
+        };
+
+        label(pin(amp, 0), "src", -4);
+        label(pin(amp, 1), "com", -4);
+        label(pin(amp, 2), "amp", 4);
+
+        const auto ground = schematic.addElement(ElementType::Ground, 50, 22);
+        label(pin(ground, 0), "com", 0);
+
+        const auto input = schematic.addElement(ElementType::Input, -40, 60);
+        label(pin(input, 0), "src", 4);
+
+        const auto output = schematic.addElement(ElementType::Output, 0, 80);
+        label(pin(output, 0), "amp", -4);
+
+        return std::make_pair(buildCircuits(schematic, sampleRate, 1), amp);
+    };
+
+    for (const auto type : { ElementType::OpAmp, ElementType::PowerAmp })
+    {
+        INFO(getElementInfo(type).name);
+
+        // Not a structured binding: a lambda may not capture one under the
+        // Linux CI compiler, and the id is needed inside the predicate below.
+        const auto built = stage(type, 2.0);
+        const auto& starved = built.first;
+        const int id = built.second;
+        CHECK_FALSE(starved.isValid());
+
+        const auto named = std::find_if(starved.diagnostics.begin(), starved.diagnostics.end(),
+                                        [id](const Diagnostic& d)
+                                        { return d.isError() && d.elementId == id && d.text.contains("Supply too low"); });
+        CHECK(named != starved.diagnostics.end());
+
+        CHECK(stage(type, 9.0).first.isValid());
     }
 }
 
@@ -1593,4 +2058,184 @@ TEST_CASE("A drawn LM386 builds, amplifies, and leaves its gain pins open quietl
     circuit.setOutputOffsetToOperatingPoint();
 
     CHECK(amplitudeOf(circuit, 1000.0, 2.0e-3f, sampleRate, 0.3) / 2.0e-3f == Catch::Approx(21.0).epsilon(0.03));
+}
+
+//==============================================================================
+// Op-amp supplies
+
+namespace
+{
+    using namespace SchematicModel;
+
+    /** A drawn non-inverting stage with a gain of 101 -- 100k over 1k -- its
+        input coupled through 10u and biased by 1M, as a preamp's is. The 1M
+        and the 1k go to `reference`: "com" (ground) for a split supply, or
+        "vg" for the single-supply workaround, which adds a source holding vg
+        `virtualGround` volts above ground. Returns the circuit, unprepared
+        offsets and all, so a test can read the output node -- which the
+        Output terminal names "out" -- directly. */
+    std::unique_ptr<Circuit> drawSupplyStage(double plus, double minus, double virtualGround)
+    {
+        Schematic schematic;
+
+        auto pin = [&schematic](int id, int index) { return schematic.findElement(id)->getPinPosition(index); };
+
+        auto label = [&schematic](juce::Point<int> at, const char* name, int dx)
+        {
+            const auto id = schematic.addElement(ElementType::Node, at.x + dx - 2, at.y);
+            schematic.findElement(id)->label = name;
+
+            if (dx != 0)
+                schematic.addWire(at, { at.x + dx, at.y });
+        };
+
+        auto twoPin = [&](ElementType type, int x, const char* top, const char* bottom, double value)
+        {
+            const auto id = schematic.addElement(type, x, 40);
+            schematic.findElement(id)->value = value;
+            label(pin(id, 0), top, -4);
+            label(pin(id, 1), bottom, -4);
+            return id;
+        };
+
+        const auto amp = schematic.addElement(ElementType::OpAmp, 0, 0);
+        schematic.findElement(amp)->value = plus;
+        schematic.findElement(amp)->valueB = minus;
+
+        label(pin(amp, 0), "bias", -4);
+        label(pin(amp, 1), "fb", -4);
+        label(pin(amp, 2), "amp", 4);
+
+        const auto ground = schematic.addElement(ElementType::Ground, 50, 22);
+        label(pin(ground, 0), "com", 0);
+
+        const char* reference = virtualGround > 0.0 ? "vg" : "com";
+
+        if (virtualGround > 0.0)
+            twoPin(ElementType::VoltageSource, 0, "vg", "com", virtualGround);
+
+        twoPin(ElementType::Capacitor, 10, "src", "bias", 10.0e-6);
+        twoPin(ElementType::Resistor, 20, "bias", reference, 1.0e6);
+        twoPin(ElementType::Resistor, 30, "amp", "fb", 100000.0);
+        twoPin(ElementType::Resistor, 40, "fb", reference, 1000.0);
+
+        const auto input = schematic.addElement(ElementType::Input, -40, 60);
+        label(pin(input, 0), "src", 4);
+
+        const auto output = schematic.addElement(ElementType::Output, 0, 80);
+        label(pin(output, 0), "amp", -4);
+
+        auto result = buildCircuits(schematic, sampleRate, 1);
+        INFO(result.error);
+        REQUIRE(result.isValid());
+        REQUIRE(result.circuits[0]->foundOperatingPoint());
+        return std::move(result.circuits[0]);
+    }
+
+    /** The voltage at the output node, sample by sample, under a 100 Hz sine. */
+    std::vector<double> driveSupplyStage(Circuit& circuit, float amplitude)
+    {
+        std::vector<double> out;
+
+        for (int n = 0; n < 4800; ++n)
+        {
+            circuit.process(amplitude * static_cast<float>(std::sin(2.0 * std::numbers::pi * 100.0 * n / sampleRate)));
+            out.push_back(circuit.getNodeVoltage("out"));
+        }
+
+        return out;
+    }
+}
+
+TEST_CASE("A drawn op-amp runs on a split supply", "[plugin][schematic][opamp]")
+{
+    // A bass amp's preamp is drawn on +15 and -15 with its references at
+    // ground. Both rails reach the engine: the stage rests at ground, and
+    // driven hard it clips at both, each where the model's headroom puts it.
+    auto split = drawSupplyStage(15.0, -15.0, 0.0);
+    CHECK(std::abs(split->getNodeVoltage("out")) < 0.05);
+
+    const auto swing = driveSupplyStage(*split, 0.3f);
+    const auto [low, high] = std::minmax_element(swing.begin(), swing.end());
+
+    const auto model = OpAmpModel::tl072().withRails(15.0, -15.0);
+    INFO("clips at " << *high << " and " << *low << " V");
+    CHECK(*high == Catch::Approx(15.0 - model.positiveHeadroom()).margin(0.5));
+    CHECK(*low == Catch::Approx(-15.0 + model.negativeHeadroom()).margin(0.5));
+
+    // Before the negative supply could be set, this circuit had to be drawn on
+    // 30 V with every reference moved to a 15 V virtual ground. The model sees
+    // only its rails, so the two are the same circuit 15 V apart, but for
+    // 1.5 mV: the bias solve conditions every node with gmin (1e-12 S) to
+    // ground, which on the shifted drawing is 15 pA out of a node biased
+    // through 1M, times a gain of 101. That offset rides on the linear part of
+    // the waveform and not on the clipped part, where the rails set the level,
+    // so it is the bound on the whole of it -- 0.006% of the swing.
+    auto shifted = drawSupplyStage(30.0, 0.0, 15.0);
+    const auto workaround = driveSupplyStage(*shifted, 0.3f);
+
+    double worst = 0.0;
+    for (size_t i = 0; i < swing.size(); ++i)
+        worst = std::max(worst, std::abs(swing[i] - (workaround[i] - 15.0)));
+
+    INFO("the two drawings part by " << worst << " V");
+    CHECK(worst < 2.0e-3);
+}
+
+TEST_CASE("An op-amp's negative supply is ground unless it is set", "[plugin][schematic][opamp]")
+{
+    // A freshly placed op-amp, and one from a sheet saved before the field
+    // existed, are single-supply parts -- zero is the rail being ground, not a
+    // value left unfilled, so neither draws red nor refuses to build.
+    Schematic sheet;
+    const auto id = sheet.addElement(ElementType::OpAmp, 0, 0);
+    CHECK(juce::exactlyEqual(sheet.findElement(id)->valueB, 0.0));
+    CHECK(sheet.findElement(id)->isSecondValueRail());
+
+    sheet.findElement(id)->value = 15.0;
+    sheet.findElement(id)->valueB = -15.0;
+
+    Schematic reloaded;
+    reloaded.restoreFromValueTree(sheet.toValueTree());
+    CHECK(juce::exactlyEqual(reloaded.getElements()[0].valueB, -15.0));
+
+    auto older = sheet.toValueTree();
+    older.getChild(0).removeProperty("valueB", nullptr);
+    Schematic old;
+    old.restoreFromValueTree(older);
+    CHECK(juce::exactlyEqual(old.getElements()[0].valueB, 0.0));
+
+    // A transformer still reads an absent secondary as 1, as it always did.
+    Schematic transformer;
+    transformer.addElement(ElementType::Transformer, 0, 0);
+    auto tree = transformer.toValueTree();
+    tree.getChild(0).removeProperty("valueB", nullptr);
+    transformer.restoreFromValueTree(tree);
+    CHECK(juce::exactlyEqual(transformer.getElements()[0].valueB, 1.0));
+
+    // Typed into the inspector, the size is what counts: the field is the
+    // negative supply, so "15" means 15 V below ground.
+    CHECK(juce::exactlyEqual(Element::railBelowGround(15.0), -15.0));
+    CHECK(juce::exactlyEqual(Element::railBelowGround(-15.0), -15.0));
+    CHECK(juce::exactlyEqual(Element::railBelowGround(0.0), 0.0));
+}
+
+TEST_CASE("A negative supply above ground is refused by name", "[plugin][schematic][opamp]")
+{
+    // Only a hand-edited file can carry one. It is not a circuit, so it is
+    // refused, pointing at the part, rather than handed to the clamps.
+    Schematic sheet;
+    const auto amp = sheet.addElement(ElementType::OpAmp, 0, 0);
+    sheet.findElement(amp)->value = 15.0;
+    sheet.findElement(amp)->valueB = 5.0;
+    sheet.addElement(ElementType::Ground, 20, 20);
+    sheet.addElement(ElementType::Input, -20, 0);
+    sheet.addElement(ElementType::Output, 20, 0);
+
+    const auto result = buildCircuits(sheet, sampleRate, 1);
+    CHECK_FALSE(result.isValid());
+
+    const auto named = std::find_if(result.diagnostics.begin(), result.diagnostics.end(), [amp](const Diagnostic& d)
+                                    { return d.isError() && d.elementId == amp && d.text.contains("above ground"); });
+    CHECK(named != result.diagnostics.end());
 }

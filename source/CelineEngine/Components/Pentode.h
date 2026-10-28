@@ -21,8 +21,16 @@ namespace CircuitComponents
         over with an arctangent to produce the knee:
 
             E1  = (Vg2k/KP) * softplus(KP * (1/MU + Vg1k/Vg2k))
-            Ip  = 2 * E1^EX / KG1 * atan(Vpk / KVB)
+            Ip  = 2 * E1^EX / KG1 * atan(Vpk / KVB) * (1 + Vpk / VA)
             Ig2 = 2 * E1^EX / KG2
+
+        The last factor is not Koren's. His arctangent does two jobs -- the
+        knee, and the slope of the curves above it, which is the plate
+        resistance -- and one parameter cannot do both: fitting Ri at the
+        operating point pins KVB near 50 V on every valve, which makes the knee
+        far softer than any datasheet draws it. The plate-slope voltage VA takes
+        the slope, the way a transistor's Early voltage does, and leaves KVB to
+        set the knee alone. Zero means none, which is Koren's form exactly.
 
         Note what Ig2 does *not* depend on: the plate. That's the whole point of
         the screen, and it's also why screen current is what kills output valves
@@ -50,6 +58,16 @@ namespace CircuitComponents
         /** Control-grid conduction once it goes positive. See TriodeModel. */
         double gridPerveance = 1.0e-3;
 
+        /** VA, volts: how much plate current still rises with plate voltage
+            above the knee. Ip picks up a factor 1 + Vpk/VA. Zero means none --
+            Koren's form, where the arctangent sets the slope as well as the
+            knee. See the class comment.
+
+            After gridPerveance, not beside KVB where it belongs, because the
+            models below are built by aggregate initialisation in field order:
+            put it earlier and every valve's grid perveance lands here. */
+        double plateSlopeVoltage = 0.0;
+
         /** Interelectrode capacitance, farads, from the datasheet.
 
             Note how much smaller grid-to-plate is here than on a triode -- 1 to
@@ -73,33 +91,60 @@ namespace CircuitComponents
         // 40k, 98k and 237k where the datasheets say 15k, 22.5k and 40k, so the
         // plate curves were two to six times too flat and the power stage far
         // stiffer than the real valve.
+        //
+        // All but the 6V6S now carry the plate-slope term, refitted with the
+        // operating point held exactly and the knee and slope fitted to the
+        // sheet's plate family -- digitised from the vector paths in
+        // docs/specs/tubes, every curve sampled at 5 V steps down to 10 V
+        // where it rises steadily into its knee and from 30 V where it dips
+        // (secondary emission, which nothing here models). The rms figures
+        // quoted are all measured the same way, every 10 V from 30 V up, so
+        // they compare across valves; the older figures some notes used to
+        // quote came from a different sampling and do not.
 
         /** EL34. The British power valve -- Marshall, Hiwatt, Orange.
 
             Fitted at Ua 250 V, Ug2 265 V, Ug1 -13.5 V: Ia 100 mA, Ig2 14.9 mA,
-            S 11 mA/V, Ri 15k, mu(g2/g1) 11 -- all four reproduced exactly, and
-            7.5 mA rms against the published plate curves. */
+            S 11 mA/V, Ri 15k, mu(g2/g1) 11 -- all four reproduced exactly.
+
+            Against the plate family (Ug2 250 V, Ug1 0 to -25 V): 7.8 mA rms,
+            where Koren's form alone managed 17.7. The knee is at 13 V rather
+            than 59, so the top curves reach their plateau where the sheet
+            draws it -- 245 mA at Ua 150 on Ug1 0 V against the old 236 and
+            the sheet's 264 -- at the cost of overshooting the -15 V curve's
+            knee (54 mA at Ua 50 against the sheet's 40). */
         static PentodeModel el34() noexcept
         {
-            PentodeModel m{11.0, 1.35, 688.6, 3450.6, 55.7, 58.91, 1.0e-3};
+            PentodeModel m{11.0, 1.35, 898.37653, 3450.37128, 55.7232413, 13.3393007, 1.0e-3};
+            m.plateSlopeVoltage = 1649.6343;
             m.capGridCathode = 15.5e-12; m.capGridPlate = 1.3e-12; m.capPlateCathode = 10.0e-12;
             return m;
         }
 
-        /** 6L6GC. The American one -- Fender, Mesa. Lower MU, stiffer, cleaner
-            for longer before it gives up.
+        /** 6L6GC. The American one -- Fender, Mesa. Stiffer than an EL34 and
+            cleaner for longer before it gives up.
 
             Fitted at Ua = Ug2 = 250 V, Ug1 -14 V to Ia 72 mA, Ig2 5 mA and
-            Ra 22.5k, which it reproduces exactly.
+            Ra 22.5k from JJ's sheet, and S 6 mA/V, which JJ omits and Ei's and
+            Coolaudio's 6L6GC sheets both give at the same point -- all four
+            exact.
 
-            PARTLY UNVERIFIED: JJ's sheet quotes no transconductance and no mu
-            for this valve, so KP and MU are still Koren's. The transconductance
-            that falls out is 6.1 mA/V and nothing here confirms it. Everything
-            about how hard it is driven is right; how much gain that produces is
-            not pinned down. */
+            JJ's plate family is at Ug2 400 V, which is where a Fender actually
+            runs its screens, and it is what sets MU and EX here: both were
+            Koren's guesses before, unverified, and freeing them takes the
+            family from 14.0 mA rms to 9.2. MU comes out at 12.5 and EX at 1.19,
+            near the KT88's 1.16 -- another beam tetrode. MU is the model's
+            parameter rather than the valve's mu; the softplus spreads the
+            cutoff, as it does on the KT88.
+
+            Held out: JJ's push-pull column, Ua = Ug2 270 V, Ug1 -17.5 V, puts
+            67 mA through each valve, and this model 66.0. Its screen current
+            there is 4.5 mA against 5.5 -- Koren's fixed plate-to-screen ratio,
+            the same on the old fit. */
         static PentodeModel u6l6gc() noexcept
         {
-            PentodeModel m{8.7, 1.35, 1461.2, 15528.5, 48.0, 54.79, 1.0e-3};
+            PentodeModel m{12.4698915, 1.19186071, 666.13387, 5889.28417, 28.8416111, 23.1373379, 1.0e-3};
+            m.plateSlopeVoltage = 2459.84194;
             m.capGridCathode = 12.5e-12; m.capGridPlate = 1.5e-12; m.capPlateCathode = 10.0e-12;
             return m;
         }
@@ -108,11 +153,17 @@ namespace CircuitComponents
             that breaks up early and politely.
 
             Fitted at Ua = Ug2 = 250 V, Ug1 -7.3 V: Ia 48 mA, Ig2 5.5 mA and
-            Ri 40k exactly, S 11.06 against the quoted 11.3 mA/V, and 6.6 mA rms
-            against the published plate curves. */
+            Ri 40k exactly, S 11.06 against the quoted 11.3 mA/V.
+
+            Against the plate family (Ug2 250 V, Ug1 0 to -10 V): 6.8 mA rms,
+            where Koren's form alone managed 16.2, with the knee at 6.3 V
+            rather than 47. KP is held where it was: left free it runs off
+            towards infinity chasing the quoted S, which the form cannot reach,
+            and a cutoff that sharp is a corner Newton has to turn. */
         static PentodeModel el84() noexcept
         {
-            PentodeModel m{19.0, 1.35, 628.1, 3954.7, 1280.5, 46.70, 1.0e-3};
+            PentodeModel m{19.0, 1.35, 790.522564, 3954.74437, 1280.5, 6.27723688, 1.0e-3};
+            m.plateSlopeVoltage = 1943.49294;
             m.capGridCathode = 10.0e-12; m.capGridPlate = 0.6e-12; m.capPlateCathode = 5.1e-12;
             return m;
         }
@@ -145,10 +196,25 @@ namespace CircuitComponents
             and of British hi-fi before that. Softer and warmer than a 6L6, which
             it otherwise resembles -- lower gm, and it runs out of steam earlier.
 
-            Fitted to the JJ datasheet; see the note above. */
+            Fitted to the JJ datasheet; see the note above. The plate-slope term
+            takes its family -- at Ug2 400 V, curves starting from 50 V -- from
+            27.3 mA rms to 23.5, and puts the knee where the sheet starts:
+            188 mA at Ua 50 on Ug1 -15 V against the sheet's 176 and the old
+            135.
+
+            The rest of that 23.5 is not the plate's. The sheet's low curves at
+            400 V sit 15-25 mA under the model -- 67 mA on Ug1 -35 V where the
+            model draws 93 -- which is how the current scales with screen
+            voltage, not plate. Freeing MU and EX buys 17.8 mA rms, but only at
+            MU 50, which a -50 V curve still conducting at 400 V rules out; and
+            the sheet's triode-connected Ri of 1.3k cannot be met alongside the
+            family at all (the model gives 1.07k). Koren's grid law does not
+            describe this valve across both screen voltages, so MU and EX stay
+            where the 250 V figures put them. */
         static PentodeModel kt66() noexcept
         {
-            PentodeModel m{7.8, 1.35, 1568.0, 13742.0, 36.0, 46.87, 1.0e-3};
+            PentodeModel m{7.8, 1.35, 1933.52701, 13741.093, 36.06928, 10.1143468, 1.0e-3};
+            m.plateSlopeVoltage = 2146.31153;
             m.capGridCathode = 16.0e-12; m.capGridPlate = 2.3e-12; m.capPlateCathode = 10.0e-12;
             return m;
         }
@@ -157,10 +223,14 @@ namespace CircuitComponents
             noticeably stiffer: nearly twice the KT66's transconductance at the
             same operating point, and it holds together longer before it gives up.
 
-            Fitted to the JJ datasheet; see the note above. */
+            Fitted to the JJ datasheet; see the note above. The one valve the
+            plate-slope term barely moves: VA comes out at 16.7 kV, so its knee
+            was already near right in Koren's form, and its family goes from
+            8.9 mA rms to 8.2. */
         static PentodeModel kt77() noexcept
         {
-            PentodeModel m{11.5, 1.35, 629.4, 4449.7, 37.4, 39.39, 1.0e-3};
+            PentodeModel m{11.5, 1.35, 647.6862, 4448.7261, 37.3666483, 34.3147436, 1.0e-3};
+            m.plateSlopeVoltage = 16672.6438;
             m.capGridCathode = 16.5e-12; m.capGridPlate = 1.0e-12; m.capPlateCathode = 9.0e-12;
             return m;
         }
@@ -194,7 +264,14 @@ namespace CircuitComponents
             the sheet's two columns give Ia/Ig2 of 9 and 14 -- so at -15 V this
             model draws 7.8 mA for the pair against a quoted 5. It is right
             where it was fitted and runs high as the valve is biased colder,
-            which matters for screen dissipation and not much else. */
+            which matters for screen dissipation and not much else.
+
+            The one pentode still in Koren's form, because its sheet has no
+            pentode plate family to fit a plate slope to -- only triode-connected
+            curves, which cannot separate the knee from the slope (a fit drives
+            KVB to zero and leaves VA wherever it started). Those curves are
+            still worth having: held out, Ug1 0 to -40 V, screen strapped to
+            plate, they land within 4.1 mA rms of this model. */
         static PentodeModel u6v6() noexcept
         {
             PentodeModel m{9.8, 1.35, 2109.7, 13453.7, 45.03, 40.22, 1.0e-3};
@@ -230,26 +307,27 @@ namespace CircuitComponents
             triode figures imply a grid-to-screen mu of 8.5, and the model's is
             8.57 at the operating point. MU the *parameter* only trades against
             KP once EX is fixed -- the cutoff's sharpness against its position --
-            and was set to 10.54 from the sheet's plate characteristics, which
-            are at Ug2 = 300 V and so otherwise held out of the fit:
+            and is set, with the knee and the plate slope, from the sheet's
+            plate characteristics, which are at Ug2 = 300 V:
 
                 Ug1      -5    -10    -15    -20    -25    -30    -35    -40
                 sheet   351    270    195    146    109     74     39     13    Ia at Ua 250, mA
-                model   357    280    211    150    101     64     39     22
+                model   355    279    210    150    101     64     38     21
 
-            10.7 mA rms over Ua >= 100 V, against 15.2 for EX 1.35 and MU 8.
-
-            Koren's form is the limit, not the fit. Its arctangent knee is too
-            soft for a beam tetrode -- at Ua 50 V, Ug1 -15 the sheet shows 162 mA
-            and the model 117 -- and its plate curves flatten above 300 V where
-            the real ones keep climbing, so a hard-driven stage swings into the
-            knee earlier than the valve does. The sheet's ultralinear chart reads
+            10.6 mA rms over the family from Ua 30 V, against 18.8 in Koren's
+            form. The plate-slope term is what fixed the knee: at Ua 50 V,
+            Ug1 -15 the sheet shows 162 mA, this model 165, and Koren's
+            arctangent alone 117. What it cannot fix is the low curves above
+            300 V, which keep climbing on the sheet (Ug1 -30 V: 74 mA at 250,
+            87 at 400) and here barely move (64 and 69) -- one slope for the
+            whole family cannot give the coldest curves a steeper one. The sheet's ultralinear chart reads
             10-20% above the model, but that chart disagrees with the plate
             characteristics by 8% where the two coincide, and labels its screen
             axis 355 V where the taps put 335; it was not used. */
         static PentodeModel kt88() noexcept
         {
-            PentodeModel m{10.5373, 1.16446, 310.332, 4556.69, 33.1604, 52.946, 1.0e-3};
+            PentodeModel m{10.2299523, 1.16445896, 405.44122, 4742.07606, 34.6757806, 13.5741785, 1.0e-3};
+            m.plateSlopeVoltage = 1960.19476;
             m.capGridCathode = 16.5e-12; m.capGridPlate = 2.3e-12; m.capPlateCathode = 10.0e-12;
             return m;
         }
@@ -290,7 +368,23 @@ namespace CircuitComponents
     {
         const double grid = limitStep(v[0], p.vGridLast, maxGridStep);
         const double screen = limitStep(v[1], p.vScreenLast, maxPlateStep);
-        const double plate = limitStep(v[2], p.vPlateLast, maxPlateStep);
+        double plate = limitStep(v[2], p.vPlateLast, maxPlateStep);
+
+        // Not across the cathode in one step from a plate that is conducting.
+        // Below it the plate current is floored at zero and has no slope, so a
+        // Newton step that lands there has nothing to come back on -- and a
+        // starved plate, behind a big load with the screen taking the cathode
+        // current, biases a fraction of a volt above it, where the knee is at
+        // its steepest. A sharp knee overshoots into that flat region from a
+        // plate still volts away; the KT66 in a 100k stage did, and settled at
+        // -149 V. Stopping just short of the corner lands on the steep side
+        // instead. A solution that really is below the cathode -- a transformer
+        // primary kicking back -- is still reached, one iteration later.
+        constexpr double conducting = 1.0;
+        constexpr double justAbove = 1.0e-3;
+
+        if (p.vPlateLast > conducting && plate < 0.0)
+            plate = justAbove;
 
         const bool acted = std::abs(grid - v[0]) > 0.0
                         || std::abs(screen - v[1]) > 0.0
@@ -401,10 +495,20 @@ namespace CircuitComponents
         // untouched: it does not depend on the plate, which is the whole point
         // of a screen grid.
         const double kneeRatio = vPlate / model.kvb;
-        const double knee = kneeRatio > 0.0 ? std::atan(kneeRatio) : 0.0;
-        const double dKneeDPlate = kneeRatio > 0.0
+        const double arctangent = kneeRatio > 0.0 ? std::atan(kneeRatio) : 0.0;
+        const double dArctangent = kneeRatio > 0.0
                                      ? (1.0 / model.kvb) / (1.0 + kneeRatio * kneeRatio)
                                      : 0.0;
+
+        // The plate slope, on the same side of zero as the knee: below the
+        // cathode there is no current for it to scale.
+        const double slopeGain = model.plateSlopeVoltage > 0.0 && vPlate > 0.0
+                                   ? 1.0 / model.plateSlopeVoltage
+                                   : 0.0;
+        const double plateSlope = 1.0 + slopeGain * vPlate;
+
+        const double knee = arctangent * plateSlope;
+        const double dKneeDPlate = dArctangent * plateSlope + arctangent * slopeGain;
 
         const double screenCurrent = 2.0 * shape / model.kg2;
         const double plateCurrent = 2.0 * shape * knee / model.kg1;

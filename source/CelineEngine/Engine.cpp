@@ -236,6 +236,7 @@ Circuit::ComponentId Circuit::addDiode(const juce::String& anode,
     Diode d{};
     d.anode = getOrCreateNode(junctionAnode);
     d.cathode = getOrCreateNode(cathode);
+    d.model = model; // what was wired, for setDiodeModel() to check against
     diodes.push_back(d);
 
     const auto id = static_cast<ComponentId>(diodes.size() - 1);
@@ -322,7 +323,17 @@ Circuit::ComponentId Circuit::addJfet(const juce::String& drain,
     j.model = model;
     j.vCritGate = CircuitComponents::criticalVoltage(model.gateSaturationCurrent, model.gateScaleVoltage());
     jfets.push_back(j);
-    return static_cast<ComponentId>(jfets.size() - 1);
+    const auto id = static_cast<ComponentId>(jfets.size() - 1);
+
+    // The gate capacitances, wired as a transistor's junction capacitances
+    // are -- see addTransistor(), and its caveat about ids.
+    if (model.capGateSource > 0.0)
+        addCapacitor(gate, source, model.capGateSource);
+
+    if (model.capGateDrain > 0.0)
+        addCapacitor(gate, drain, model.capGateDrain);
+
+    return id;
 }
 
 Circuit::ComponentId Circuit::addMosfet(const juce::String& drain,
@@ -386,13 +397,35 @@ Circuit::OpAmp Circuit::addOpAmp(const juce::String& name,
     // The rails do not -- see sharedRail().
     OpAmp amp;
 
-    // Differential input resistance -- the only thing loading the input pins.
+    // Differential input resistance -- the only thing loading the input pins
+    // besides their bias currents, below.
     amp.inputResistor = addResistor(inPlus, inMinus, model.inputResistance);
 
     // Gain stage: current into the gain node proportional to the differential
     // input. Driving from ground into the node means it sources rather than
     // sinks, so the node follows the non-inverting input.
-    amp.gainStage = addVccs("gnd", gainNode, inPlus, inMinus, model.inputTransconductance());
+    //
+    // With a slew rate it is a long-tailed pair instead, whose tail caps the
+    // current the compensation capacitor can be charged with -- see
+    // DifferentialPair.h. Without one it is the linear source it always was,
+    // so a model that does not ask for slewing costs no Newton port.
+    if (model.slewRate > 0.0)
+    {
+        DifferentialPair pair{};
+        pair.inPlus = getOrCreateNode(inPlus);
+        pair.inMinus = getOrCreateNode(inMinus);
+        pair.from = groundIndex;
+        pair.to = getOrCreateNode(gainNode);
+        pair.transconductance = model.inputTransconductance();
+        pair.tailCurrent = model.tailCurrent();
+        pair.degeneration = model.inputDegeneration;
+        differentialPairs.push_back(pair);
+        amp.inputPair = static_cast<ComponentId>(differentialPairs.size() - 1);
+    }
+    else
+    {
+        amp.gainStage = addVccs("gnd", gainNode, inPlus, inMinus, model.inputTransconductance());
+    }
 
     // The gain node rests at the midpoint of the rails, not at ground. On a
     // single supply those are different places, and hanging it off ground puts
@@ -408,23 +441,72 @@ Circuit::OpAmp Circuit::addOpAmp(const juce::String& name,
     // Rails, with a diode each way clamping the gain node between them. This is
     // the whole of the saturation behaviour, and it is two ordinary diodes.
     //
-    // The clamp nodes sit a diode drop further in than the headroom figure asks
-    // for, because the diode only starts conducting once it is that far past
-    // them -- without the offset, every op-amp would swing a volt wider than its
-    // railHeadroom said. The clamp stays soft either way, which is what a real
-    // output stage does as it runs out of room.
-    constexpr double clampDiodeDrop = 0.7;
+    // Not ordinary *signal* diodes, though. What flows through a clamp is the
+    // gain stage's current, gm times however far the inputs are apart, and gm
+    // is the open-loop gain over an impedance that is not physical -- hundreds
+    // of amps per volt. A 1N4148 there conducted milliamps on the verge of
+    // clipping and a hundred amps hard driven, and its 0.45 V across those five
+    // decades moved the clip level with the drive: a TL072 on 9 V clipped
+    // 0.4 V wider at 1.5 V in than at 0.3, where TI's card moves 70 mV. So the
+    // clamp's saturation current is scaled by gm -- it conducts according to
+    // the overdrive in volts, whatever gainNodeResistance is -- and its knee is
+    // sharp, a quarter of a junction's: across the overdrives from a millivolt
+    // to a volt it moves 45 mV. Leakage is gm x 1e-12 V, a fraction of a
+    // microvolt on the gain node. The clamp node sits in by the drop at 10 mV
+    // of overdrive, so the clip lands on the sheet's swing within about
+    // +/-25 mV from just clipping to hard driven.
+    //
+    // The constants are OpAmpModel's, so the builder's starved-supply check
+    // (outputRange()) and the clamp built here cannot drift apart.
+    DiodeModel clamp;
+    clamp.emissionCoefficient = OpAmpModel::clampEmission;
+    clamp.saturationCurrent = model.inputTransconductance() * OpAmpModel::clampLeakageVolts;
+    const double clampDrop = OpAmpModel::clampOffset();
 
-    const juce::String highClamp = sharedRail(model.positiveRail - model.railHeadroom - clampDiodeDrop);
-    const juce::String lowClamp = sharedRail(model.negativeRail + model.railHeadroom + clampDiodeDrop);
+    const double reachUp = model.positiveExcursion() - clampDrop;
+    const double reachDown = model.negativeExcursion() - clampDrop;
+    const juce::String highClamp = sharedRail(model.midpoint() + reachUp);
+    const juce::String lowClamp = sharedRail(model.midpoint() - reachDown);
 
-    amp.positiveClamp = addDiode(gainNode, highClamp, DiodeModel::silicon());
-    amp.negativeClamp = addDiode(lowClamp, gainNode, DiodeModel::silicon());
+    amp.positiveClamp = addDiode(gainNode, highClamp, clamp);
+    amp.negativeClamp = addDiode(lowClamp, gainNode, clamp);
+
+    // Input bias current: a constant current out of each pin and into the
+    // part. The engine has no current source, so each is a Vccs reading the
+    // two clamp rails, a fixed voltage apart, with the current over that gap
+    // as its transconductance -- linear, so it costs nothing per sample, and
+    // it reads rails that already exist. A rail of its own cost a node and a
+    // constraint row, which on the mid-hump overdrive was 7% of its CPU. The
+    // current leaves through ground rather than through the tail to the
+    // negative supply, which to an ideal rail is the same thing.
+    if (model.inputBiasCurrent != 0.0 && reachUp + reachDown > 0.0)
+    {
+        const double perVolt = model.inputBiasCurrent / (reachUp + reachDown);
+        amp.positiveBias = addVccs(inPlus, "gnd", highClamp, lowClamp, perVolt);
+        amp.negativeBias = addVccs(inMinus, "gnd", highClamp, lowClamp, perVolt);
+    }
+
+    // The second pole: a copy of the gain node, buffered so it draws nothing
+    // from it, through one RC. What the output follows is this rather than the
+    // gain node itself, so the open-loop response gains the second pole a real
+    // part has -- the phase it is down by at unity gain, which sets how a
+    // feedback loop rings and how far up the closed-loop response is flat.
+    // Linear, so it costs a node and no Newton port; the clamps stay on the gain
+    // node, so where the output clips is unchanged.
+    juce::String driveNode = gainNode;
+
+    if (model.hasSecondPole())
+    {
+        driveNode = name + "_pole";
+        amp.secondPoleStage = addVccs(midNode, driveNode, gainNode, midNode, 1.0 / model.secondPoleResistance);
+        amp.secondPoleResistor = addResistor(driveNode, midNode, model.secondPoleResistance);
+        amp.secondPoleCapacitor = addCapacitor(driveNode, midNode, model.secondPoleCapacitance());
+    }
 
     // Output buffer: current into the output proportional to how far it lags
     // the gain node. Drawing from ground rather than from the gain node is what
     // makes it a buffer -- the load can't pull the gain stage about.
-    amp.outputStage = addVccs("gnd", output, gainNode, output, 1.0 / model.outputResistance);
+    amp.outputStage = addVccs("gnd", output, driveNode, output, 1.0 / model.outputResistance);
 
     return amp;
 }
@@ -493,7 +575,7 @@ Circuit::PowerAmp Circuit::addPowerAmp(const juce::String& name,
     amp.poleCapacitor = addCapacitor(gainNode, mid, model.poleCapacitance());
 
     // Clamps short of each rail, a diode drop further in -- as the op-amp's.
-    constexpr double clampDiodeDrop = 0.7;
+    constexpr double clampDiodeDrop = PowerAmpModel::clampDiodeDrop;
     const juce::String highClamp = sharedRail(model.supply - model.headroomHigh - clampDiodeDrop);
     const juce::String lowClamp = sharedRail(model.headroomLow + clampDiodeDrop);
 
@@ -641,6 +723,18 @@ void Circuit::setVoltage(ComponentId id, double volts)
 void Circuit::setDiodeModel(ComponentId id, const DiodeModel& model, int seriesCount)
 {
     auto& d = diodes[static_cast<size_t>(id)];
+
+    // The series resistance, the guard ring and the junction capacitance were
+    // wired by addDiode() as parts of their own, and this changes the junction
+    // alone. A model that differs in any of the three would be quietly built as
+    // some other diode -- a BAT41 swapped in here is a bare Schottky, with no
+    // 35 ohms and no ring -- so build that one with addDiode() instead.
+    jassert(juce::exactlyEqual(model.seriesResistance, d.model.seriesResistance)
+            && juce::exactlyEqual(model.guardRingSaturationCurrent, d.model.guardRingSaturationCurrent)
+            && (model.guardRingSaturationCurrent <= 0.0
+                || juce::exactlyEqual(model.guardRingEmission, d.model.guardRingEmission))
+            && juce::exactlyEqual(model.junctionCapacitance, d.model.junctionCapacitance));
+
     d.model = model;
     d.seriesCount = std::max(1, seriesCount);
     d.vCrit = CircuitComponents::criticalVoltage(d.model.saturationCurrent, d.scaleVoltage());
@@ -837,6 +931,7 @@ void Circuit::clearState() noexcept
     {
         j.vGateLast = 0.0;
         j.vDrainLast = 0.0;
+        j.vGateDrainLast = 0.0;
     }
 
     for (auto& m : mosfets)
@@ -846,6 +941,9 @@ void Circuit::clearState() noexcept
         m.channelCurrentLast = 0.0;
         m.vgsLast = m.vdsLast = m.slopeGateLast = m.slopeDrainLast = 0.0;
     }
+
+    for (auto& d : differentialPairs)
+        d.vLast = 0.0;
 
     for (auto& s : voltageSources)
     {

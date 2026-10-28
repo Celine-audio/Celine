@@ -309,6 +309,43 @@ TEST_CASE ("Circuit engine performance")
         };
     }
 
+    // What the op-amp's slew stage costs where it is actually fitted: the Rat's
+    // gain stage, an LM308 at gain 1000 on 9 V, hard driven so it slews every
+    // cycle. The pair adds two Newton ports to the clamps' two.
+    for (const bool slewing : {false, true})
+    {
+        BENCHMARK_ADVANCED (slewing ? "LM308 gain stage, 512 samples (slewing)"
+                                    : "LM308 gain stage, 512 samples (linear input)")
+        (Catch::Benchmark::Chronometer meter)
+        {
+            auto model = Circuit::OpAmpModel::lm308();
+
+            if (! slewing)
+                model.slewRate = 0.0;
+
+            Circuit circuit;
+            circuit.addVoltageSource ("vb", "gnd", 4.5);
+            circuit.addCapacitor ("in", "p", 1.0e-6);
+            circuit.addResistor ("p", "vb", 1.0e6);
+            circuit.addOpAmp ("U", "p", "n", "out", model);
+            circuit.addResistor ("out", "n", 1.0e6);
+            circuit.addResistor ("n", "m", 1000.0);
+            circuit.addCapacitor ("m", "vb", 4.7e-6);
+            circuit.setInputNode ("in");
+            circuit.setOutputNode ("out");
+            circuit.prepare (benchmarkSampleRate);
+
+            auto block = makeBlock (1.0f);
+            std::vector<float> scratch (blockSize);
+
+            meter.measure ([&] (int) {
+                std::copy (block.begin(), block.end(), scratch.begin());
+                circuit.process (scratch.data(), blockSize);
+                return scratch[0];
+            });
+        };
+    }
+
     // The largest circuit here: three valves, six ports, nineteen unknowns.
     BENCHMARK_ADVANCED ("Three-stage valve preamp, 512 samples (n=19, m=6)")
     (Catch::Benchmark::Chronometer meter)

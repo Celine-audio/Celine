@@ -156,6 +156,14 @@ namespace SchematicModel
             cleanly; null means one value, or none. */
         const char* valueLabelB = nullptr;
         double defaultValueB = 1.0;
+
+        /** True when the second value is a **rail**: a voltage at or below
+            ground, where zero is an answer -- the rail *is* ground -- rather
+            than "not filled in". So it is neither drawn red nor refused, a
+            sheet that has no second value reads it as zero, and whatever is
+            typed is taken as the rail's size below ground. The op-amp's
+            negative supply. */
+        bool valueBIsRail = false;
     };
 
     /** Pin geometry note: two-pin parts run vertically by default, pins two grid
@@ -187,11 +195,11 @@ namespace SchematicModel
             {"Diode", 2, {{0, -2}, {0, 2}}, "", "", 0.0,
              "celine:diode-1n4148|1N4148|~0.6 V|Silicon;"
              "celine:diode-germanium|1N34A|~0.33 V, soft knee|Germanium;"
-             "celine:diode-schottky|1N5817|~0.3 V, hard knee|Schottky;"
-             "celine:led-red|Red LED|~1.6 V|LED;"
-             "celine:led-green|Green LED|~1.9 V|LED;"
-             "celine:led-blue|Blue LED|~3.2 V|LED;"
-             "celine:zener-9v|Zener 9V|Clamps at 9 V|Zener;"
+             "celine:diode-schottky|1N5817|~0.1 V at 1 mA, 0.17 at 10 mA|Schottky;"
+             "celine:led-red|WP7113ID|Red, ~1.65 V|LED;"
+             "celine:led-green|WP7113GD|Green, ~1.85 V|LED;"
+             "celine:led-blue|WP7113QBC|Blue, ~2.55 V|LED;"
+             "celine:zener-9v|Zener 9.1V|Clamps at 9.1 V|Zener;"
              "celine:zener-5v1|Zener 5.1V|Clamps at 5.1 V|Zener;"
              "celine:diode-1n914|1N914|Same as the 1N4148|Silicon;"
              "celine:diode-bat41|BAT41|~0.4 V, soft knee|Schottky;"
@@ -235,15 +243,19 @@ namespace SchematicModel
              "celine:triode-12ax7-ge|12AX7 GE|MU 103, fitted to 18 measured stages|Koren"},
 
             // in+, in-, out -- the order addOpAmp() wants. The rails aren't
-            // drawn: `value` is the positive one and the negative is ground,
-            // which is how a 9 V pedal is wired.
-            {"OP-Amp", 3, {{-4, -2}, {-4, 2}, {4, 0}}, "V", "Supply", 0.0,
+            // drawn, they are numbers: `value` is the positive one and `valueB`
+            // the negative, which is 0 -- ground -- unless set. 9 V and 0 is a
+            // pedal; +15 and -15 is a studio or bass amp's preamp, built as
+            // drawn, ground and all, with no virtual ground to thread through
+            // the sheet. See valueBIsRail.
+            {"OP-Amp", 3, {{-4, -2}, {-4, 2}, {4, 0}}, "V", "Supply +", 0.0,
              "celine:opamp-tl072|TL071/TL072|JFET input, 3 MHz;"
-             "celine:opamp-jrc4558|JRC4558|Distortion pedal OpAmp, 2.8 MHz;"
+             "celine:opamp-jrc4558|JRC4558|Distortion pedal OpAmp, 3 MHz;"
              "celine:opamp-ne5532|NE5532|Low noise, 12 MHz;"
              "celine:opamp-lm308|LM308|Distortion pedal OpAmp, 1 MHz;"
              "celine:opamp-ideal|Ideal|No gain limit, bandwidth or clipping;"
-             "celine:opamp-lm741|LM741|General purpose, 1.2 MHz"},
+             "celine:opamp-lm741|LM741|General purpose, 0.9 MHz",
+             "Supply -", 0.0, true},
 
             // Primary A/B then secondary A/B, the order addTransformer() wants.
             // Two turns counts rather than one ratio: a single box cannot take
@@ -267,10 +279,10 @@ namespace SchematicModel
             // the BJT rather than a "transistor model": different pins,
             // different symbol, different device model.
             {"JFE Transistor", 3, {{2, -2}, {-2, 0}, {2, 2}}, "", "", 0.0,
-             "celine:jfet-j201|J201|Pinch-off -0.7 V|N-channel;"
-             "celine:jfet-2n5457|2N5457|Pinch-off -1.5 V|N-channel;"
-             "celine:jfet-2n5485|2N5485|Pinch-off -2.0 V|N-channel;"
-             "celine:jfet-2n5460|2N5460|Pinch-off -1.5 V|P-channel;"
+             "celine:jfet-j201|J201|Pinch-off -0.69 V|N-channel;"
+             "celine:jfet-2n5457|2N5457|Pinch-off -1.25 V|N-channel;"
+             "celine:jfet-2n5485|2N5485|Pinch-off -2.16 V|N-channel;"
+             "celine:jfet-2n5460|2N5460|Pinch-off +2.16 V|P-channel;"
              "celine:jfet-2n5952|2N5952|Pinch-off -2.4 V|N-channel"},
 
             // Plate, cathode -- the order addVacuumDiode() wants.
@@ -784,6 +796,15 @@ namespace SchematicModel
             const auto* caption = getElementInfo(type).valueLabelB;
             return caption != nullptr && caption[0] != 0;
         }
+
+        /** True when the second value is a rail -- see ElementInfo::valueBIsRail. */
+        bool isSecondValueRail() const noexcept { return getElementInfo(type).valueBIsRail; }
+
+        /** A negative rail from what was typed for it. The field is labelled as
+            the negative supply, so "15" and "-15" both mean 15 V below ground:
+            asking someone to type the sign of a thing whose name already says
+            it would only make "15" a mistake. */
+        static double railBelowGround(double typed) noexcept { return -std::abs(typed); }
 
         /** Primary turns over secondary turns. Guarded because the secondary box
             is free text and 0 would divide the circuit by zero rather than

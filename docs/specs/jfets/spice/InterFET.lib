@@ -1,0 +1,11 @@
+* InterFET JFET SPICE models (interfet.com/wp-content/uploads/interfet-spice-models.xlsx), measured by InterFET.
+* "With GMin" variant: IS as given there, with the suggested GMIN noted.
+.MODEL J201 njf VTO=-691m BETA=787u LAMBDA=4.46m CGD=2.50p CGS=2.50p PB=11.3 IS=30.7f
+* Gmin 11.2f
+.MODEL J202 njf VTO=-2.58 BETA=362u LAMBDA=12.7m CGD=2.50p CGS=2.50p PB=11.3 IS=30.7f
+.MODEL 2N5457 njf VTO=-1.25 BETA=1.04m LAMBDA=30.8m CGD=3.58p CGS=3.58p PB=3.99 IS=95.6f
+* Gmin 24.8f
+.MODEL 2N5485-L njf VTO=-2.16 BETA=1.17m LAMBDA=12.5m CGD=2.30p CGS=2.30p PB=12.5 IS=14.9f
+.MODEL 2N5485-H njf VTO=-3.77 BETA=536u LAMBDA=30.5m CGD=2.30p CGS=2.30p PB=12.5 IS=14.9f
+.MODEL 2N5460-H pjf VTO=-2.16 BETA=517u LAMBDA=12.6m CGD=5.32p CGS=5.32p PB=722m IS=147f
+* Gmin 84.8f

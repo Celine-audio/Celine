@@ -1,0 +1,16 @@
+* Fairchild-made cards as onsemi distributes them (onsemi.com/download/models/lib/<PART>.LIB), fetched 2026-10-21.
+* The J201 card is wrong: VTO -3.95 V and 25 mA of Idss lie outside the J201 limits (-0.3 to -1.5 V).
+* --- 1N914 (Fairchild, Jul-24-2007) ---
+.MODEL D1N914 D
++ IS=3.45e-09 RS=0.452422 IKF=0.0528 N=1.94 ISR=1.01e-09 NR=2.0
++ CJO=8.68e-13 M=0.02504 VJ=0.90906 FC=0.5 TT=1.012e-8 BV=100 IBV=1e-05 EG=0.92
+* --- J201 (Fairchild, Mar-20-2007) ---
+.MODEL J201 NJF
++ VTO=-3.95 BETA=0.00198 LAMBDA=0.0052 IS=1.1937E-12 ISR=3.7937E-13 NR=1
++ ALPHA=6.80E-6 VK=40 RD=18.049 RS=18.049 CGD=1.998e-012 CGS=1.258e-012
++ M=0.280 PB=0.515 KF=5.622e-018 AF=0.55664 BETATCE=-0.46 VTOTC=-2.1000E-3
+* --- 2N5460 (Fairchild, May-26-2008) ---
+.model J2N5460 PJF
++ VTO=-1.8 BETA=4.8047e-4 LAMBDA=6.8021e-3 ALPHA=1.0e-3 VK=40 RD=0.52 RS=0.53
++ N=1.5 IS=1.0937e-9 ISR=8.7937e-12 CGD=2.0248e-12 CGS=8.4836e-12 M=0.14 PB=0.464
++ KF=5.3542e-6 AF=1.9123e-1 BETATCE=-0.566 VTOTC=-2.50e-3

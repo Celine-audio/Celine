@@ -198,17 +198,46 @@ and the model cannot be both.
 curves at low plate voltage where secondary electrons flow backwards. Not
 modelled, and it sits exactly where a power stage goes when clipping hard.
 
-**Koren's knee is too soft, and his plate curves too flat.** One arctangent sets
-both the knee and the plate resistance, so fitting Ri at the operating point
-fixes KVB near 50 V on every pentode here, and the knee goes with it. The KT88
-sheet, whose plate family was digitised to check this, shows it plainly: at
-Ua 50 V, Ug1 −15 V the sheet has 162 mA and the model 117; above 300 V the real
-curves keep rising (−30 V: 74 mA at 250 V, 87 at 400) while the arctangent has
-flattened (64 and 68). The first is where a clipping output stage spends its
-time. Multiplying the plate term by (1 + Ua/VA) frees KVB to sharpen the knee
-while VA carries Ri: tried on the KT88, it takes the family from 39 mA rms
-over Ua ≥ 30 V to 9 mA, with every operating-point figure still within about
-2%. Not adopted, since it changes the form every pentode here is fitted in.
+**The plate-slope term fixed Koren's knee, not everything about the plate
+curves.** Koren's single arctangent sets both the knee and the plate resistance,
+so fitting Ri pinned KVB near 50 V on every pentode and left the knee far too
+soft. Every pentode with a pentode plate family on its sheet now carries a
+factor (1 + Ua/VA) that takes the slope and frees KVB for the knee, refitted with
+the operating point held exactly. Against the families digitised from
+`docs/specs/tubes` (rms, every 10 V from Ua 30 V):
+
+    valve   sheet's Ug2   Koren's form   now    knee KVB
+    EL34       250 V        17.7 mA     7.8 mA    13 V
+    EL84       250 V        16.2         6.8       6 V
+    KT88       300 V        18.8        10.6      14 V
+    6L6GC      400 V        14.0         9.2      23 V   (MU, EX refitted too)
+    KT77       250 V         8.9         8.2      34 V
+    KT66       400 V        27.3        23.5      10 V
+
+What is left, valve by valve:
+
+- **KT66** — the rest of its 23.5 mA is how current scales with *screen*
+  voltage: its family is at 400 V, its operating point at 250, and its low
+  curves at 400 V sit 15–25 mA under the model (67 mA on Ug1 −35 V where the
+  model draws 93). Koren's grid law cannot hold both; freeing MU and EX
+  reaches 17.8 mA only at MU 50, which a −50 V curve still conducting at 400 V
+  rules out, and the sheet's triode Ri of 1.3k is unreachable alongside the
+  family (the model gives 1.07k).
+- **KT88** — one slope for the whole family cannot give the coldest curves
+  the steeper one they have above 300 V (Ug1 −30 V: 74 mA at 250, 87 at 400 on
+  the sheet; 64 and 69 here).
+- **EL34** — the knee is now right on the upper curves and overshoots on the
+  lower ones: 54 mA at Ua 50 on Ug1 −15 V against the sheet's 40.
+- **6V6S** — still in Koren's form, because its sheet has no pentode plate
+  family; its triode-connected curves cannot separate knee from slope. Held
+  out, they land within 4.1 mA rms of the model.
+
+A sharper knee is a sharper corner for Newton. A pentode starved down to a
+fraction of a volt above its cathode — the screen taking the cathode current
+through a big plate load — biases right beside the floor where plate current
+stops, and the refitted KT66 overshot past it and settled at −149 V until the
+pentode's step limiter learned not to cross the cathode in one step from a
+conducting plate (`limitPortVoltages` in `Pentode.h`).
 
 **Rectifiers are pure 3/2-power, which is too steep at low current.** Real
 rectifiers conduct more than Child-Langmuir predicts near the origin, where
@@ -299,19 +328,169 @@ individual pedals and amps of the same model sound different.
 No Johnson noise, no shot noise, no 1/f. The simulation is perfectly silent
 between notes, which no analogue circuit is.
 
-### Op-amp: no slew rate
+### Op-amp: slew rate, phase margin, swing and bias current are modelled; the input range and current limit are not
 
-`OpAmp` models finite gain, one dominant pole, and rails it clips against. It
-does not model slew limiting. On the slow parts that matters: a JRC4558 slews
-at 2.2 V/µs, an LM308 (the ProCo Rat) far slower, and an LM741 at 0.5 V/µs —
-a 7 V swing takes it 14 µs — and on a fast transient that rounds the waveform
-in a way the frequency response alone does not capture. `OpAmpModel::jrc4558()`
-and `lm741()` document this at their definitions.
+`OpAmp` models finite gain, rails it clips against, two poles, input bias
+current, and — for any
+model with a `slewRate` — a long-tailed input pair whose tail current caps how
+fast the compensation capacitor charges (`DifferentialPair.h`). That is the
+Boyle macromodel's input stage, and the slew rate, the gain-bandwidth and the
+input voltage at which the stage runs out of current all follow from the
+datasheet's two figures. A pair with emitter resistors, as the 741's has, takes
+a `degeneration` that keeps it linear further out and runs it out of current
+more abruptly.
 
-Also absent: input bias and offset current, CMRR, PSRR, the input common-mode
-range (an LM741 on a 9 V pedal runs out of it before its output does, and a
-real one turns that into early, gritty clipping), and the higher-order poles a
-real part has.
+The second pole is placed from each part's phase margin, and the dominant pole
+is raised so the gain still crosses unity at the datasheet's unity-gain
+bandwidth. That distinction was the larger error: a sheet's "unity-gain
+bandwidth" is where the gain *crosses*, which with a second pole sits below the
+gain-bandwidth the audio band sees (3.0 MHz against 3.3 on a TL072). The 741 was
+worse — its bandwidth had been read off the sheet's rise time as 1.2 MHz, which
+is a follower's closed-loop bandwidth; the open loop crosses at 0.885.
+
+Checked against TI's own TL072 and µA741 Boyle cards in ngspice-47, on a gain
+of 101 at ±15 V with 0.1 V in (10 V out, which the 741 must slew to above about
+8 kHz). Error in the whole waveform, rms:
+
+               1 kHz   5 kHz   10 kHz   20 kHz
+    TL072      0.1%    0.4%    1.0%     3.2%     (was 0.4 / 2.1 / 4.2 / 8.9)
+    LM741      0.1%    0.4%    1.2%     4.0%     (was 1.7 / 6.6 / 5.9 / 1.7)
+
+The 741's old 1.7% at 20 kHz was two errors cancelling — at small signal, where
+nothing slews, the same model was 8–11% too loud at 10–20 kHz. Part of what is
+left at 20 kHz is the trapezoidal rule at 192 kHz, under which a 20 kHz tone
+answers as 20.75 kHz would in the analogue circuit — about 1.2 points of the
+TL072's 1.6% amplitude error there. On a Rat — an LM308 at gain 1000 — slewing
+changes a hard-driven output by a fifth.
+
+Where each margin comes from: the TL072's and the 741's from TI's cards,
+measured open-loop in ngspice (64 and 63 degrees), and each consistent with its
+sheet's quoted follower overshoot (62 and 65); the JRC4558's and NE5532's from
+their sheets' overshoot alone, with the test load counted (60 and 73, the
+NE5532's with the 50 Ω output resistance of TI's NE5534 card); the LM308's read off a scanned
+phase plot, about 65 and coarse. Only the 741's degeneration (0.35) has a source
+— the card's emitter resistors — so the other parts keep the bare pair, which
+matters only to a part that slews.
+
+The pair costs two Newton ports, so it is only fitted where it can act: a
+sampled output moves at most its whole swing in a sample, and a part whose slew
+rate covers that never slews (`OpAmpModel::slewsAt`). On 9 V at 48 kHz that
+leaves only the LM308; the LM741 and the JRC4558 join at 4× oversampling; the
+TL072 and NE5532 never do. Where it is fitted it is not cheap: the Rat's
+gain stage, hard driven, goes from 0.24 ms per 512 samples to 0.40 ms — 1.7×,
+or about 4% of a core at 48 kHz for that one stage. (An earlier run, before the
+second pole was added, read 0.44–0.66 ms with a wide spread; the cause of that
+spread was not isolated.) The second pole is a node, not a port, and costs
+nothing measurable: the two-op-amp pedal is 0.66 ms per block with or without
+it. Newton is not what
+grows (4.3–4.7 iterations a sample against 3.8–4.1, the worst case unchanged);
+each iteration solves four ports instead of two.
+
+**On 9 V.** Every sheet here characterises at ±15 V, and pedals run on a 9 V
+battery. Three things decide what a part does there, and each is now the
+sheet's:
+
+- **Where it clips.** The clamp used to be a 1N4148 on the gain node, whose
+  current is the input stage's — gm times the overdrive, hundreds of amps per
+  volt in a node whose impedance is not physical. Across the five decades from
+  just clipping to hard driven its drop moved 0.45 V, so the clip level drifted
+  with the drive: a TL072 on 9 V clipped 0.4 V wider at 1.5 V in than at 0.3,
+  where TI's card moves 70 mV. The clamp's saturation current is now scaled by
+  gm, so it conducts by the overdrive in volts, and its knee is a quarter of a
+  junction's: across a millivolt to a volt of overdrive it moves 45 mV. Each
+  part now clips where its sheet says within ±30 mV at any drive (a test holds
+  all five).
+- **The swing itself.** The sheets quote it into a load — 10k for most, 2k for
+  the NE5532 — so the clamp sits further out by the output resistance's share
+  of that load. Against supply, from the sheets that plot it:
+  - **TL072:** TI's Figure 10 is a line, 1.11 V of headroom on ±4.5 V against
+    1.40 on ±15, so on a pedal it swings 0.4 V wider each side than a constant
+    1.5 V let it. Diodes Inc.'s second-source sheet agrees at ±5 (3.9 V).
+  - **JRC4558:** NJR's lines have slope one, so the headroom does not move.
+  - **NE5532:** Philips' 1997 sheet gives the same 2 V into 600 Ω at ±15 and
+    ±18; TI's revision H says the same. Its ±13.5 V into 2k is the figure used.
+  - **LM741:** Motorola's MC4741C (a quad MC1741, built to match it) plots each
+    side separately at ±6, ±9, ±12 and ±15 V, and the two are not alike. The
+    positive side stops 0.69–0.99 V short and the negative 1.44–1.85, both
+    growing a little as the supply falls. On average that is the tables' ±14 V.
+    What the tables hide is that a 741 driven into both rails clips lopsided,
+    0.9 V further in on the negative side on 9 V. The model now does.
+  - **LM308:** no supply data; Analog Devices' LM308A sheet may have it but
+    could not be fetched from here. It keeps National's ±15 V figure.
+- **The shape.** On a gain of 11 at 9 V, driven 0.6 V into both rails and with
+  each model given its card's clip level (the cards' levels are their own clamp
+  settings — the µA741 card stops 0.39 V short where the sheet says 1 V), the
+  whole cycle against TI's cards in ngspice-47: TL072 1.6% rms of the swing,
+  LM741 0.3%, NE5532 (TI's NE5534 card with its 22 pF) 1.3%. That covers the
+  knee, the flat and the recovery off the rail; what is left on the TL072 is its
+  card's slightly rounder knee.
+
+**Gain against supply.** Only the 741's sheets plot it. TI's µA741 Figure 5-6
+and Motorola's MC4741C Figure 8 agree that the open-loop gain on ±4.5 V is
+about a quarter of its ±15 V value (53 V/mV against 200), and the model follows
+TI's. The gain-bandwidth is held, so only the dominant pole moves: from 5 Hz to
+about 19 Hz, and what changes is the loop gain below that.
+
+**What no sheet gives** is gain-bandwidth or slew rate against supply: searched
+across TI, National, Fairchild, Motorola/onsemi, Philips, NJR and Diodes Inc.
+sheets for all five parts. The one indirect reading is TI's TL07x power
+bandwidth at ±5, ±10 and ±15 V (Figures 5–6 of SLOS080J). From the knees, the
+slew rate is 13–14 V/µs at all three supplies, flat within what the plot
+resolves, and the TL072 never slews at audio rates anyway. So the bandwidth and
+slew rate keep their ±15 V figures on 9 V. Bipolar parts' bandwidth does fall
+somewhat at low supply as their collector-base capacitances grow. No sheet here
+puts a number on it, so it is not modelled.
+
+**Input bias current** is two constant currents at the inputs, signed by the
+input pair: in for NPN (741 80 nA, NE5532 200 nA, LM308 1.5 nA) and for the
+TL072's P-channel JFET gate leakage (65 pA), out for the 4558's PNP pair
+(25 nA). It is what shifts a bipolar pedal's bias point: 80 mV through a 741's
+1M bias resistor. Typical figures; real parts spread several times either way,
+and the offset *current* — the two inputs disagreeing — is not modelled. Each
+pair of sources reads the existing clamp rails rather than a rail of its own,
+which cost 7% of the two-op-amp pedal's CPU; as built it costs nothing
+measurable.
+
+**The JRC4558 now follows its maker.** It used to follow ArtChip's clone sheet
+(2.8 MHz, 2.2 V/µs, 2 MΩ); NJR's own NJM4558 sheet, now in `docs/specs`, says
+3 MHz, 1 V/µs, 5 MΩ and 100 dB, and shows a PNP input pair. The slew rate is
+the audible change: half what the clone claimed. NJR's SPICE model is encrypted
+and behind a registration, so the 4558 is the one part here with no vendor card
+to check against. Its phase margin (60°) still rests on ArtChip's quoted
+overshoot, which ArtChip's own phase plot (nearer 80°) contradicts.
+
+**The NE5532 has no card of its own.** TI's NE5534 card, compensated with the
+22 pF its sheet gives for unity gain, is the nearest thing. Against it, on the
+gain of 101: within 0.7% in amplitude and 1.9° in phase up to 20 kHz. But it
+crosses unity at 8.5 MHz with 59° of margin, and gives 17% follower overshoot
+where revision H says 10, so it is not adopted as the reference for the open
+loop. **The LM308 has no card at all** — TI publishes none for it — so it
+remains checked against its sheet only.
+
+What is still absent, and why:
+
+- **The input common-mode range.** The sheets give the range: ±13 V of ±15 on
+  a 741 or 4558, ±14 on an LM308, and −12 to +15 on a TL072. TI's legacy TL07x
+  Figure 5-57 locates it exactly: the offset is flat from 3.4 V above the
+  negative rail to 0.7 V above the positive one, then leaves the plot. The
+  NE5532's (onsemi and Philips, Figure 7) tracks the supply to within about a
+  volt. None of them says what the part does *past* the edge, which is where
+  the sound would be. A JFET-input TL07x is known to phase-reverse below its
+  negative limit and a bipolar part does something else, but no sheet
+  quantifies either, so any model of it would be invented. On 9 V a TL072
+  biased at 4.5 V has 1.4 V of input swing before it gets there; an LM741
+  about 1.5 V.
+- **The output current limit.** 25 mA on a 741, 38 on an NE5532, about 6 on an
+  LM308 (TI's output-swing curve). In the classic pedals it never engages — the
+  Rat's 308 drives its clipping diodes through 1k, a few milliamps at most — so
+  it would cost a Newton port per op-amp for nothing audible.
+- **Poles beyond the second**, and the zeros a real compensation network has.
+  They are what is left between the models and the cards above 20 kHz.
+- Input offset voltage and current, CMRR, PSRR, noise.
+
+The NE5532 model follows TI's revision K tables (12 MHz, 5 V/µs); the sheet in
+`docs/specs` is the older revision H (10 MHz, 9 V/µs). At audio rates it slews
+at neither.
 
 The **LM386** (`PowerAmp.h`) is built the same way and shares the gaps, plus
 its own: no crossover distortion from its class-AB output stage, no current
@@ -352,16 +531,22 @@ it stays perfectly linear however hard you hit it.
 
 ## 3. Missing physics that matters less here
 
-- **BJT (Ebers-Moll):** the Early effect (VAF) and junction capacitances
-  (CJE/CJC) are modelled for the parts whose cards publish them — the silicon
-  small-signal pair exactly, datasheet Cobo for the 2N2222A/2N5133/BC109C,
-  the NTE102/103 and the 2SC2240 —
+- **BJT (Gummel-Poon, less its reverse and parasitic terms):** the Early
+  effect (VAF) and junction capacitances (CJE/CJC) are modelled for the parts
+  whose cards publish them — the silicon small-signal pair, datasheet Cobo for
+  the 2N2222A/2N5133/BC109C, the NTE102/103 and the 2SC2240 —
   and both are **on by default**, like everything else here — turn them off
   under Settings → Performance if you need the CPU back. VAF
-  reads as an output resistance ro = VAF/Ic, a few percent of a stage's gain;
-  the capacitances bite through Miller, and measured here on a gain-of-110
-  stage driven through 100k they put the pole at 7.5 kHz where the estimate
-  said 8.7. The capacitances are fixed values — a real junction's falls off
+  reads as an output resistance ro = VAF/Ic, a few percent of a stage's gain.
+  It is Gummel-Poon's form, dividing by q1 = 1 / (1 − Vbc/VAF), which is what
+  every vendor's VAF means. It used to be the level-1 (1 + Vce/VAF), which
+  read collector currents 0.8–1.2% high on every card; set against ngspice
+  with the same parameters the engine now agrees to 0.05 mV on every node,
+  and the models fitted under the old form (the BC107-109 grades, the MPSA18,
+  the NTE102/103) were refitted to land on their sheets again. The capacitances
+  bite through Miller,
+  and measured here on a 2N3904 stage with a transistor gain of 108, driven
+  through 100k, they put the pole at 10.3 kHz where the estimate said 12.7. The capacitances are fixed values — a real junction's falls off
   with reverse bias (VJE/MJE/VJC/MJC stay out) — and with no transit time
   (TF/TR) fT still doesn't degrade with current. The forward high-injection
   knee (IKF) is modelled for the cards that carry one — the BC107-109 family,
@@ -377,7 +562,14 @@ it stays perfectly linear however hard you hit it.
 - **Darlingtons** (the MPSA13) are two transistors on an internal node, so the
   pair's Vbe and gain come out right, but a real Darlington's gain below a few
   milliamps is extrapolated: onsemi's curves start at 5 mA.
-- **JFET (Shichman-Hodges):** simple square law, no capacitances.
+- **JFET (Shichman-Hodges):** SPICE's square law, with both gate junctions —
+  the gate-drain one was missing, and with a drain pulled 2 V under its gate
+  the engine was 0.77 V out against ngspice; now 0.01 mV — and constant
+  gate capacitances, CGS and CGD at their zero-bias figures (a real one falls
+  with reverse bias). The J201, 2N5457, 2N5485 and 2N5460 are InterFET's own
+  measured models; Idss spreads three to five times across a part number, so
+  each is one specimen. No channel-length modulation beyond lambda, no
+  temperature, no noise.
 - **MOSFET** (`Mosfet.h`): a square law smoothed through threshold into an
   exponential below it, so the moderate inversion a pedal biases one in is
   continuous, with a source resistance solved inside the device that bends it
@@ -398,12 +590,19 @@ it stays perfectly linear however hard you hit it.
   has three times Vishay's input capacitance. The threshold spread on a real
   part (0.8 to 3 V; 1 to 3.5 V on the BS250) dwarfs every one of these; the
   models are Vishay's typical part.
-- **Diodes:** the 1N4001, the BAT41 and the BAT46 carry junction capacitance,
-  and the 1N4001 its stored charge (transit time, 5.7 µs), integrated
-  backward-Euler inside the device; the two BATs their series resistance and
-  guard ring. The guard ring has no resistance of its own, which is what leaves
-  the BAT46 16–24 mV off ST's curve above 50 mA — past anything a clipper
-  draws. The older models carry none of these. The capacitance is a constant — a real one rises
+- **Diodes:** the 1N4148, 1N5817, 1N4001, BAT41 and BAT46 carry junction
+  capacitance, and the 1N4148 and 1N4001 their stored charge (transit time,
+  3.5 ns and 5.7 µs), integrated backward-Euler inside the device; the two
+  BATs, the 1N5817 and the LEDs their series resistance, and the BATs their
+  guard ring. The guard ring has no resistance of its own, which is what
+  leaves the BAT46 16–24 mV off ST's curve above 50 mA — past anything a
+  clipper draws. Every diode is now fitted to its maker's typical curve
+  except the 1N34A, whose makers publish only limits. Two of those fits are
+  extrapolated where a pedal runs them: the 1N5817's curve starts at 10 mA
+  (Vishay's), and the LEDs' are drawn on a linear scale that resolves nothing
+  below about half a milliamp (Kingbright's). Series resistance costs an
+  internal node: a bare LED clipper runs 30–50% slower for its 9–21 Ω, which
+  is real LED physics, tens of millivolts at a few milliamps. The capacitance is a constant — a real one rises
   into forward bias — and the stored charge relaxes within one sample at any
   audio rate, so what it models is the charge a clipping edge has to move, not
   the shape of the recovery, which is over in microseconds.
@@ -436,6 +635,13 @@ consequences worth knowing:
 - It is A-stable but not L-stable, so it does not damp components near Nyquist.
   A sharp step can ring. SPICE offers Gear/BDF2 for exactly this reason; this
   engine has one integrator and no choice.
+  The stiffest case is a junction capacitance -- picofarads -- against a
+  resistance of kilohms, a time constant of nanoseconds against a sample of
+  tens of microseconds. There the capacitor's current flips sign every sample
+  and decays by only about 4τ/T per step: a 1N4148's 0.7 pF behind 1k, stepped
+  0.1 V, still carries 13% of the diode's 29 nA alternating 4096 samples
+  later. It is at Nyquist, so oversampling's decimation filter removes it, and
+  at 1× it sits at the top of the band at nanoamp level; but it is there.
 - Pole frequencies are warped near Nyquist. Immaterial in the audio band, real
   above it.
 
@@ -511,5 +717,5 @@ So the list above reads as calibrated rather than exhaustive-by-anxiety:
 - DK versus full Newton is chosen per circuit at `prepare()` time, because
   neither wins universally — DK loses when ports outnumber nodes.
 - Component models use published parameters where they exist, and say so at the
-  point of definition where they do not (`ne5532()` and `npnBC109C()` both flag
-  their guessed figures explicitly).
+  point of definition where they do not (`jrc4558()` and `npnBC109C()` both flag
+  their unsourced figures explicitly).

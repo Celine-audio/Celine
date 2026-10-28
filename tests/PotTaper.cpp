@@ -154,3 +154,10 @@ TEST_CASE ("A reverse-log pot is not a log pot turned round", "[pot][taper]")
     CHECK (wiperAt (EngineTaper::ReverseLogarithmic, 0.25)
              < wiperAt (EngineTaper::ReverseLogarithmic, 0.75));
 }
+
+TEST_CASE ("An amplifier's supply is captioned the way a schematic labels its rails", "[symbols]")
+{
+    CHECK (SymbolPainter::formatSupply (9.0, 0.0, "V") == "9V");
+    CHECK (SymbolPainter::formatSupply (15.0, -15.0, "V") == juce::String (juce::CharPointer_UTF8 ("\xc2\xb1")) + "15V");
+    CHECK (SymbolPainter::formatSupply (12.0, -9.0, "V") == "+12V / -9V");
+}

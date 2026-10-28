@@ -100,41 +100,139 @@ namespace CircuitComponents
         // times softer -- is most of why LED clipping sounds less abrupt than
         // silicon at the same drive, quite apart from the higher voltage.
 
-        /** 1N4148 silicon signal diode, ~0.58 V. The classic clipper diode:
-            Tube Screamer, Boss DS-1, ProCo Rat. */
-        static DiodeModel d1n4148() noexcept { return {2.52e-9, 1.752, 0.025852}; }
+        /** 1N4148 silicon signal diode, ~0.61 V at 1 mA. The classic clipper
+            diode: Tube Screamer, Boss DS-1, ProCo Rat.
+
+            Fitted to Vishay's measured typical curve (docs/specs/diodes/
+            1N4148-Vishay.PDF, Fig. 2, 25 C, digitised from the vector path),
+            from 1 uA to 20 mA: within 4.4 mV of it throughout -- 0.379 /
+            0.495 / 0.612 / 0.728 V at 10 uA / 100 uA / 1 mA / 10 mA against
+            0.380 / 0.497 / 0.609 / 0.729 -- and 0.844 V at 100 mA, on the
+            sheet's 0.844.
+
+            Nexperia's own card (docs/specs/diodes/spice) agrees with that curve
+            within 3 mV to 10 mA but reads 56 mV high by 100 mA, and it carries
+            a 0.65 ohm series resistance that a clipper never sees -- under a
+            millivolt at the milliamp one runs at -- and which costs an internal
+            node: 30-50% more CPU on a bare diode clipper. So the curve is the
+            maker's measurement and the two terms only a card gives are
+            Nexperia's: 0.70 pF of junction capacitance (Vishay's sheet gives
+            4 pF as a maximum) and 3.5 ns of transit time.
+
+            It used to be the common LTspice card (Is 2.52 nA, N 1.752), which no
+            maker publishes: 25 mV under the curve at 1 mA and 41 mV under at
+            10 mA, so every 1N4148 clipper here clipped a little early. */
+        static DiodeModel d1n4148() noexcept
+        {
+            DiodeModel model;
+            model.saturationCurrent = 5.461e-9;
+            model.emissionCoefficient = 1.9524;
+            model.junctionCapacitance = 0.7048e-12;
+            model.transitTime = 3.48e-9;
+            return model;
+        }
 
         /** The generic name for the same part. */
         static DiodeModel silicon() noexcept { return d1n4148(); }
 
         /** 1N34A germanium, ~0.33 V. Lower forward voltage and a softer knee --
             the "warmer", more compressed clipping of a Fuzz Face or Tube Screamer
-            with germanium diodes swapped in. */
+            with germanium diodes swapped in.
+
+            Not fitted to anything: no maker of the 1N34A publishes a curve, only
+            limits (Microsemi, MCC: at least 4 mA at 1 V, at most 1 V at 5 mA,
+            at most 30 uA of leakage at 10 V), and this sits inside every one of
+            them. A typical part, not a measured one; point-contact germanium
+            spreads widely from one diode to the next. */
         static DiodeModel germanium() noexcept { return {1.0e-7, 1.4, 0.025852}; }
 
-        /** 1N5817 Schottky, ~0.30 V. Low forward voltage with a hard knee. */
-        static DiodeModel schottky() noexcept { return {3.0e-8, 1.1, 0.025852}; }
+        /** 1N5817, the 1 A Schottky rectifier -- by far the lowest clipper here.
 
-        /** Generic red LED, ~1.56 V at 1 mA. Far more headroom than silicon, so
-            a stage clips later and louder -- and with an emission coefficient
-            over twice silicon's, the transition into clipping is much more
-            gradual (Marshall Blues Breaker, Klon). */
-        static DiodeModel redLed() noexcept { return {93.0e-12, 3.73, 0.025852}; }
+            Fitted to Vishay's typical forward curve (docs/specs/diodes/
+            1N5817-Vishay.PDF, Fig. 3, 25 C, pulsed, digitised from the vector
+            path): within 1.8 mV from 10 mA to 1 A -- 0.172 V at 10 mA, 0.250 at
+            100 mA, 0.392 at 1 A. Capacitance from its Fig. 5, about 330 pF near
+            zero bias, which at a large Schottky's size is not small.
 
-        /** Generic green LED, ~1.93 V. Higher again, and softer still. */
-        static DiodeModel greenLed() noexcept { return {93.0e-12, 4.61, 0.025852}; }
+            Below 10 mA, where a pedal runs it, no sheet draws a curve, so the
+            fit's extrapolation is all there is: 0.10 V at 1 mA and 36 mV at
+            100 uA. That follows from the large saturation current, 47 uA, and is
+            what thermionic emission over a 1 A die's area gives for a barrier of
+            0.55 V; it sits uneasily with the same sheet's reverse leakage of a
+            few microamps at 25 C, which no single ideal junction can match as
+            well. Diodes Inc's sheet for the same part number reads 0.15 V higher
+            at 1 A, so two makers' 1N5817s are not one part either.
 
-        /** Generic blue LED, ~3.19 V. The most headroom of the three by a wide
-            margin, and the softest knee -- a stage clipped by these stays clean
+            It used to be a generic "~0.3 V" Schottky, 0.19 V too high at 10 mA
+            against this sheet. The vendor cards are no better at pedal currents
+            -- fitted at amps, Diodes Inc's puts 1 mA at 36 mV and onsemi's at
+            0.12 V. */
+        static DiodeModel schottky() noexcept
+        {
+            DiodeModel model;
+            model.saturationCurrent = 4.735e-5;
+            model.emissionCoefficient = 1.2292;
+            model.seriesResistance = 0.07724;
+            model.junctionCapacitance = 330.0e-12;
+            return model;
+        }
+
+        // The three LEDs are Kingbright's WP7113 5 mm parts, one per colour and
+        // each the classic chemistry for it -- GaAsP red, GaP green, InGaN blue
+        // -- fitted to the sheets' typical forward curves (docs/specs/diodes,
+        // 25 C, digitised from the vector paths). Those are drawn on a linear
+        // scale from 0 to 15-30 mA, so they pin the curve well from about a
+        // milliamp up and say little below it; the fits' emission coefficients
+        // carry the shape down to where a clipper idles. The series
+        // resistance is most of what separates an LED's knee from a silicon
+        // diode's.
+        //
+        // These used to be generic -- one saturation current, three emission
+        // coefficients, no series resistance -- and were 85 mV low (red), 70 mV
+        // high (green) and 0.6 V high (blue) at a milliamp. The blue was an old
+        // SiC part's voltage, nothing a modern blue LED does.
+
+        /** Kingbright WP7113ID, high-efficiency red (GaAsP on GaP): 1.65 V at
+            1 mA, 1.90 at 10 mA, within 17 mV of the sheet's curve. Far more
+            headroom than silicon, so a stage clips later and louder, and a
+            softer knee (Marshall Blues Breaker, Klon-style clippers). */
+        static DiodeModel redLed() noexcept
+        {
+            DiodeModel model;
+            model.saturationCurrent = 5.772e-14;
+            model.emissionCoefficient = 2.6913;
+            model.seriesResistance = 9.368;
+            return model;
+        }
+
+        /** Kingbright WP7113GD, green (GaP): 1.84 V at 1 mA, 2.04 at 10 mA,
+            within 20 mV. A GaP green is mostly series resistance above a
+            milliamp, so its emission coefficient is held at 1.5 -- left free,
+            the fit runs it to 1.14 and the saturation current to nothing,
+            which describes the same curve and nothing physical. */
+        static DiodeModel greenLed() noexcept
+        {
+            DiodeModel model;
+            model.saturationCurrent = 3.068e-24;
+            model.emissionCoefficient = 1.5;
+            model.seriesResistance = 11.55;
+            return model;
+        }
+
+        /** Kingbright WP7113QBC/D, blue (InGaN): 2.56 V at 1 mA, 3.00 at
+            10 mA, within 29 mV. The most headroom of the three by a wide
+            margin and the softest knee -- a stage clipped by these stays clean
             to levels where silicon would be squared off completely. */
-        static DiodeModel blueLed() noexcept { return {93.0e-12, 7.61, 0.025852}; }
+        static DiodeModel blueLed() noexcept
+        {
+            DiodeModel model;
+            model.saturationCurrent = 4.551e-14;
+            model.emissionCoefficient = 4.1244;
+            model.seriesResistance = 21.08;
+            return model;
+        }
 
-        /** Red, as the usual default when a circuit just says "LED".
-
-            Note this changed: it used to be an approximation with an emission
-            coefficient of 2.0, giving a knee far harder than a real LED has.
-            Anything using led() will clip more gently than it did before, which
-            is the correction, not a regression. */
+        /** Red, as the usual default when a circuit just says "LED". */
         static DiodeModel led() noexcept { return redLed(); }
 
         /** A Zener of the given voltage, on a silicon forward characteristic.
@@ -147,7 +245,16 @@ namespace CircuitComponents
             single Zener is markedly asymmetric.
 
             Below about 5 V the knee softens considerably on real parts, so the
-            emission coefficient is raised there to match. */
+            emission coefficient is raised there to match.
+
+            Checked against Vishay's BZX55 sheet (docs/specs/diodes), the
+            500 mW DO-35 family a pedal uses, which gives limits only: the
+            voltage at its 5 mA test current is exactly the nominal here, and
+            the slopes come in under its maxima -- 21 ohms at 5 mA against 35
+            on the 5.1 V part, 8 against 10 on the 9.1 V, and 103 and 39 ohms at
+            1 mA against 550 and 50. Diodes Inc's BZT52 cards (the SOD-123
+            version) are softer, 60 ohms at 5 mA, which is that family's own
+            limit rather than the BZX55's. */
         static DiodeModel zener(double breakdownVolts) noexcept
         {
             DiodeModel model = silicon();
@@ -220,9 +327,10 @@ namespace CircuitComponents
         /** BAT46, the BAT41's lower-voltage sibling: same DO-35, same guard
             ring, a larger barrier area -- four times the saturation current
             and a quarter of the resistance. It clips about 130 mV lower than a
-            BAT41 at a milliamp -- the lowest diode in the list, under the
-            germanium's 0.33 V and the 1N5817's 0.30 -- and with a Schottky's
-            sharp knee below that rather than germanium's soft one.
+            BAT41 at a milliamp -- the lowest of the small-signal diodes, under
+            the germanium's 0.33 V; only the 1N5817, a 1 A Schottky, goes lower
+            -- and with a Schottky's sharp knee below that rather than
+            germanium's soft one.
 
             Built the BAT41's way -- a Schottky behind its series resistance,
             the guard ring across both -- and fitted to ST's typical curves

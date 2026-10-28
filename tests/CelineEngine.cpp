@@ -5,6 +5,8 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdlib>
@@ -149,24 +151,41 @@ TEST_CASE("A single diode satisfies the Shockley equation", "[circuit][diode]")
     // At the solution the resistor current has to equal the diode current, which
     // is a check on the Newton solve rather than on any particular waveform.
     constexpr double seriesR = 1000.0;
-    const auto model = Circuit::DiodeModel::silicon();
+
+    // The 1N4148's DC part only. Its 0.7 pF against this 1k is a 0.7 ns time
+    // constant, which the trapezoidal rule does not damp: the capacitor's
+    // companion current flips sign every sample and decays by about 1e-4 per
+    // step, so thousands of samples after a step it is still a sizeable part
+    // of a few-nanoamp current. That is the integrator's business (see
+    // LIMITATIONS.md), not Newton's, which is what this checks.
+    auto model = Circuit::DiodeModel::silicon();
+    model.junctionCapacitance = 0.0;
+    model.transitTime = 0.0;
 
     Circuit circuit;
     circuit.addResistor("in", "out", seriesR);
-    circuit.addDiode("out", "gnd");
+    circuit.addDiode("out", "gnd", model);
     circuit.setInputNode("in");
     circuit.setOutputNode("out");
+
     circuit.prepare(sampleRate);
 
     REQUIRE(circuit.isNonlinear());
 
     for (const float vIn : {0.1f, 0.5f, 1.0f, 5.0f, 50.0f})
     {
-        const double vOut = circuit.process(vIn);
+        // In double, from the node: process() returns a float, and at 0.1 V in
+        // the resistor drops 29 uV, which a float's rounding of the output
+        // resolves only to a few parts in ten thousand.
+        circuit.process(vIn);
+        const double vOut = circuit.getNodeVoltage("out");
 
+        // The junction sits behind the diode's series resistance, so it sees
+        // the output less that resistance's drop.
         const double resistorCurrent = (vIn - vOut) / seriesR;
-        const double diodeCurrent = model.saturationCurrent * (std::exp(vOut / model.scaleVoltage()) - 1.0)
-                                  + CircuitComponents::gmin * vOut;
+        const double junction = vOut - resistorCurrent * model.seriesResistance;
+        const double diodeCurrent = model.saturationCurrent * (std::exp(junction / model.scaleVoltage()) - 1.0)
+                                  + CircuitComponents::gmin * junction;
 
         // Relative agreement, since the currents span nanoamps to milliamps.
         // Newton stops once the node voltages settle to within its tolerance, so
@@ -211,7 +230,9 @@ TEST_CASE("A diode clipper clamps large signals and passes small ones", "[circui
 
     CHECK(loud < 1.0f);
     CHECK(louder < 1.2f);
-    CHECK(louder - loud < 0.15f); // a 20 dB input increase barely moves the output
+    // A 20 dB input increase barely moves the output: a decade of current costs
+    // the 1N4148 N Vt ln 10 = 0.12 V.
+    CHECK(louder - loud < 0.2f);
 
     CHECK(clipper.getNonConvergenceCount() == 0);
 }
@@ -1244,16 +1265,22 @@ TEST_CASE("Diode models hit their forward voltages", "[circuit][diode]")
         return static_cast<double>(measureDC(circuit, static_cast<float>(supply), 0.05));
     };
 
-    CHECK(forwardVoltage(Circuit::DiodeModel::d1n4148(), 1.0) == Catch::Approx(0.58).margin(0.03));
+    // The makers' typical curves at 1 mA, digitised from the vector paths:
+    // Vishay's 1N4148 (Fig. 2) and Kingbright's WP7113 red, green and blue.
+    // The 1N5817's is the fit's extrapolation below Vishay's 10 mA curve, so
+    // it is held to the fit rather than to a sheet.
+    CHECK(forwardVoltage(Circuit::DiodeModel::d1n4148(), 1.0) == Catch::Approx(0.609).margin(0.006));
     CHECK(forwardVoltage(Circuit::DiodeModel::germanium(), 1.0) == Catch::Approx(0.33).margin(0.03));
-    CHECK(forwardVoltage(Circuit::DiodeModel::schottky(), 1.0) == Catch::Approx(0.30).margin(0.03));
-    CHECK(forwardVoltage(Circuit::DiodeModel::redLed(), 1.0) == Catch::Approx(1.56).margin(0.05));
-    CHECK(forwardVoltage(Circuit::DiodeModel::greenLed(), 1.0) == Catch::Approx(1.93).margin(0.05));
-    CHECK(forwardVoltage(Circuit::DiodeModel::blueLed(), 1.0) == Catch::Approx(3.18).margin(0.05));
+    CHECK(forwardVoltage(Circuit::DiodeModel::schottky(), 1.0) == Catch::Approx(0.098).margin(0.005));
+    CHECK(forwardVoltage(Circuit::DiodeModel::redLed(), 1.0) == Catch::Approx(1.645).margin(0.02));
+    CHECK(forwardVoltage(Circuit::DiodeModel::greenLed(), 1.0) == Catch::Approx(1.857).margin(0.02));
+    CHECK(forwardVoltage(Circuit::DiodeModel::blueLed(), 1.0) == Catch::Approx(2.571).margin(0.02));
 
     // The emission coefficient shows up as how much the forward voltage moves
-    // per decade of current -- the knee. An LED's is several times silicon's,
-    // which is why it clips so much more gradually.
+    // per decade of current -- the knee. An LED's is half again silicon's
+    // (red) to more than twice (blue), which is why it clips more gradually.
+    // It used to be read as two to four times, from generic LED figures; the
+    // makers' curves say less.
     auto knee = [&forwardVoltage](const Circuit::DiodeModel& model)
     {
         return forwardVoltage(model, 1.0) - forwardVoltage(model, 0.1);
@@ -1262,17 +1289,18 @@ TEST_CASE("Diode models hit their forward voltages", "[circuit][diode]")
     const double siliconKnee = knee(Circuit::DiodeModel::d1n4148());
     INFO("silicon knee " << siliconKnee << " V/decade");
 
-    CHECK(siliconKnee == Catch::Approx(0.104).margin(0.01));
-    CHECK(knee(Circuit::DiodeModel::redLed()) > siliconKnee * 1.8);
-    CHECK(knee(Circuit::DiodeModel::blueLed()) > siliconKnee * 3.5);
+    CHECK(siliconKnee == Catch::Approx(0.116).margin(0.005));
+    CHECK(knee(Circuit::DiodeModel::redLed()) > siliconKnee * 1.3);
+    CHECK(knee(Circuit::DiodeModel::blueLed()) > siliconKnee * 2.0);
 }
 
 TEST_CASE("Swapping the overdrive's clipping diodes changes its ceiling", "[circuit][diode]")
 {
     auto peakWith = [](const Circuit::DiodeModel& model)
     {
-        auto ts = Circuits::makeMidHumpOverdrive();
-        ts.setClippingDiodes(model);
+        // Built with the pair in place rather than swapped in: an LED carries a
+        // series resistance, which only addDiode() can wire.
+        auto ts = Circuits::makeMidHumpOverdrive(model);
         ts.circuit.prepare(sampleRate);
         ts.setControls(0.5f, 0.7f, 1.0f);
 
@@ -1288,7 +1316,7 @@ TEST_CASE("Swapping the overdrive's clipping diodes changes its ceiling", "[circ
 
     // Higher forward voltage means the loop clips later, so more gets through.
     CHECK(red > silicon * 1.5f);
-    CHECK(blue > red * 1.5f);
+    CHECK(blue > red * 1.3f);
 
     // And this is the reason the handles exist. addOpAmp() builds its rail
     // clamps from ordinary diodes and takes ids 0 and 1 for U1's, so the
@@ -1302,6 +1330,508 @@ TEST_CASE("Swapping the overdrive's clipping diodes changes its ceiling", "[circ
 //==============================================================================
 // Ideal op-amps and transformers
 //==============================================================================
+
+namespace
+{
+    /** A follower on +/-4.5 V hit with a +/-2 V square wave: the fastest the
+        output ever moves, in V/us. At four times 48 kHz, so a sample is short
+        enough to see a slope of a few tenths of a volt per microsecond. */
+    double followerSlewRate(const Circuit::OpAmpModel& model)
+    {
+        constexpr double rate = 4.0 * sampleRate;
+        Circuit circuit;
+        circuit.addResistor("in", "p", 1000.0);
+        circuit.addOpAmp("U", "p", "out", "out", model.withRails(4.5, -4.5));
+        circuit.addResistor("out", "gnd", 10000.0);
+        circuit.setInputNode("in");
+        circuit.setOutputNode("out");
+        circuit.prepare(rate);
+
+        double fastest = 0.0;
+        float last = 0.0f;
+
+        for (int i = 0; i < 16000; ++i)
+        {
+            const float out = circuit.process((i / 800) % 2 ? 2.0f : -2.0f);
+
+            if (i > 0)
+                fastest = std::max(fastest, std::abs(out - last) * rate / 1.0e6);
+
+            last = out;
+        }
+
+        CHECK(circuit.getNonConvergenceCount() == 0);
+        return fastest;
+    }
+
+    /** The Rat's gain stage without its filters: non-inverting, gain 1000, on a
+        9 V rail biased at 4.5. */
+    std::vector<float> ratStage(const Circuit::OpAmpModel& model, Circuit::SolverStrategy strategy,
+                                float drive, int& nonConverged)
+    {
+        Circuit circuit;
+        circuit.addVoltageSource("vb", "gnd", 4.5);
+        circuit.addCapacitor("in", "p", 1.0e-6);
+        circuit.addResistor("p", "vb", 1.0e6);
+        circuit.addOpAmp("U", "p", "n", "out", model);
+        circuit.addResistor("out", "n", 1.0e6);
+        circuit.addResistor("n", "m", 1000.0);
+        circuit.addCapacitor("m", "vb", 4.7e-6);
+        circuit.addCapacitor("out", "o2", 1.0e-6);
+        circuit.addResistor("o2", "gnd", 100000.0);
+        circuit.setInputNode("in");
+        circuit.setOutputNode("o2");
+        circuit.setSolverStrategy(strategy);
+
+        // Tighter than the default, so what is compared is the two solvers'
+        // answer rather than where each one's stopping rule happens to land.
+        // At the default 1e-4 the op-amp's sharp rail clamp leaves them
+        // 0.3 mV apart on a 1 V drive, both inside tolerance; at 1e-6 they
+        // agree to the last bit of a float.
+        circuit.setConvergenceTolerance(1.0e-7, 1.0e-6);
+        circuit.prepare(sampleRate);
+
+        std::vector<float> out;
+        const double step = 2.0 * std::numbers::pi * 1000.0 / sampleRate;
+
+        for (int i = 0; i < 9600; ++i)
+            out.push_back(circuit.process(drive * static_cast<float>(std::sin(step * i))));
+
+        nonConverged = circuit.getNonConvergenceCount();
+        return out;
+    }
+}
+
+TEST_CASE("A slow op-amp slews at its datasheet rate", "[circuit][opamp]")
+{
+    // The tail current over the compensation capacitor, and nothing else: the
+    // same figure the datasheet quotes, read back off a follower's edge.
+    CHECK(followerSlewRate(Circuit::OpAmpModel::lm308()) == Catch::Approx(0.3).epsilon(0.05));
+    CHECK(followerSlewRate(Circuit::OpAmpModel::lm741()) == Catch::Approx(0.5).epsilon(0.05));
+
+    // And without the pair the same edge is taken at the bandwidth's pace,
+    // which at this sample rate is far faster.
+    auto unlimited = Circuit::OpAmpModel::lm308();
+    unlimited.slewRate = 0.0;
+    CHECK(followerSlewRate(unlimited) > 0.6);
+}
+
+TEST_CASE("A slewing op-amp gives one answer under both solvers", "[circuit][opamp]")
+{
+    // The input pair is a nonlinear element on the differential input -- the
+    // shape OpAmp.h records breaking the DK solve once. Driven hard enough to
+    // slew on every cycle, the two strategies have to agree.
+    for (const float drive : {0.01f, 0.1f, 1.0f})
+    {
+        int dk = -1, full = -1;
+        const auto a = ratStage(Circuit::OpAmpModel::lm308(), Circuit::SolverStrategy::DiscreteK, drive, dk);
+        const auto b = ratStage(Circuit::OpAmpModel::lm308(), Circuit::SolverStrategy::FullNewton, drive, full);
+
+        double worst = 0.0;
+
+        for (size_t i = 0; i < a.size(); ++i)
+            worst = std::max(worst, static_cast<double>(std::abs(a[i] - b[i])));
+
+        INFO("drive " << drive << " V: largest difference " << worst << " V");
+        CHECK(worst < 1.0e-4);
+        CHECK(dk == 0);
+        CHECK(full == 0);
+    }
+
+    // And slewing is audible there: a hard-driven Rat is a fifth different with
+    // the 308's real slew rate than without it.
+    int unused = 0;
+    auto unlimited = Circuit::OpAmpModel::lm308();
+    unlimited.slewRate = 0.0;
+    const auto slewing = ratStage(Circuit::OpAmpModel::lm308(), Circuit::SolverStrategy::Auto, 1.0f, unused);
+    const auto linear = ratStage(unlimited, Circuit::SolverStrategy::Auto, 1.0f, unused);
+
+    double difference = 0.0, level = 0.0;
+
+    for (size_t i = 4800; i < slewing.size(); ++i)
+    {
+        difference += std::pow(slewing[i] - linear[i], 2.0);
+        level += std::pow(linear[i], 2.0);
+    }
+
+    CHECK(std::sqrt(difference / level) > 0.1);
+}
+
+TEST_CASE("The TL072 and LM741 follow TI's own macromodels", "[circuit][opamp]")
+{
+    // Non-inverting, gain 101, +/-15 V into 10k, 0.1 V in -- 10 V out, which a
+    // 741 has to slew to above about 8 kHz and a TL072 never does. The
+    // references are TI's TL072 and uA741 Boyle cards run in ngspice-47 on the
+    // same circuit: the fundamental's amplitude and phase over 5 ms, at the
+    // same 192 kHz. Before the second pole and the 741's measured bandwidth
+    // these were 1.3-4.9% (TL072) and 2.8-3.9% (741) out in amplitude and up to
+    // 4.3 degrees in phase, the 741 right only where two errors cancelled.
+    struct Reference
+    {
+        const char* name;
+        Circuit::OpAmpModel model;
+        double frequency, amplitude, phaseDegrees;
+    };
+
+    const Reference references[] = {
+        {"TL072", Circuit::OpAmpModel::tl072(), 10000.0, 9.678, -106.59},
+        {"TL072", Circuit::OpAmpModel::tl072(), 20000.0, 8.680, -120.85},
+        {"LM741", Circuit::OpAmpModel::lm741(), 10000.0, 6.519, -139.97},
+        {"LM741", Circuit::OpAmpModel::lm741(), 20000.0, 3.702, -159.01},
+    };
+
+    constexpr double rate = 4.0 * sampleRate;
+
+    for (const auto& r : references)
+    {
+        Circuit circuit;
+        circuit.addOpAmp("U", "in", "n", "o", r.model.withRails(15.0, -15.0));
+        circuit.addResistor("o", "n", 100000.0);
+        circuit.addResistor("n", "gnd", 1000.0);
+        circuit.addResistor("o", "gnd", 10000.0);
+        circuit.setInputNode("in");
+        circuit.setOutputNode("o");
+        circuit.prepare(rate);
+
+        std::vector<double> out;
+        const double step = 2.0 * std::numbers::pi * r.frequency / rate;
+
+        for (int i = 0; i < 1920; ++i)
+            out.push_back(circuit.process(0.1f * static_cast<float>(std::sin(step * i))));
+
+        // The fundamental over the second half, which is a whole number of
+        // cycles at both frequencies.
+        double mean = 0.0;
+
+        for (int i = 960; i < 1920; ++i)
+            mean += out[static_cast<size_t>(i)] / 960.0;
+
+        double re = 0.0, im = 0.0;
+
+        for (int i = 960; i < 1920; ++i)
+        {
+            const double v = out[static_cast<size_t>(i)] - mean;
+            const double angle = step * (i - 960);
+            re += 2.0 * v * std::cos(angle) / 960.0;
+            im -= 2.0 * v * std::sin(angle) / 960.0;
+        }
+
+        const double amplitude = std::hypot(re, im);
+        const double phase = std::atan2(im, re) * 180.0 / std::numbers::pi;
+
+        INFO(r.name << " at " << r.frequency << " Hz: " << amplitude << " V at " << phase
+                    << " degrees, TI's card " << r.amplitude << " V at " << r.phaseDegrees);
+        CHECK(amplitude == Catch::Approx(r.amplitude).epsilon(r.frequency < 15000.0 ? 0.015 : 0.045));
+        CHECK(phase == Catch::Approx(r.phaseDegrees).margin(2.5));
+    }
+}
+
+namespace
+{
+    /** A gain of 11 on a 9 V battery: input coupled in and biased to 4.5 V
+        through 1M, feedback 100k over 10k, the gain leg AC-coupled, 10k load
+        to the half supply. 30 ms of a 1 kHz sine at 192 kHz -- the same deck,
+        node for node, that the references below were run through. */
+    std::vector<double> nineVoltStage(const Circuit::OpAmpModel& model, double drive, double supply = 9.0)
+    {
+        Circuit circuit;
+        circuit.addVoltageSource("vref", "gnd", 0.5 * supply);
+        circuit.addCapacitor("in", "p", 1.0e-6);
+        circuit.addResistor("p", "vref", 1.0e6);
+        circuit.addOpAmp("U", "p", "n", "o", model.withRails(supply, 0.0));
+        circuit.addResistor("o", "n", 100000.0);
+        circuit.addResistor("n", "g", 10000.0);
+        circuit.addCapacitor("g", "vref", 10.0e-6);
+        circuit.addResistor("o", "vref", 10000.0);
+        circuit.setInputNode("in");
+        circuit.setOutputNode("o");
+        circuit.prepare(192000.0);
+
+        std::vector<double> out;
+        const double step = 2.0 * std::numbers::pi * 1000.0 / 192000.0;
+
+        for (int i = 0; i < 5760; ++i)
+            out.push_back(circuit.process(static_cast<float>(drive * std::sin(step * i))));
+
+        return out;
+    }
+}
+
+TEST_CASE("On 9 V an op-amp clips the way TI's own macromodels do", "[circuit][opamp]")
+{
+    // The stage above, 0.6 V in -- clipping on both rails, two-thirds of
+    // each cycle flat -- through TI's TL072 and uA741 cards and its NE5534
+    // card with the 22 pF that makes it a 5532, in ngspice-47. Every fourth
+    // sample of the 21st millisecond, one whole cycle.
+    //
+    // What this holds is the *shape*: the knee, the flat, and how the output
+    // comes off the rail and recovers. The cards' clip levels are their own
+    // clamp settings rather than the sheets' swing -- the uA741 card stops
+    // 0.39 V short of each rail where the sheet says 1 V -- so each model is
+    // given its card's level here, measured into this 10k load. The levels
+    // the models really use are the next test's business.
+    //
+    // Before the clamp was scaled to the gain stage, the clip level itself
+    // drifted with the drive by 0.4 V, and none of these could match.
+    struct Reference
+    {
+        const char* name;
+        Circuit::OpAmpModel model;
+        double cardHeadroom;
+        std::array<double, 48> card;
+    };
+
+    const Reference references[] = {
+        {"TL072", Circuit::OpAmpModel::tl072(), 1.523,
+         {4.479, 5.341, 6.188, 7.006, 7.400, 7.429, 7.441, 7.448, 7.453, 7.456, 7.459, 7.460, 7.460, 7.460, 7.459, 7.457,
+          7.454, 7.449, 7.442, 7.431, 7.406, 7.033, 6.216, 5.370, 4.508, 3.647, 2.800, 1.982, 1.599, 1.571, 1.559, 1.551,
+          1.547, 1.543, 1.541, 1.540, 1.540, 1.540, 1.541, 1.543, 1.546, 1.551, 1.558, 1.569, 1.593, 1.955, 2.772, 3.618}},
+        {"LM741", Circuit::OpAmpModel::lm741(), 0.387,
+         {4.419, 5.281, 6.129, 6.949, 7.727, 8.447, 8.595, 8.610, 8.613, 8.613, 8.613, 8.613, 8.613, 8.613, 8.613, 8.613,
+          8.613, 8.611, 8.602, 8.538, 7.840, 7.070, 6.255, 5.410, 4.549, 3.688, 2.839, 2.019, 1.241, 0.525, 0.403, 0.390,
+          0.387, 0.387, 0.387, 0.387, 0.387, 0.387, 0.387, 0.387, 0.387, 0.389, 0.397, 0.452, 1.127, 1.898, 2.713, 3.558}},
+        {"NE5532", Circuit::OpAmpModel::ne5532(), 2.033,
+         {4.443, 5.304, 6.151, 6.885, 6.954, 6.965, 6.967, 6.967, 6.967, 6.967, 6.967, 6.967, 6.967, 6.967, 6.967, 6.967,
+          6.967, 6.967, 6.967, 6.966, 6.958, 6.911, 6.150, 5.304, 4.442, 3.581, 2.734, 2.091, 2.043, 2.034, 2.033, 2.033,
+          2.033, 2.033, 2.033, 2.033, 2.033, 2.033, 2.033, 2.033, 2.033, 2.033, 2.033, 2.034, 2.040, 2.074, 2.730, 3.577}},
+    };
+
+    for (const auto& r : references)
+    {
+        auto model = r.model;
+        model.railHeadroom = r.cardHeadroom;
+        model.headroomPerSupplyVolt = 0.0;
+        model.negativeRailHeadroom = -1.0;
+        model.headroomLoad = 10000.0;
+
+        // The cards' open-loop gain does not follow the supply; for the shape
+        // alone, nor does this one.
+        model.openLoopGainSupplyExponent = 0.0;
+
+        // And no bias current. The deck starts the input at 4.5 V and its
+        // coupling takes a second to settle, so in 30 ms the cards never show
+        // the offset their bias would give -- where Céline solves the bias
+        // point first, and a 5532's 200 nA through 1M starts it 0.2 V low.
+        model.inputBiasCurrent = 0.0;
+
+        const auto out = nineVoltStage(model, 0.6);
+
+        double sum = 0.0, squares = 0.0, error = 0.0, worst = 0.0;
+
+        for (size_t k = 0; k < r.card.size(); ++k)
+        {
+            const double card = r.card[k];
+            const double ours = out[3840 + 4 * k];
+            sum += card;
+            squares += card * card;
+            error += (ours - card) * (ours - card);
+            worst = std::max(worst, std::abs(ours - card));
+        }
+
+        const double n = static_cast<double>(r.card.size());
+        const double spread = std::sqrt(squares / n - (sum / n) * (sum / n));
+        const double rms = std::sqrt(error / n);
+
+        // 1.6%, 0.3% and 1.3% of the swing as measured; what is left on the
+        // TL072 is its card's slightly rounder knee.
+        INFO(r.name << ": " << 100.0 * rms / spread << "% rms of the swing, worst " << worst << " V");
+        CHECK(rms < 0.025 * spread);
+        CHECK(worst < 0.12);
+    }
+}
+
+TEST_CASE("An op-amp clips where its sheet says, however hard it is driven", "[circuit][opamp]")
+{
+    // The swing a sheet quotes is the output at the pin into a stated load,
+    // driven as hard as you like. So both of those have to hold here: the
+    // level is the sheet's (into this 10k, scaled from the sheet's own load
+    // by the output resistance), and driving 2.5 times harder moves it by no
+    // more than a few tens of millivolts. On a pedal's 9 V and on an amp's
+    // +/-15 alike.
+    using M = Circuit::OpAmpModel;
+
+    for (const double supply : {9.0, 30.0})
+    for (const auto& model : {M::tl072(), M::jrc4558(), M::ne5532(), M::lm308(), M::lm741()})
+    {
+        const auto railed = model.withRails(supply, 0.0);
+        const double load = 10000.0 / (10000.0 + railed.outputResistance);
+        const double expectedUp = railed.positiveExcursion() * load;
+        const double expectedDown = railed.negativeExcursion() * load;
+
+        const auto peaks = [&](double drive)
+        {
+            const auto out = nineVoltStage(model, drive * supply / 9.0, supply);
+            const auto [low, high] = std::minmax_element(out.begin() + 3840, out.end());
+            return std::pair{*high - 0.5 * supply, 0.5 * supply - *low};
+        };
+
+        const auto hard = peaks(1.5);
+        const auto harder = peaks(0.6);
+
+        INFO(supply << " V: expected +" << expectedUp << " / -" << expectedDown << " V, got +" << hard.first << " / -" << hard.second
+                           << " at 1.5 V in, +" << harder.first << " / -" << harder.second << " at 0.6");
+        CHECK(hard.first == Catch::Approx(expectedUp).margin(0.03));
+        CHECK(hard.second == Catch::Approx(expectedDown).margin(0.03));
+        CHECK(std::abs(hard.first - harder.first) < 0.03);
+        CHECK(std::abs(hard.second - harder.second) < 0.03);
+    }
+
+    // And the sheets that plot swing against supply. TL071 Figure 10 reads
+    // 1.11 V of headroom on +/-4.5 V and 1.40 on +/-15; NJR's NJM4558 lines
+    // have slope one, so 1 V everywhere; Motorola's MC4741C gives the 741's
+    // two sides separately, 0.69 / 1.44 on +/-15 and 0.81-0.99 / 1.67-1.85
+    // from +/-6 to +/-9, which the fitted lines hold to within 0.12 V.
+    const auto nineVolt = [](M m) { return m.withRails(9.0, 0.0); };
+    const auto fifteenVolt = [](M m) { return m.withRails(15.0, -15.0); };
+
+    CHECK(nineVolt(M::tl072()).positiveHeadroom() == Catch::Approx(1.1165).margin(0.01));
+    CHECK(fifteenVolt(M::tl072()).positiveHeadroom() == Catch::Approx(1.40));
+    CHECK(nineVolt(M::jrc4558()).negativeHeadroom() == Catch::Approx(1.0));
+    CHECK(fifteenVolt(M::lm741()).positiveHeadroom() == Catch::Approx(0.69).margin(0.12));
+    CHECK(fifteenVolt(M::lm741()).negativeHeadroom() == Catch::Approx(1.44).margin(0.12));
+    CHECK(nineVolt(M::lm741()).positiveHeadroom() == Catch::Approx(0.94).margin(0.01));
+    CHECK(nineVolt(M::lm741()).negativeHeadroom() == Catch::Approx(1.83).margin(0.01));
+
+    // And the 741's open-loop gain: 200 V/mV on +/-15, 53 on +/-4.5 (TI
+    // uA741 Figure 5-6).
+    CHECK(fifteenVolt(M::lm741()).openLoopGainOnRails() == Catch::Approx(2.0e5));
+    CHECK(nineVolt(M::lm741()).openLoopGainOnRails() == Catch::Approx(53.0e3).epsilon(0.02));
+}
+
+TEST_CASE("Input bias current flows the way the input pair says", "[circuit][opamp]")
+{
+    // A follower with 1M from its input to ground: the bias current has
+    // nowhere to go but through that, so the output sits at -I x 1M. An NPN
+    // pair (the 741) draws it in and pulls the input negative; a PNP pair
+    // (the 4558, by NJR's equivalent circuit) pushes it out.
+    using M = Circuit::OpAmpModel;
+
+    const auto follower = [](const M& model)
+    {
+        Circuit circuit;
+        circuit.addResistor("in", "p", 1.0e6);
+        circuit.addOpAmp("U", "p", "o", "o", model.withRails(15.0, -15.0));
+        circuit.setInputNode("in");
+        circuit.setOutputNode("o");
+        circuit.prepare(sampleRate);
+
+        float out = 0.0f;
+
+        for (int i = 0; i < 4800; ++i)
+            out = circuit.process(0.0f);
+
+        return static_cast<double>(out);
+    };
+
+    CHECK(follower(M::lm741()) == Catch::Approx(-0.080).margin(1.0e-4));
+    CHECK(follower(M::ne5532()) == Catch::Approx(-0.200).margin(1.0e-3));
+    CHECK(follower(M::jrc4558()) == Catch::Approx(0.025).margin(1.0e-4));
+    CHECK(follower(M::lm308()) == Catch::Approx(-0.0015).margin(1.0e-5));
+    CHECK(std::abs(follower(M::tl072())) < 1.0e-4);
+
+    // And a model that does not ask for it costs nothing.
+    auto none = M::lm741();
+    none.inputBiasCurrent = 0.0;
+    CHECK(std::abs(follower(none)) < 1.0e-6);
+}
+
+TEST_CASE("A second pole leaves the gain crossing unity where the datasheet says", "[circuit][opamp]")
+{
+    // The datasheet's unity-gain bandwidth is where the gain crosses; the
+    // dominant pole is raised so the second pole does not pull that crossing
+    // down. At the crossing the open-loop magnitude is one, and the lag is
+    // 180 degrees less the margin.
+    for (const auto& model : {Circuit::OpAmpModel::tl072(), Circuit::OpAmpModel::lm741(),
+                              Circuit::OpAmpModel::jrc4558(), Circuit::OpAmpModel::lm308()})
+    {
+        REQUIRE(model.hasSecondPole());
+
+        const double f = model.gainBandwidth;
+        const double dominant = model.lowFrequencyGainBandwidth() / model.openLoopGainOnRails();
+        const double second = model.secondPoleFrequency();
+        const double magnitude = model.openLoopGainOnRails() / std::hypot(1.0, f / dominant) / std::hypot(1.0, f / second);
+        const double lag = (std::atan(f / dominant) + std::atan(f / second)) * 180.0 / std::numbers::pi;
+
+        INFO("GBW " << f << " Hz, second pole " << second << " Hz");
+        CHECK(magnitude == Catch::Approx(1.0).epsilon(1.0e-3));
+        CHECK(180.0 - lag == Catch::Approx(model.phaseMargin).margin(0.1));
+    }
+
+    // And a model without one is exactly the single pole it always was.
+    auto single = Circuit::OpAmpModel::tl072();
+    single.phaseMargin = 0.0;
+    CHECK(single.lowFrequencyGainBandwidth() == Catch::Approx(single.gainBandwidth).epsilon(1.0e-15));
+}
+
+TEST_CASE("A degenerated input pair solves its own transfer curve", "[opamp][model]")
+{
+    // u = (1 - d) atanh(x) + d x, solved by Newton inside the device. Bare, it
+    // is tanh; degenerated, the same small-signal slope and the same limit,
+    // reached later and more abruptly.
+    for (const double d : {0.0, 0.35, 0.8})
+    {
+        for (const double u : {-60.0, -6.0, -1.5, -0.2, 0.0, 0.3, 1.0, 2.5, 8.0, 400.0})
+        {
+            double x = 0.0, slope = 0.0;
+            CircuitComponents::steerTail(u, d, x, slope);
+
+            INFO("d " << d << ", u " << u << ": x " << x);
+            CHECK(std::abs(x) <= 1.0);
+            CHECK(std::isfinite(slope));
+
+            // Out where the whole tail is on one side, x is one to the last bit
+            // and the curve has nothing left to check.
+            if (1.0 - std::abs(x) < 1.0e-9)
+                continue;
+
+            CHECK((1.0 - d) * std::atanh(x) + d * x == Catch::Approx(u).margin(1.0e-9));
+
+            double xp = 0.0, xm = 0.0, unused = 0.0;
+            CircuitComponents::steerTail(u + 1.0e-6, d, xp, unused);
+            CircuitComponents::steerTail(u - 1.0e-6, d, xm, unused);
+            CHECK(slope == Catch::Approx((xp - xm) / 2.0e-6).epsilon(1.0e-4).margin(1.0e-9));
+        }
+    }
+
+    double bare = 0.0, degenerated = 0.0, unused = 0.0;
+    CircuitComponents::steerTail(1.0, 0.0, bare, unused);
+    CircuitComponents::steerTail(1.0, 0.35, degenerated, unused);
+    CHECK(bare == Catch::Approx(std::tanh(1.0)));
+    CHECK(degenerated > bare);
+}
+
+TEST_CASE("Only a part that can slew at the circuit's rate gets the input pair", "[circuit][opamp]")
+{
+    // A sample can ask the output to cross its whole swing, so a part whose
+    // slew rate covers swing x rate never slews and needs no pair.
+    using M = Circuit::OpAmpModel;
+    const auto nineVolt = [](M m) { return m.withRails(9.0, 0.0); };
+
+    CHECK(nineVolt(M::lm308()).slewsAt(48000.0));
+    CHECK_FALSE(nineVolt(M::lm741()).slewsAt(48000.0));
+    CHECK(nineVolt(M::lm741()).slewsAt(4.0 * 48000.0));
+    CHECK_FALSE(nineVolt(M::jrc4558()).slewsAt(2.0 * 48000.0));
+    CHECK(nineVolt(M::jrc4558()).slewsAt(4.0 * 48000.0));
+    CHECK_FALSE(nineVolt(M::ne5532()).slewsAt(16.0 * 48000.0));
+    CHECK_FALSE(nineVolt(M::tl072()).slewsAt(16.0 * 48000.0));
+
+    // What the pair costs: two Newton ports beside the clamps' two.
+    const auto ports = [](M model)
+    {
+        Circuit circuit;
+        circuit.addResistor("in", "p", 1000.0);
+        circuit.addOpAmp("U", "p", "out", "out", model);
+        circuit.setInputNode("in");
+        circuit.setOutputNode("out");
+        circuit.prepare(sampleRate);
+        return circuit.getPortCount();
+    };
+
+    auto linear = M::lm308();
+    linear.slewRate = 0.0;
+    CHECK(ports(M::lm308()) == 4);
+    CHECK(ports(linear) == 2);
+}
 
 TEST_CASE("An ideal op-amp gives exactly the textbook gain", "[circuit][nullor]")
 {
@@ -1692,7 +2222,11 @@ TEST_CASE("A JFET channel conducts both ways", "[jfet][model]")
     const double a = drainCurrent(-1.0, 0.4);
     double v[2] = {-1.0 - 0.4, -0.4};
     linearise(jfet, v, out);
-    CHECK(out.current[1] == Catch::Approx(-a).epsilon(1.0e-9));
+    //
+    // To within the gate junctions' leakage: the drain terminal also carries
+    // the gate-drain junction's current, gmin-sized here, and in the mirrored
+    // case that junction sits at the other end. Picoamps against milliamps.
+    CHECK(out.current[1] == Catch::Approx(-a).margin(1.0e-11));
 
     // And smooth across the crossing, which is where the signal spends its time.
     // A kink here would be a discontinuity in the conductance the solver stamps.
@@ -1983,6 +2517,36 @@ TEST_CASE("A valve plate never sources current", "[valve][model]")
 }
 
 //==============================================================================
+TEST_CASE("A starved pentode finds its bias a fraction of a volt above the cathode", "[valve][model]")
+{
+    // A pentode behind 100k on 300 V, screen on the rail: the screen takes most
+    // of the cathode current and the plate is starved down into the knee,
+    // under a volt from the cathode. Once the plate-slope refit sharpened the
+    // knees, Newton overshot from there into the flat region below the cathode
+    // and the KT66 settled at -149 V. See limitPortVoltages().
+    using M = Circuit::PentodeModel;
+
+    for (const auto& model : {M::el34(), M::u6l6gc(), M::el84(), M::kt66(), M::kt77(), M::u6v6(), M::kt88()})
+    {
+        Circuit circuit;
+        circuit.addVoltageSource("rail", "gnd", 300.0);
+        circuit.addResistor("rail", "plate", 100000.0);
+        circuit.addResistor("cathode", "gnd", 1500.0);
+        circuit.addResistor("grid", "gnd", 1.0e6);
+        circuit.addResistor("in", "grid", 1.0);
+        circuit.addPentode("plate", "rail", "grid", "cathode", model);
+        circuit.setInputNode("in");
+        circuit.setOutputNode("plate");
+        circuit.prepare(sampleRate);
+
+        const double vpk = circuit.getNodeVoltage("plate") - circuit.getNodeVoltage("cathode");
+        INFO("MU " << model.mu << ": Vpk = " << vpk << " V");
+        CHECK(circuit.foundOperatingPoint());
+        CHECK(vpk > 0.0);
+        CHECK(vpk < 3.0);
+    }
+}
+
 TEST_CASE("A pentode conducts smoothly as its screen comes up", "[valve][model]")
 {
     // The gate that cuts the valve off used to sit at Ug2 = 1 V, where the
@@ -2107,12 +2671,76 @@ TEST_CASE("The plate-current floor leaves working valves alone", "[valve][model]
 }
 
 //==============================================================================
+TEST_CASE("A transistor and a JFET run as ngspice runs them", "[bjt][jfet][model]")
+{
+    // The same circuits, the same parameters, in ngspice-47 at the engine's
+    // thermal voltage. A BJT with an Early voltage: the engine used to scale
+    // by 1 + Vce/VAF where Gummel-Poon -- and so every vendor's VAF -- means
+    // 1 + Vcb/VAF, and read collector currents ~1% high. A JFET with its drain
+    // pulled under its gate: the engine used to have no gate-drain junction,
+    // and was 0.77 V out there.
+    struct BjtCase { double rb, rc, vin, vb, vc; };
+    const BjtCase bjtCases[] = { { 1.0e6, 10.0e3, 3.0, 0.651197349, 3.689222270 },
+                                 { 100.0e3, 1.0e3, 2.0, 0.695649053, 5.982498490 } };
+
+    for (const auto& c : bjtCases)
+    {
+        Circuit::BjtModel m {Circuit::BjtModel::Polarity::NPN, 5.874e-15, 220.3, 0.7371, 1.0, 1.0, 0.025852};
+        m.baseEmitterLeakage = 1.398e-15;
+        m.baseEmitterLeakageEmission = 1.5;
+        m.forwardKneeCurrent = 0.2083;
+        m.forwardEarlyVoltage = 74.03;
+
+        Circuit circuit;
+        circuit.addVoltageSource("vin", "gnd", c.vin);
+        circuit.addVoltageSource("vcc", "gnd", 9.0);
+        circuit.addResistor("vin", "b", c.rb);
+        circuit.addResistor("vcc", "col", c.rc);
+        circuit.addTransistor("b", "col", "gnd", m);
+        circuit.addResistor("in", "gnd", 1000.0);
+        circuit.setInputNode("in");
+        circuit.setOutputNode("col");
+        circuit.setConvergenceTolerance(1.0e-12, 1.0e-10);
+        circuit.prepare(sampleRate);
+
+        INFO("Rb " << c.rb << ": Vb " << circuit.getNodeVoltage("b") << ", Vc " << circuit.getNodeVoltage("col"));
+        CHECK(circuit.getNodeVoltage("b") == Catch::Approx(c.vb).margin(1.0e-4));
+        CHECK(circuit.getNodeVoltage("col") == Catch::Approx(c.vc).margin(1.0e-4));
+    }
+
+    // J201 parameters, gate at -0.2 V, drain through 100 ohms from vin.
+    for (const auto& [vin, vd] : { std::pair { -2.0, -0.884905782 }, std::pair { 5.0, 4.980605470 } })
+    {
+        Circuit::JfetModel j;
+        j.channel = Circuit::JfetModel::Channel::N;
+        j.threshold = -0.691;
+        j.beta = 787.0e-6;
+        j.lambda = 4.46e-3;
+        j.gateSaturationCurrent = 30.7e-15;
+
+        Circuit circuit;
+        circuit.addVoltageSource("vin", "gnd", vin);
+        circuit.addVoltageSource("g", "gnd", -0.2);
+        circuit.addResistor("vin", "d", 100.0);
+        circuit.addJfet("d", "g", "gnd", j);
+        circuit.addResistor("in", "gnd", 1000.0);
+        circuit.setInputNode("in");
+        circuit.setOutputNode("d");
+        circuit.setConvergenceTolerance(1.0e-12, 1.0e-10);
+        circuit.prepare(sampleRate);
+
+        INFO("vin " << vin << ": Vd " << circuit.getNodeVoltage("d"));
+        CHECK(circuit.getNodeVoltage("d") == Catch::Approx(vd).margin(1.0e-4));
+    }
+}
+
 TEST_CASE("The Early effect scales the transport current with collector voltage", "[bjt][model]")
 {
-    // The level-1 SPICE form: the transport current picks up a factor
-    // 1 + Vce/VAF, which is an output resistance ro = VAF/Ic in disguise.
-    // Checked at the device, where the numbers are exact: at Vbe 0.65 V and
-    // Vce 5.65 V the scale is 1.0763 and ro should come out at 74.03/Ic.
+    // Gummel-Poon's form, as every vendor card's VAF assumes: the transport
+    // current is divided by q1 = 1 / (1 - Vbc/VAF), a factor 1 + Vcb/VAF,
+    // which is an output resistance ro = VAF/Ic in disguise. Checked at the
+    // device, where the numbers are exact: at Vbe 0.65 V and Vcb 5 V the
+    // scale is 1.0675 and ro should come out at 74.03/Ic.
     CircuitComponents::DeviceLinearisation on{};
     CircuitComponents::DeviceLinearisation off{};
 
@@ -2134,7 +2762,7 @@ TEST_CASE("The Early effect scales the transport current with collector voltage"
     const double icOff = -off.current[1];
 
     INFO("Ic = " << icOff * 1e3 << " mA without, " << icOn * 1e3 << " mA with");
-    CHECK(icOn / icOff == Catch::Approx(1.0 + 5.65 / 74.03).epsilon(1.0e-3));
+    CHECK(icOn / icOff == Catch::Approx(1.0 + 5.0 / 74.03).epsilon(1.0e-3));
 
     // The output conductance is the difference the effect makes to the
     // collector port's own slope: 1/ro with ro = VAF/Ic.
@@ -2143,8 +2771,9 @@ TEST_CASE("The Early effect scales the transport current with collector voltage"
     CHECK(go > 0.0);
     CHECK(1.0 / go == Catch::Approx(74.03 / icOff).epsilon(0.01));
 
-    // And the cross term mirrors it: the collector port now also sees the
-    // base-emitter voltage, with the opposite sign.
+    // And the cross term mirrors it: the base-emitter port now also sees the
+    // base-collector voltage, with the opposite sign. Nothing new in the other
+    // direction -- the factor depends on Vbc alone.
     CHECK(on.jacobian[1] == Catch::Approx(-go).epsilon(0.01));
     CHECK(std::abs(off.jacobian[1]) < 1.0e-12);
 
@@ -2155,9 +2784,12 @@ TEST_CASE("The Early effect scales the transport current with collector voltage"
     double v[2] = {-0.65, 5.0};
     linearise(pnp, v, pnpOut);
 
-    const double scale = 1.0 + 5.65 / 18.7; // the 2N3906's VAF
-    const double transport = 1.41e-15 * (std::exp(0.65 / 0.025852) - 1.0);
-    CHECK(std::abs(pnpOut.current[1]) == Catch::Approx(transport * scale).epsilon(1.0e-3));
+    // Less its high-injection knee, which this checks around.
+    const auto pnpModel = CircuitComponents::BjtModel::pnpSilicon();
+    const double scale = 1.0 + 5.0 / pnpModel.forwardEarlyVoltage;
+    const double forward = pnpModel.saturationCurrent * (std::exp(0.65 / 0.025852) - 1.0);
+    const double qb = 0.5 * (1.0 + std::sqrt(1.0 + 4.0 * forward / pnpModel.forwardKneeCurrent));
+    CHECK(std::abs(pnpOut.current[1]) == Catch::Approx(forward * scale / qb).epsilon(1.0e-3));
 }
 
 namespace
@@ -2166,14 +2798,15 @@ namespace
         high gain and a high-impedance drive, so the Early output resistance
         and the Miller-multiplied capacitance each have something to act on.
 
-        Biased near 0.13 mA through a 27M base resistor, which keeps the
-        transistor's own input resistance (~80k) comparable to the 100k source
-        rather than shorting the capacitance's pole out. */
+        Biased near 0.13 mA through a 15M base resistor -- the 2N3904's
+        typical gain of 230 times its 0.56 uA -- which keeps the transistor's
+        own input resistance (~46k) comparable to the 100k source rather than
+        shorting the capacitance's pole out. */
     Circuit makeGroundedEmitterStage(Circuit::BjtModel model)
     {
         Circuit circuit;
         circuit.addVoltageSource("vcc", "gnd", 9.0);
-        circuit.addResistor("vcc", "base", 27.0e6);
+        circuit.addResistor("vcc", "base", 15.0e6);
         circuit.addCapacitor("in", "src", 100.0e-6);  // blocks DC, transparent in band
         circuit.addResistor("src", "base", 100000.0); // the source the Miller cap works against
         circuit.addResistor("vcc", "collector", 22000.0);
@@ -2238,10 +2871,11 @@ TEST_CASE("The Early effect moves a stage's gain by a few percent", "[circuit][t
 
 TEST_CASE("Junction capacitance puts a pole on a transistor stage", "[circuit][transistor]")
 {
-    // The estimate for the stage above: Av ~ gm * Rc ~ 110, so
-    // Cin = Cbe + Cbc*(1+Av) ~ 410 pF, against 100k || 27M || r_pi ~ 44k that
-    // is a lowpass at ~8.7 kHz -- inside the audio band, which is the whole
-    // reason this is modelled.
+    // The estimate for the stage above: Av ~ gm * Rc ~ 108, so
+    // Cin = Cbe + Cbc*(1+Av) ~ 400 pF, against 100k || 15M || r_pi ~ 31k that
+    // is a lowpass at ~12.7 kHz -- inside the audio band, which is the whole
+    // reason this is modelled. Low-frequency gain is Av times the divider the
+    // 100k source makes with r_pi, about a third.
     const auto gainAt = stageGainAt;
 
     auto model = Circuit::BjtModel::npnSilicon();
@@ -2256,7 +2890,7 @@ TEST_CASE("Junction capacitance puts a pole on a transistor stage", "[circuit][t
 
     const double g0 = gainAt(stage, 100.0);
     INFO("low-frequency gain = " << g0);
-    REQUIRE(g0 > 50.0);
+    REQUIRE(g0 > 25.0);
 
     // Find the -3 dB point by scanning, then check it lands near the estimate.
     double poleFrequency = 0.0;
@@ -2281,7 +2915,7 @@ TEST_CASE("Junction capacitance puts a pole on a transistor stage", "[circuit][t
         previousFrequency = f;
     }
 
-    INFO("measured -3 dB at " << poleFrequency << " Hz, estimate 8.7 kHz");
+    INFO("measured -3 dB at " << poleFrequency << " Hz, estimate 12.7 kHz");
     REQUIRE(poleFrequency > 0.0);
     CHECK(poleFrequency > 4000.0);
     CHECK(poleFrequency < 16000.0);

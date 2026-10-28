@@ -402,6 +402,9 @@ void Circuit::forEachNonlinearDevice(Fn fn)
 
     for (auto& m : mosfets)
         visit(m);
+
+    for (auto& d : differentialPairs)
+        visit(d);
 }
 
 void Circuit::buildPortList()

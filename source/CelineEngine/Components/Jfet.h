@@ -43,11 +43,22 @@ namespace CircuitComponents
         double lambda = 0.02;      // channel-length modulation, 1/V
         double gatePerveance = 0.0; // filled in by the presets; see below
 
-        /** Saturation current of the gate junction, for when the gate is driven
-            positive and starts conducting. Same Shockley form as a diode. */
+        /** Saturation current of the gate junctions, for when the gate is
+            driven positive and starts conducting. Same Shockley form as a
+            diode, and -- as in SPICE -- one figure for both: the gate is one
+            junction over the whole channel, met from the source end and from
+            the drain end. */
         double gateSaturationCurrent = 1.0e-14;
         double gateEmission = 1.0;
         double thermalVoltage = 0.025852;
+
+        /** Gate-source and gate-drain capacitances, farads -- CGS and CGD on a
+            SPICE card, taken as constants at the zero-bias figure. Wired by
+            Circuit::addJfet() as ordinary capacitors, and switched off with
+            the other junction capacitances in BuildOptions. CGD is the Miller
+            one: in a common-source stage it is multiplied by the gain. */
+        double capGateSource = 0.0;
+        double capGateDrain = 0.0;
 
         /** +1 for N-channel, -1 for P. As with the BJT, a P-channel part is the
             same device with every voltage and current negated. */
@@ -61,30 +72,55 @@ namespace CircuitComponents
         // JFET parameters scatter worse than almost any other part -- Idss on a
         // J201 is specified as 0.2 to 1 mA, a five to one spread on the same
         // part number, which is why pedal builders measure and sort them. Treat
-        // these as one plausible specimen each, and expect to adjust `threshold`
-        // and `beta` if you're chasing a particular build.
+        // these as one specimen each, and expect to adjust `threshold` and
+        // `beta` if you're chasing a particular build.
+        //
+        // The J201, 2N5457, 2N5485 and 2N5460 are InterFET's, who make all four
+        // today and publish SPICE models measured on their own parts
+        // (docs/specs/jfets/InterFET-spice-models.xlsx), not derived from a
+        // sheet: VTO, BETA, LAMBDA, the gate capacitances and the gate
+        // saturation current, verbatim. Where InterFET grade a part by Idss
+        // and model one grade only, that grade is the one used. The gate
+        // saturation current is the one InterFET give alongside a GMIN, since
+        // this engine always has one.
+        //
+        // These used to be round figures with no source, and set side by side
+        // in ngspice with InterFET's they were 1.8 times too much Idss on the
+        // J201 (0.71 mA against 0.39), 1.7 times on the 2N5457, and a pinch-off
+        // 0.65 V short on the 2N5460. The onsemi card for the J201 -- Fairchild's,
+        // 2007 -- is no help: its 25 mA of Idss and -3.95 V pinch-off are
+        // outside the J201's own limits, -0.3 to -1.5 V.
 
         /** J201. Very low pinch-off, which lets it run from a 9 V rail with a
             small drain resistor -- the reason it turns up in so many pedal
-            preamps and "tube emulation" stages. */
+            preamps and "tube emulation" stages. InterFET: VTO -0.691, so Idss
+            0.39 mA (their measured typical; the J201 range is 0.2 to 1). */
         static JfetModel j201() noexcept
         {
             JfetModel m;
             m.channel = Channel::N;
-            m.threshold = -0.7;
-            m.beta = 1.2e-3;
-            m.lambda = 0.02;
+            m.threshold = -0.691;
+            m.beta = 787.0e-6;
+            m.lambda = 4.46e-3;
+            m.gateSaturationCurrent = 30.7e-15;
+            m.capGateSource = 2.50e-12;
+            m.capGateDrain = 2.50e-12;
             return m;
         }
 
-        /** 2N5457. The general-purpose small-signal N-channel JFET. */
+        /** 2N5457. The general-purpose small-signal N-channel JFET. InterFET:
+            VTO -1.25, Idss 1.6 mA, and a short channel -- lambda 0.031, so its
+            output resistance is a quarter of a J201's. */
         static JfetModel n2n5457() noexcept
         {
             JfetModel m;
             m.channel = Channel::N;
-            m.threshold = -1.5;
-            m.beta = 1.3e-3;
-            m.lambda = 0.02;
+            m.threshold = -1.25;
+            m.beta = 1.04e-3;
+            m.lambda = 30.8e-3;
+            m.gateSaturationCurrent = 95.6e-15;
+            m.capGateSource = 3.58e-12;
+            m.capGateDrain = 3.58e-12;
             return m;
         }
 
@@ -123,23 +159,33 @@ namespace CircuitComponents
         /** 2N5485. Higher pinch-off again, used where more headroom is wanted. */
         static JfetModel n2n5485() noexcept
         {
+            // InterFET's lower Idss grade, 2N5485-L (5 to 7.5 mA): VTO -2.16,
+            // Idss 5.5 mA. Their -H grade pinches off at -3.77 V.
             JfetModel m;
             m.channel = Channel::N;
-            m.threshold = -2.0;
-            m.beta = 1.5e-3;
-            m.lambda = 0.02;
+            m.threshold = -2.16;
+            m.beta = 1.17e-3;
+            m.lambda = 12.5e-3;
+            m.gateSaturationCurrent = 14.9e-15;
+            m.capGateSource = 2.30e-12;
+            m.capGateDrain = 2.30e-12;
             return m;
         }
 
         /** 2N5460, P-channel. Wire it as you would the N-channel part -- the
-            model flips the signs -- but remember the supply goes the other way. */
+            model flips the signs -- but remember the supply goes the other way.
+            InterFET's 2N5460-H, the grade they model (Idss 2 to 3 mA): VTO
+            -2.16, as SPICE writes a PJF's. */
         static JfetModel p2n5460() noexcept
         {
             JfetModel m;
             m.channel = Channel::P;
-            m.threshold = -1.5; // magnitude; the polarity sign handles direction
-            m.beta = 1.0e-3;
-            m.lambda = 0.02;
+            m.threshold = -2.16; // the SPICE sign; the polarity sign handles direction
+            m.beta = 517.0e-6;
+            m.lambda = 12.6e-3;
+            m.gateSaturationCurrent = 147.0e-15;
+            m.capGateSource = 5.32e-12;
+            m.capGateDrain = 5.32e-12;
             return m;
         }
     };
@@ -156,6 +202,7 @@ namespace CircuitComponents
 
         double vGateLast = 0.0;
         double vDrainLast = 0.0;
+        double vGateDrainLast = 0.0;
         double vCritGate = 0.0; // cached by Circuit
     };
 
@@ -177,12 +224,28 @@ namespace CircuitComponents
         // The gate is a p-n junction, so it gets the junction limiter. The drain
         // is a square law, which is mild enough for a plain step clamp.
         const double gate = limitJunctionVoltage(p * v[0], j.vGateLast, j.model.gateScaleVoltage(), j.vCritGate);
-        const double drain = std::clamp(p * v[1], j.vDrainLast - 20.0, j.vDrainLast + 20.0);
+        double drain = std::clamp(p * v[1], j.vDrainLast - 20.0, j.vDrainLast + 20.0);
+
+        // The gate meets the drain end of the channel through a junction too,
+        // and it is limited the way SPICE limits it: on Vgd, with the drain
+        // voltage then following from it. Only acts once the drain has been
+        // pulled below the gate far enough to forward-bias that junction.
+        //
+        // Only rewritten when the limiter moved it: gate - (gate - drain) is
+        // not drain to the last bit, and a drain that changed at all would
+        // read as a damped step and keep Newton from ever converging.
+        const double wantedGateDrain = gate - drain;
+        const double gateDrain = limitJunctionVoltage(wantedGateDrain, j.vGateDrainLast,
+                                                      j.model.gateScaleVoltage(), j.vCritGate);
+
+        if (std::abs(gateDrain - wantedGateDrain) > 0.0)
+            drain = gate - gateDrain;
 
         const bool acted = std::abs(gate - p * v[0]) > 0.0 || std::abs(drain - p * v[1]) > 0.0;
 
         j.vGateLast = gate;
         j.vDrainLast = drain;
+        j.vGateDrainLast = gateDrain;
         v[0] = p * gate;
         v[1] = p * drain;
         return acted;
@@ -245,9 +308,20 @@ namespace CircuitComponents
         evaluateJunction(vgs, model.gateSaturationCurrent, model.gateScaleVoltage(),
                          gateCurrent, gateConductance);
 
-        out.current[0] = p * gateCurrent;
-        out.jacobian[0] = gateConductance;
-        out.jacobian[1] = 0.0;
+        // And the same junction met from the drain end, which conducts when
+        // the drain is pulled below the gate -- a phaser's channel swung
+        // negative, or a stage driven hard enough to push its drain under its
+        // gate. The current runs gate to drain, which on these two ports is
+        // into the gate port and back out of the drain one. Leaving it out was
+        // 0.77 V wrong against ngspice with the drain 2 V under the gate.
+        double gateDrainCurrent = 0.0;
+        double gateDrainConductance = 0.0;
+        evaluateJunction(vgs - vds, model.gateSaturationCurrent, model.gateScaleVoltage(),
+                         gateDrainCurrent, gateDrainConductance);
+
+        out.current[0] = p * (gateCurrent + gateDrainCurrent);
+        out.jacobian[0] = gateConductance + gateDrainConductance;
+        out.jacobian[1] = -gateDrainConductance;
 
         // The channel, which is *symmetric*. A JFET has no built-in drain and
         // source: it is one channel with a gate over it, and whichever end sits
@@ -299,8 +373,8 @@ namespace CircuitComponents
             dIdVds = dFdA + dFdB;
         }
 
-        out.current[1] = p * (channelCurrent + gmin * vds);
-        out.jacobian[2] = dIdVgs;         // d(drain current) / d(Vgs)
-        out.jacobian[3] = dIdVds + gmin;  // d(drain current) / d(Vds)
+        out.current[1] = p * (channelCurrent - gateDrainCurrent + gmin * vds);
+        out.jacobian[2] = dIdVgs - gateDrainConductance;        // d(drain current) / d(Vgs)
+        out.jacobian[3] = dIdVds + gateDrainConductance + gmin; // d(drain current) / d(Vds)
     }
 } // namespace CircuitComponents

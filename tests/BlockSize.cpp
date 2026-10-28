@@ -46,9 +46,12 @@ TEST_CASE ("A block larger than the host declared is still processed correctly",
 
     for (const int factor : PluginProcessor::oversamplingFactors)
     {
+        // The factor first, then prepare: prepareToPlay swaps straight in, where
+        // changing the factor afterwards dips through silence, and the two
+        // renders below have to start from the same place.
         PluginProcessor plugin;
-        plugin.prepareToPlay (rate, declared);
         plugin.setOversamplingFactor (factor);
+        plugin.prepareToPlay (rate, declared);
 
         auto small = tone (2, 2048, rate);
         auto large = small;
@@ -56,7 +59,6 @@ TEST_CASE ("A block larger than the host declared is still processed correctly",
         render (plugin, small, declared);
 
         plugin.prepareToPlay (rate, declared);
-        plugin.setOversamplingFactor (factor);
         render (plugin, large, 2048);        // four times what it was told
 
         // Past the settling transient, the two have to agree: the same circuit

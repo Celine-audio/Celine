@@ -322,11 +322,10 @@ struct MidHumpOverdrive
     /** All three run 0 to 1. */
     void setControls(float tone, float drive, float level);
 
-    /** Swaps both clipping diodes. Silicon is stock; the LEDs clip later and
-        much more gradually. Call before prepare(), or call prepare() again. */
-    void setClippingDiodes(const Circuit::DiodeModel& model);
 };
 
-MidHumpOverdrive makeMidHumpOverdrive();
+/** Builds the overdrive with the given clipping pair. Silicon (the 1N4148) is
+    stock; the LEDs clip later and more gradually. */
+MidHumpOverdrive makeMidHumpOverdrive(const Circuit::DiodeModel& clippers = Circuit::DiodeModel::d1n4148());
 
 } // namespace Circuits

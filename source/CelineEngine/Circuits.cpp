@@ -78,7 +78,7 @@ ToneStack makeClassicToneStack(float bass, float mid, float treble)
 Circuit makeDiodeClipper()
 {
     // Edit these to change the sound.
-    //   diode        -- silicon() / germanium() / schottky() / led(), in order of
+    //   diode        -- schottky() / germanium() / silicon() / led(), in order of
     //                   increasing forward voltage, so increasing clean headroom
     //                   before the stage starts clipping.
     //   seriesCount  -- diodes stacked per side. Give the two sides different
@@ -450,16 +450,17 @@ void MidHumpOverdrive::setControls(float tone, float drive, float level)
     levelPot.setPosition(circuit, level);
 }
 
-void MidHumpOverdrive::setClippingDiodes(const Circuit::DiodeModel& model)
-{
-    circuit.setDiodeModel(clipperUp, model);
-    circuit.setDiodeModel(clipperDown, model);
-}
-
-MidHumpOverdrive makeMidHumpOverdrive()
+MidHumpOverdrive makeMidHumpOverdrive(const Circuit::DiodeModel& clippers)
 {
     MidHumpOverdrive result;
     auto& circuit = result.circuit;
+
+    // Without the slew stage, because the plugin would not fit one: an NE5532
+    // cannot slew at any rate the plugin runs, so the builder gives it the
+    // linear input (OpAmpModel::slewsAt), and this circuit stands in for what
+    // the plugin runs -- the benchmarks time it as such.
+    auto ne5532 = Circuit::OpAmpModel::ne5532().withRails(9, 0);
+    ne5532.slewRate = 0.0;
 
     // V1 -- the 4.5 V bias rail
     circuit.addVoltageSource("n011", "gnd", 4.5);
@@ -473,15 +474,14 @@ MidHumpOverdrive makeMidHumpOverdrive()
     circuit.addCapacitor("n008", "n005", 1e-6);
     // U1 -- the gain stage. Swap ne5532() for jrc4558() to hear the part the
     // pedal actually shipped with; everything else stays put.
-    circuit.addOpAmp("U1", "n010", "n003", "n001",
-                     Circuit::OpAmpModel::ne5532().withRails(9, 0));
+    circuit.addOpAmp("U1", "n010", "n003", "n001", ne5532);
     // Cc
     circuit.addCapacitor("n001", "n003", 51e-12);
     // D1, D2 -- the clipping pair, inside U1's feedback loop.
     // Swap both for redLed() / greenLed() / blueLed() to raise the clipping
     // threshold and soften the knee, which is the commonest mod to this circuit.
-    result.clipperUp = circuit.addDiode("n001", "n003", Circuit::DiodeModel::d1n4148());
-    result.clipperDown = circuit.addDiode("n003", "n001", Circuit::DiodeModel::d1n4148());
+    result.clipperUp = circuit.addDiode("n001", "n003", clippers);
+    result.clipperDown = circuit.addDiode("n003", "n001", clippers);
     // R2
     circuit.addResistor("n003", "p001", 4700);
     // Cz
@@ -491,8 +491,7 @@ MidHumpOverdrive makeMidHumpOverdrive()
     // R5
     circuit.addResistor("n001", "n009", 1000);
     // U2 -- the tone stage.
-    circuit.addOpAmp("U2", "n009", "n004", "n005",
-                     Circuit::OpAmpModel::ne5532().withRails(9, 0));
+    circuit.addOpAmp("U2", "n009", "n004", "n005", ne5532);
     // R8
     circuit.addResistor("n005", "n004", 1000);
     // C2

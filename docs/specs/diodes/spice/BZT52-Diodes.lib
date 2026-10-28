@@ -1,0 +1,21 @@
+* Diodes Incorporated Zener SPICE models (diodes.com Zener-Diodes.spice.txt collection), provided AS IS.
+*SRC=BZT52C5V1;DI_BZT52C5V1;Diodes;Zener <=10V; 5.10V  0.500W   Diodes Inc.
+.SUBCKT DI_BZT52C5V1  1 2
+*        Terminals    A   K
+D1 1 2 DF
+DZ 3 1 DR
+VZ 2 3 2.77
+.MODEL DF D ( IS=40.4p RS=34.9 N=1.10
++ CJO=145p VJ=0.750 M=0.330 TT=50.1n )
+.MODEL DR D ( IS=8.08f RS=44.5 N=3.00)
+.ENDS
+*SRC=BZT52C9V1;DI_BZT52C9V1;Diodes;Zener <=10V; 9.10V  0.500W   Diodes Inc.
+.SUBCKT DI_BZT52C9V1  1 2
+*        Terminals    A   K
+D1 1 2 DF
+DZ 3 1 DR
+VZ 2 3 7.48
+.MODEL DF D ( IS=22.6p RS=33.3 N=1.10
++ CJO=35.3p VJ=0.750 M=0.330 TT=50.1n )
+.MODEL DR D ( IS=4.53f RS=3.45 N=2.23 )
+.ENDS

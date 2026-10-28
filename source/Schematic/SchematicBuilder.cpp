@@ -13,7 +13,7 @@ namespace SchematicModel
                 case 3: return Circuit::DiodeModel::redLed();
                 case 4: return Circuit::DiodeModel::greenLed();
                 case 5: return Circuit::DiodeModel::blueLed();
-                case 6: return Circuit::DiodeModel::zener(9.0);
+                case 6: return Circuit::DiodeModel::zener(9.1);
                 case 7: return Circuit::DiodeModel::zener(5.1);
 
                 // Listed separately because it is a part people look for by
@@ -130,6 +130,14 @@ namespace SchematicModel
         {
             if (! options.transistorJunctionCapacitance)
                 model.junctionCapacitance = 0.0;
+
+            return model;
+        }
+
+        Circuit::JfetModel withOptions(Circuit::JfetModel model, const BuildOptions& options)
+        {
+            if (! options.transistorJunctionCapacitance)
+                model.capGateSource = model.capGateDrain = 0.0;
 
             return model;
         }
@@ -390,9 +398,17 @@ namespace SchematicModel
                     result.add(Severity::Error, "Part has no value.", {}, &element);
                     ++unset;
                 }
-                else if (element.hasSecondValue() && element.valueB <= 0.0)
+                else if (element.hasSecondValue() && ! element.isSecondValueRail() && element.valueB <= 0.0)
                 {
                     result.add(Severity::Error, "Part is missing a value.", {}, &element);
+                    ++unset;
+                }
+                else if (element.isSecondValueRail() && element.valueB > 0.0)
+                {
+                    // The inspector cannot enter one -- it takes what is typed
+                    // as a size below ground -- but a file can carry anything,
+                    // and a "negative" rail above ground is not a circuit.
+                    result.add(Severity::Error, "Negative supply is above ground.", {}, &element);
                     ++unset;
                 }
                 else if (element.type == ElementType::Node && element.label.trim().isEmpty())
@@ -410,6 +426,50 @@ namespace SchematicModel
             if (unset > 0)
                 return juce::String(unset) + (unset == 1 ? " part has" : " parts have")
                      + " no value yet.";
+
+            // A supply an amplifier's model cannot run on. Below it the two clamp
+            // diodes overlap, both conduct at rest, and the output sits at one
+            // level whatever goes in -- which builds, solves and plays, so without
+            // this it reads as a broken circuit rather than a starved part. The
+            // limit is the model's, not the datasheet's: starving a part is a
+            // sound worth having, right down to where the model stops meaning
+            // anything.
+            int starved = 0;
+
+            for (const auto& element : schematic.getElements())
+            {
+                double range = 1.0;
+
+                if (element.type == ElementType::OpAmp && element.modelIndex != idealOpAmpIndex)
+                    range = opAmpModelFor(element.modelIndex).withRails(element.value, element.valueB).outputRange();
+                else if (element.type == ElementType::PowerAmp)
+                    range = Circuit::PowerAmpModel::lm386().withSupply(element.value).outputRange();
+
+                if (range > 0.0)
+                    continue;
+
+                const auto models = getModelChoices(element.type);
+                const auto name = juce::isPositiveAndBelow(element.modelIndex, models.size())
+                                    ? models[element.modelIndex]
+                                    : juce::String("part");
+
+                // What it needs is a span between its rails, which for a single
+                // supply is just the supply. Only a rail counts as the bottom
+                // one: the LM386's second value is not a rail and is not set.
+                const double bottom = element.isSecondValueRail() ? element.valueB : 0.0;
+                const double needed = element.value - bottom - range;
+
+                result.add(Severity::Error,
+                           "Supply too low for the " + name + ": it needs more than "
+                               + juce::String(needed, 1)
+                               + (bottom < 0.0 ? " V between its two supplies." : " V."),
+                           {}, &element);
+                ++starved;
+            }
+
+            if (starved > 0)
+                return juce::String(starved) + (starved == 1 ? " amplifier has" : " amplifiers have")
+                     + " too low a supply to run.";
 
             return {};
         }
@@ -638,8 +698,8 @@ namespace SchematicModel
             a terminal has already named its net, an annotation has no pins, and
             a scope must not change the node it watches. */
         void addElement(Circuit& circuit, const Element& element, const PinNets& net,
-                        const BuildOptions& options, std::vector<LiveControl>& controls,
-                        int& potOrdinal, int& switchOrdinal)
+                        const BuildOptions& options, double sampleRate,
+                        std::vector<LiveControl>& controls, int& potOrdinal, int& switchOrdinal)
         {
             switch (element.type)
             {
@@ -684,7 +744,7 @@ namespace SchematicModel
                     break;
 
                 case ElementType::Jfet:
-                    circuit.addJfet(net(0), net(1), net(2), jfetModelFor(element.modelIndex));
+                    circuit.addJfet(net(0), net(1), net(2), withOptions(jfetModelFor(element.modelIndex), options));
                     break;
 
                 case ElementType::Mosfet:
@@ -723,8 +783,19 @@ namespace SchematicModel
                     else
                     {
                         // The name must be unique on the sheet; the element id is.
-                        circuit.addOpAmp("U" + juce::String(element.id), net(0), net(1), net(2),
-                                         opAmpModelFor(element.modelIndex).withRails(element.value, 0.0));
+                        auto model = opAmpModelFor(element.modelIndex).withRails(element.value, element.valueB);
+
+                        // A part too fast to slew at the rate this circuit runs
+                        // at gets the linear input stage it had before -- not as
+                        // an approximation, but because its tail current can
+                        // carry the output across its whole swing inside one
+                        // sample, so the limit never binds. It saves the pair's
+                        // two Newton ports, which were 60% of the CPU on a
+                        // two-op-amp pedal. See OpAmpModel::slewsAt().
+                        if (! model.slewsAt(sampleRate))
+                            model.slewRate = 0.0;
+
+                        circuit.addOpAmp("U" + juce::String(element.id), net(0), net(1), net(2), model);
                     }
 
                     break;
@@ -847,7 +918,7 @@ namespace SchematicModel
             int potOrdinal = 1, switchOrdinal = 1;
 
             for (size_t e = 0; e < elements.size(); ++e)
-                addElement(*circuit, elements[e], PinNets{nets, e}, options,
+                addElement(*circuit, elements[e], PinNets{nets, e}, options, sampleRate,
                            controls, potOrdinal, switchOrdinal);
 
             circuit->setPortVoltagePrediction(options.predictNewtonSeed);
