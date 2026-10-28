@@ -1979,7 +1979,11 @@ TEST_CASE("An amplifier with too low a supply is refused by name", "[plugin][sch
     {
         INFO(getElementInfo(type).name);
 
-        const auto [starved, id] = stage(type, 2.0);
+        // Not a structured binding: a lambda may not capture one under the
+        // Linux CI compiler, and the id is needed inside the predicate below.
+        const auto built = stage(type, 2.0);
+        const auto& starved = built.first;
+        const int id = built.second;
         CHECK_FALSE(starved.isValid());
 
         const auto named = std::find_if(starved.diagnostics.begin(), starved.diagnostics.end(),
