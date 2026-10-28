@@ -77,9 +77,23 @@ jobs:
           body: |
             Built from `${{ github.ref_name }}`.
 
-            Available for macOS, Windows, and Linux in VST3, LV2 and CLAP formats, plus AU on macOS and AAX on macOS and Windows.
+            ---
+            
+            ### Changelog
+
+            FEATURES:
+            -
+            
+            IMPROVEMENTS:
+            -
+            
+            QOL:
+            -
+
+            ---
+
+            Available for macOS, Windows, and Linux in VST3, LV2 and CLAP formats, plus AU on macOS.
             These builds are not code signed. macOS will warn the app is from an unidentified developer. Windows SmartScreen will warn on first run.
-            The AAX build is still waiting for approval from AVID, so it will not work in consumer versions as of now.
             
             To remove the quarantine attribute from a file or app on macOS, use the following command on all the files you wish to install.
             ```bash
