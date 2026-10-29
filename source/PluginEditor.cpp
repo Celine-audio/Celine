@@ -2034,7 +2034,7 @@ void PluginEditor::layOutFloatingPanels()
                          inspectorWidth, inspectorHeight);
 
     //--------------------------------------------------------------------------
-    // The console, along the bottom, as big as its messages -- centred on the
+    // The console, along the top, as big as its messages -- centred on the
     // sheet as the design has it when the panels leave room for that, otherwise
     // in the space between them.
     {
@@ -2051,7 +2051,9 @@ void PluginEditor::layOutFloatingPanels()
         const int halfRoom = juce::jmin (centre - span.getX(), span.getRight() - centre);
         const int x = width <= 2 * halfRoom ? centre - width / 2 : span.getCentreX() - width / 2;
 
-        console.setBounds (x, room.getBottom() - height, width, height);
+        // At the top of the sheet between the two panels; under the palette only
+        // in the fallback, where there is no room between them.
+        console.setBounds (x, consoleBetween ? room.getY() : room.getBottom() - height, width, height);
     }
 
     //--------------------------------------------------------------------------
