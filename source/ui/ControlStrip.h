@@ -63,6 +63,23 @@ namespace Celine
             smaller here and nowhere else. */
         static constexpr int preferredHeight = 92;
 
+        /** The air between the bar's rounded edge and the knobs inside it. */
+        static constexpr int padding = 6;
+
+        /** How wide the bar wants to be to show every control without
+            scrolling: the editor sizes it to this, centred, so the bar grows and
+            shrinks with the circuit. */
+        int getPreferredWidth() const noexcept
+        {
+            return static_cast<int>(widgets.size()) * cellWidth + 2 * padding;
+        }
+
+        /** True when the circuit has no controls, and so nothing to show. */
+        bool isEmpty() const noexcept { return widgets.empty(); }
+
+        /** Called after a refresh, so the editor can resize the bar to fit. */
+        std::function<void()> onContentChanged;
+
         /** Fixed rather than divided out of the available width -- that is the
             whole point of scrolling. */
         static constexpr int cellWidth = 69;

@@ -1472,13 +1472,15 @@ namespace Celine
 
         // Parts by initial, arming one for placing exactly as the palette does.
         // B is for box, R being the resistor; D is the diode, which is why the
-        // Delete tool is X.
+        // Delete tool is X. I and O are the input and output terminals.
         struct PartKey { juce::juce_wchar key; ElementType type; };
 
         for (const auto& part : {PartKey{'r', ElementType::Resistor},
                                  PartKey{'c', ElementType::Capacitor},
                                  PartKey{'l', ElementType::Inductor},
                                  PartKey{'t', ElementType::Transistor},
+                                 PartKey{'i', ElementType::Input},
+                                 PartKey{'o', ElementType::Output},
                                  PartKey{'g', ElementType::Ground},
                                  PartKey{'d', ElementType::Diode},
                                  PartKey{'b', ElementType::Rectangle}})

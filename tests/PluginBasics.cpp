@@ -323,13 +323,13 @@ TEST_CASE ("Editor size rides with the session, not with a preset", "[plugin]")
 }
 
 
-TEST_CASE ("The window is never smaller than 1024 x 671", "[plugin]")
+TEST_CASE ("The window is never smaller than 1024 x 687", "[plugin]")
 {
     runWithinPluginEditor ([] (PluginProcessor& plugin) {
         auto* limits = plugin.getActiveEditor()->getConstrainer();
         REQUIRE (limits != nullptr);
         CHECK (limits->getMinimumWidth() == 1024);
-        CHECK (limits->getMinimumHeight() == 671);
+        CHECK (limits->getMinimumHeight() == 687);
     });
 
     // And a size remembered from before the floor rose opens at the floor
@@ -340,7 +340,7 @@ TEST_CASE ("The window is never smaller than 1024 x 671", "[plugin]")
 
     std::unique_ptr<juce::AudioProcessorEditor> editor (plugin.createEditor());
     CHECK (editor->getWidth() == 1024);
-    CHECK (editor->getHeight() == 671);
+    CHECK (editor->getHeight() == 687);
 }
 
 TEST_CASE ("The smallest window shows the whole palette", "[plugin][ui]")
@@ -378,7 +378,8 @@ TEST_CASE ("Resizing the editor gives every extra pixel to the canvas", "[plugin
 
         // The panels float over the sheet and the strip is a row of knobs, so
         // the sheet is the only part of the window worth growing -- and it runs
-        // edge to edge between the toolbar and the band.
+        // edge to edge from the toolbar to the bottom of the window, the band's
+        // bars floating over it.
         auto canvasBounds = [] (int width, int height)
         {
             // Read from the theme rather than restated. These were literals
@@ -387,9 +388,8 @@ TEST_CASE ("Resizing the editor gives every extra pixel to the canvas", "[plugin
             // Figma pass and the failure said "no child has these bounds" rather
             // than "the toolbar is a different height now".
             constexpr int toolbar = Celine::Theme::toolbarHeight;
-            constexpr int strip = Celine::ControlStrip::preferredHeight;
 
-            return juce::Rectangle<int> { 0, toolbar, width, height - toolbar - strip };
+            return juce::Rectangle<int> { 0, toolbar, width, height - toolbar };
         };
 
         auto hasChildAt = [editor] (juce::Rectangle<int> bounds)
@@ -486,7 +486,7 @@ TEST_CASE ("The palette is two to a row, with every name fitted to its column", 
         }
     }
 
-    for (auto pair : { std::pair { "Transformer", "Transformer (CT)" }, std::pair { "MOSFE Transistor", "Diode" },
+    for (auto pair : { std::pair { "Transformer", "Transformer (CT)" }, std::pair { "MOSFE Transistor", "Scope" },
                        std::pair { "BJ Transistor", "JFE Transistor" } })
     {
         INFO (pair.first << " | " << pair.second);
@@ -653,14 +653,26 @@ TEST_CASE ("The floating panels sit on the sheet and clear of one another", "[pl
                 // The palette down the left, the inspector down the right.
                 CHECK (palette->getX() < inspector->getX());
 
-                // A palette with more rows than room runs all the way down, as
-                // far from the band as it is from the ruler -- no space held
-                // back under it for the console, which goes between the two.
+                // The band is three bars floating over the bottom of the sheet;
+                // the panels stay a margin above them, and are centred
+                // vertically in what is left -- the console goes between them,
+                // so nothing is held back under the palette.
                 const int margin = Celine::Theme::floatingMargin;
-                CHECK (palette->getY() - open.getY() == margin);
+                const int bandTop = canvas->getBottom() - margin - Celine::ControlStrip::preferredHeight;
+
+                for (auto* panel : { (juce::Component*) palette, (juce::Component*) inspector, (juce::Component*) console })
+                    CHECK (panel->getBottom() <= bandTop - margin);
+
+                const int above = palette->getY() - open.getY() - margin;
+                const int below = bandTop - margin - palette->getBottom();
+                CHECK (std::abs (above - below) <= 1);
+
+                const int inspectorAbove = inspector->getY() - open.getY() - margin;
+                const int inspectorBelow = bandTop - margin - inspector->getBottom();
+                CHECK (std::abs (inspectorAbove - inspectorBelow) <= 1);
 
                 if (palette->isScrolling())
-                    CHECK (canvas->getBottom() - palette->getBottom() == margin);
+                    CHECK (above == 0);
 
                 CHECK (console->getX() >= palette->getRight() + margin);
 

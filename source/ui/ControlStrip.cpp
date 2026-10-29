@@ -143,6 +143,9 @@ namespace Celine
 
         resized();
         repaint();
+
+        if (onContentChanged != nullptr)
+            onContentChanged();
     }
 
     void ControlStrip::pushPositionFor(int elementId)
@@ -214,7 +217,10 @@ namespace Celine
         // The second of the two light surfaces -- see Theme.h. It painted nothing
         // before and let the editor's chrome show through, which was fine while
         // everything was one colour and wrong the moment it wasn't.
-        g.fillAll(Theme::panel());
+        // A floating bar like the other panels, so rounded, and drawn inside
+        // the strip rather than by the editor: the strip is the bar.
+        g.setColour(Theme::panel());
+        g.fillRoundedRectangle(getLocalBounds().toFloat(), Theme::bandCornerRadius);
     }
 
     juce::Rectangle<int> ControlStrip::layOutCell(juce::Rectangle<int> cell, juce::Label* label,
@@ -233,7 +239,7 @@ namespace Celine
 
     void ControlStrip::resized()
     {
-        viewport.setBounds(getLocalBounds());
+        viewport.setBounds(getLocalBounds().reduced(padding, 4));
 
         // Cells keep a usable width however many there are, and the scrollbar
         // appears only when they overflow -- which is why the content's height

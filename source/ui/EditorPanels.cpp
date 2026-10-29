@@ -22,17 +22,17 @@ namespace Celine
         constexpr ElementType paletteOrder[] = {
             /* Wire */                  ElementType::Ground,
             ElementType::Input,         ElementType::Output,
-            ElementType::Capacitor,     ElementType::Resistor,
-            ElementType::Switch,        ElementType::Inductor,
-            ElementType::Spdt,          ElementType::Potentiometer,
-            ElementType::VacuumDiode,   ElementType::VoltageSource,
-            ElementType::Transformer,   ElementType::CenterTapTransformer,
-            ElementType::Transistor,    ElementType::Jfet,
-            ElementType::Mosfet,        ElementType::Diode,
-            ElementType::Triode,        ElementType::Pentode,
+            ElementType::Node,          ElementType::VoltageSource,
+            ElementType::Resistor,      ElementType::Potentiometer,
+            ElementType::Capacitor,     ElementType::Inductor,
+            ElementType::Switch,        ElementType::Spdt,
+            ElementType::Diode,         ElementType::VacuumDiode,
             ElementType::OpAmp,         ElementType::PowerAmp,
-            ElementType::Text,          ElementType::Rectangle,
-            ElementType::Scope,         ElementType::Node,
+            ElementType::Transistor,    ElementType::Jfet,
+            ElementType::Mosfet,        ElementType::Scope,
+            ElementType::Triode,        ElementType::Pentode,
+            ElementType::Transformer,   ElementType::CenterTapTransformer,
+            ElementType::Rectangle,     ElementType::Text,
         };
 
         constexpr int paletteCount = static_cast<int>(std::size(paletteOrder));
@@ -752,7 +752,9 @@ namespace Celine
                             "X  delete tool\n"
                             "F  fit to screen\n\n"
                             "W  wire\n"
-                            "G  ground\n\n"
+                            "G  ground\n"
+                            "I  input\n"
+                            "O  output\n\n"
                             "R  resistor\n"
                             "C  capacitor\n"
                             "L  inductor\n"

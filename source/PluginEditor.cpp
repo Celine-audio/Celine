@@ -392,6 +392,10 @@ void PluginEditor::buildPanels()
 
 void PluginEditor::buildBottomBand()
 {
+    // First, so the knobs and captions added below sit in front of their bars.
+    addAndMakeVisible (inputBar);
+    addAndMakeVisible (outputBar);
+
     inputSlider.setTooltip ("Input level");
     outputSlider.setTooltip ("Output level");
 
@@ -419,6 +423,9 @@ void PluginEditor::buildBottomBand()
     addAndMakeVisible (channelModeBox);
 
     addAndMakeVisible (controlStrip);
+
+    // A different number of controls is a different width of bar.
+    controlStrip.onContentChanged = [this] { resized(); };
 
     // The strip owns the widgets and the parameters; what a moved control means
     // for the drawing is the editor's business, since it owns the sheet.
@@ -1777,21 +1784,6 @@ void PluginEditor::paint (juce::Graphics& g)
     // drawWithin centres the artwork's *viewBox*, and the wordmark's ink is not
     // centred in its own -- there is far more empty space above the glyphs than
     // below. Placed off getDrawableBounds() instead, or it sits visibly high.
-    // The bottom band. Painted by the editor because it is wider than the
-    // ControlStrip child that sits in the middle of it -- see controlBandBounds.
-    if (! controlBandBounds.isEmpty())
-    {
-        g.setColour (Celine::Theme::panel());
-        g.fillRect (controlBandBounds);
-
-        // The two section rules, in the panel's ink taken right down, so they
-        // follow a theme and stay quieter than anything they divide.
-        g.setColour (Celine::Theme::textOnPanel().withAlpha (0.18f));
-
-        for (const auto& line : bandDividers)
-            g.drawLine (line, 1.0f);
-    }
-
     // The shared housing for undo and redo, with the divider the design puts
     // between them. Drawn here rather than by either button, because it belongs
     // to the pair and not to one of them.
@@ -1928,46 +1920,39 @@ void PluginEditor::layOutToolbar (juce::Rectangle<int>& area)
 
 void PluginEditor::layOutPanels (juce::Rectangle<int> area)
 {
-    controlBandBounds = area.removeFromBottom (Celine::ControlStrip::preferredHeight);
-    auto strip = controlBandBounds.reduced (6, 4);
+    using Strip = Celine::ControlStrip;
+    constexpr int margin = Celine::Theme::floatingMargin;
+
+    // The sheet takes everything below the toolbar, edge to edge. The band is
+    // three bars floating over its bottom edge, as the panels float over the rest.
+    canvas.setBounds (area);
+
+    auto row = area.withTrimmedLeft (Celine::SchematicCanvas::leftRulerThickness)
+                   .reduced (margin)
+                   .removeFromBottom (Strip::preferredHeight);
+    bandTop = row.getY();
 
     // Caption over control, in the strip's own proportions -- see
     // ControlStrip::layOutCell, which the drawn knobs go through, so the fixed
     // pair and the circuit's own knobs sit on one baseline.
-    using Strip = Celine::ControlStrip;
-
     auto placeKnob = [] (juce::Rectangle<int> cell, juce::Slider& knob, juce::Label& label)
     {
         knob.setBounds (Strip::layOutCell (cell, &label, Strip::knobSize + Strip::valueHeight)
                             .withSizeKeepingCentre (Strip::cellWidth - 4, Strip::knobSize + Strip::valueHeight));
     };
 
-    // INPUT hard left, VOLUME hard right, the circuit's own knobs between: it
-    // reads as signal flow, and bracketing the drawn controls says that neither
-    // is part of any circuit. One knob cell wide, as OUTPUT is at the other end --
-    // it used to be as wide as the palette that stood over it, which left the
-    // knob adrift in the middle of a column four times its size.
-    placeKnob (strip.removeFromLeft (Strip::cellWidth), inputSlider, inputLabel);
+    // INPUT on its own bar at the left, OUTPUT and the channel picker on theirs at
+    // the right: it reads as signal flow, and keeping them apart from the middle
+    // bar says that neither is part of any circuit.
+    // Each runs in from the window's edge; the knobs sit where they did.
+    const auto inputArea = row.removeFromLeft (Strip::cellWidth + 2 * Strip::padding);
+    inputBar.setBounds (inputArea.withLeft (area.getX()));
+    placeKnob (inputArea.reduced (Strip::padding, 4), inputSlider, inputLabel);
 
     constexpr int channelsWidth = Strip::comboWidth + 12;
-    auto fixed = strip.removeFromRight (Strip::cellWidth + channelsWidth);
-
-    // A thin rule either side of the circuit's own controls, each down the
-    // middle of a gap of its own: the strip paints its whole area, so a rule
-    // on its edge would be painted over. Inset top and bottom so it reads as a
-    // divider rather than as the edge of a box.
-    constexpr int dividerGap = 12;
-    constexpr float dividerInset = 14.0f;
-
-    auto divider = [&] (juce::Rectangle<int> gap)
-    {
-        const auto x = static_cast<float> (gap.getCentreX());
-        return juce::Line<float> (x, static_cast<float> (controlBandBounds.getY()) + dividerInset,
-                                  x, static_cast<float> (controlBandBounds.getBottom()) - dividerInset);
-    };
-
-    bandDividers[0] = divider (strip.removeFromLeft (dividerGap));
-    bandDividers[1] = divider (strip.removeFromRight (dividerGap));
+    const auto outputArea = row.removeFromRight (Strip::cellWidth + channelsWidth + 2 * Strip::padding);
+    outputBar.setBounds (outputArea.withRight (area.getRight()));
+    auto fixed = outputArea.reduced (Strip::padding, 4);
 
     channelModeBox.setBounds (
         Strip::layOutCell (fixed.removeFromRight (channelsWidth), &channelModeLabel,
@@ -1976,14 +1961,18 @@ void PluginEditor::layOutPanels (juce::Rectangle<int> area)
 
     placeKnob (fixed, outputSlider, outputLabel);
 
-    // Whatever is left in the middle. The strip lays its own knobs out, and
-    // scrolls them when there are more than fit.
-    controlStrip.setBounds (strip);
+    // The circuit's own controls: a bar exactly as wide as they are, centred on
+    // the window when there is room and between the two ends when there is not.
+    // It scrolls once there are more than fit. A circuit with no controls has
+    // no bar.
+    const auto between = row.reduced (margin, 0);
+    const int width = juce::jmin (controlStrip.getPreferredWidth(), between.getWidth());
+    const int centred = area.getCentreX() - width / 2;
+    const int x = juce::jlimit (between.getX(), juce::jmax (between.getX(), between.getRight() - width), centred);
 
-    //--------------------------------------------------------------------------
-    // The sheet takes everything between the toolbar and the band, edge to
-    // edge; the panels float over it.
-    canvas.setBounds (area);
+    controlStrip.setVisible (! controlStrip.isEmpty() && width > 0);
+    controlStrip.setBounds (x, row.getY(), juce::jmax (0, width), row.getHeight());
+
     layOutFloatingPanels();
 }
 
@@ -2005,7 +1994,8 @@ void PluginEditor::layOutFloatingPanels()
     // off the toolbar and the bottom band.
     const auto room = sheet.withTrimmedTop (Celine::SchematicCanvas::topRulerThickness)
                           .withTrimmedLeft (Celine::SchematicCanvas::leftRulerThickness)
-                          .reduced (margin);
+                          .reduced (margin)
+                          .withBottom (bandTop - margin);
 
     if (room.getWidth() <= 0 || room.getHeight() <= 0)
         return;
@@ -2032,11 +2022,16 @@ void PluginEditor::layOutFloatingPanels()
 
     const auto paletteSize = consoleBetween ? tallPalette
                                             : palette.getPreferredSize (room.getHeight() - margin - consoleLine);
-    palette.setBounds (room.getX(), room.getY(), juce::jmin (paletteSize.x, room.getWidth() / 2), paletteSize.y);
+    // Both centred vertically in the room they have -- the palette's less the
+    // console's line when the console has to go under it.
+    const int paletteRoom = consoleBetween ? room.getHeight() : room.getHeight() - margin - consoleLine;
+    palette.setBounds (room.getX(), room.getY() + juce::jmax (0, (paletteRoom - paletteSize.y) / 2),
+                       juce::jmin (paletteSize.x, room.getWidth() / 2), paletteSize.y);
 
     const int inspectorWidth = juce::jmin (wanted.x, column.getWidth());
-    inspector.setBounds (column.getRight() - inspectorWidth, column.getY(),
-                         inspectorWidth, juce::jmin (wanted.y, column.getHeight()));
+    const int inspectorHeight = juce::jmin (wanted.y, column.getHeight());
+    inspector.setBounds (column.getRight() - inspectorWidth, column.getY() + (column.getHeight() - inspectorHeight) / 2,
+                         inspectorWidth, inspectorHeight);
 
     //--------------------------------------------------------------------------
     // The console, along the bottom, as big as its messages -- centred on the
@@ -2064,7 +2059,7 @@ void PluginEditor::layOutFloatingPanels()
     // leave uncovered. Not the console: it comes and goes on its own.
     canvas.setFramingInsets ({ Celine::SchematicCanvas::topRulerThickness,
                                palette.getRight() - sheet.getX(),
-                               0,
+                               sheet.getBottom() - bandTop,
                                sheet.getRight() - inspector.getX() });
 }
 

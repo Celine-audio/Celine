@@ -25,7 +25,8 @@ namespace Celine
             Delete (X)   click a part or a wire to remove it
 
         A bare letter names a part and arms it for placing -- R resistor,
-        C capacitor, L inductor, T transistor, D diode, G ground, B box (the
+        C capacitor, L inductor, T transistor, D diode, G ground, I input,
+        O output, B box (the
         group rectangle, since R is already the resistor). Command turns a letter
         into an action on what is there: Cmd-R rotates, Cmd-F flips, either the
         part being placed or the selection.

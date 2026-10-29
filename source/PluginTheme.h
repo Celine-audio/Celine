@@ -164,3 +164,7 @@
         inline constexpr float paletteEntryCornerRadius = 4.0f;
         inline constexpr float inspectorCornerRadius = 24.0f;
         inline constexpr float consoleCornerRadius = 13.0f;
+
+        /** The bottom band's three floating bars: INPUT, the circuit's controls,
+            and OUTPUT with the channel picker. */
+        inline constexpr float bandCornerRadius = 13.0f;

@@ -116,16 +116,17 @@ private:
         constructor because resized() has to know it too -- it will not record a size
         below this as one worth reopening at.
 
-        1024 x 671 is the chosen floor. The height is the shortest window whose
+        1024 x 687 is the chosen floor. The height is the shortest window whose
         palette shows every row without scrolling -- its 469 px list, plus the
-        toolbar, the top ruler, the bottom band and a margin above and below -- and
+        toolbar, the top ruler, the floating bottom band with a margin under it, and a
+        margin above and below the palette -- and
         "The smallest window shows the whole palette" holds it to that. The width can
         still come out wider -- see narrowestWindow(), which is why it is a member
         rather than a constant -- if the panels ever need more than that to keep the
         console room between them. */
     int minimumWidth = 0;
     static constexpr int smallestWidth = 1024;
-    static constexpr int minimumHeight = 671;
+    static constexpr int minimumHeight = 687;
 
     /** The narrowest window in which the console fits between the palette and the
         inspector with every margin kept, so the palette can always run the full
@@ -313,17 +314,35 @@ private:
     /** Worked out in resized(), used in paint(). */
     juce::Rectangle<int> logoBounds;
 
-    /** The whole bottom band, one of the two light surfaces. ControlStrip
-        covers only its middle -- INPUT sits left, VOLUME and CHANNELS right, and
-        those are the editor's own children -- so the editor paints the band and
-        the strip paints its part of it. */
-    juce::Rectangle<int> controlBandBounds;
+    /** INPUT's bar and OUTPUT's, the two ends of the bottom band. Each runs in
+        from the window's edge, square there, and ends in rounded corners on its
+        inner side, like a tab pulled out of the frame. The circuit's own controls
+        are the third bar, ControlStrip, centred between them and sized to what
+        it holds. */
+    class BandBar : public juce::Component
+    {
+       public:
+        explicit BandBar (bool roundedOnLeft) : roundedLeft (roundedOnLeft) {}
 
-    /** The two rules in the bottom band, between INPUT and the circuit's own
-        controls and between those and OUTPUT. Worked out in resized(), drawn in
-        paint() -- by the editor rather than the strip, because each stands in a
-        gap the layout leaves beside the strip rather than on the strip itself. */
-    std::array<juce::Line<float>, 2> bandDividers;
+        void paint (juce::Graphics& g) override
+        {
+            const auto r = getLocalBounds().toFloat();
+            const float corner = Celine::Theme::bandCornerRadius;
+            juce::Path shape;
+            shape.addRoundedRectangle (r.getX(), r.getY(), r.getWidth(), r.getHeight(), corner, corner,
+                                       roundedLeft, ! roundedLeft, roundedLeft, ! roundedLeft);
+            g.setColour (Celine::Theme::panel());
+            g.fillPath (shape);
+        }
+
+       private:
+        const bool roundedLeft;
+    };
+
+    BandBar inputBar { false }, outputBar { true };
+
+    /** Where the band's bars start, for the panels above them to stay clear of. */
+    int bandTop = 0;
 
     /** Kept alive for the duration of an async file dialog. */
     std::unique_ptr<juce::FileChooser> fileChooser;
