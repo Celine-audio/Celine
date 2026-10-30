@@ -437,9 +437,16 @@ namespace Celine
             const bool selected = std::find(selectedWireIds.begin(), selectedWireIds.end(), wire.id)
                                != selectedWireIds.end();
 
+            // Round caps, so two wires meeting at a corner join in a
+            // rounded elbow rather than a notched square.
+            juce::Path segment;
+            segment.startNewSubPath(painter.toPixel(wire.a));
+            segment.lineTo(painter.toPixel(wire.b));
+
             g.setColour(selected ? Theme::selected() : Theme::wire());
-            g.drawLine(juce::Line<float>(painter.toPixel(wire.a), painter.toPixel(wire.b)),
-                       selected ? wireWidth * 1.8f : wireWidth);
+            g.strokePath(segment, juce::PathStrokeType(selected ? wireWidth * 1.8f : wireWidth,
+                                                       juce::PathStrokeType::curved,
+                                                       juce::PathStrokeType::rounded));
         }
 
         // Junction dots where the connection isn't obvious from the drawing.
@@ -537,10 +544,13 @@ namespace Celine
             g.setColour(Theme::wire().withAlpha(0.7f));
 
             const juce::Point<int> corner{wireEnd.x, wireStart.y};
-            g.drawLine(juce::Line<float>(painter.toPixel(wireStart), painter.toPixel(corner)),
-                       wireThickness());
-            g.drawLine(juce::Line<float>(painter.toPixel(corner), painter.toPixel(wireEnd)),
-                       wireThickness());
+            // One path, so the elbow is joined like a drawn wire's.
+            juce::Path path;
+            path.startNewSubPath(painter.toPixel(wireStart));
+            path.lineTo(painter.toPixel(corner));
+            path.lineTo(painter.toPixel(wireEnd));
+            g.strokePath(path, juce::PathStrokeType(wireThickness(), juce::PathStrokeType::curved,
+                                                    juce::PathStrokeType::rounded));
         }
 
         // Drawn last, over the drawing, and solid or dashed by which way it was
