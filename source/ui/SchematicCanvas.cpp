@@ -501,11 +501,25 @@ namespace Celine
             // available.
             if (isBox && selectedIds.size() == 1)
             {
-                const auto handle = painter.toPixel(bounds.getBottomRight());
-                const float size = juce::jmax(3.0f, grid * 0.45f);
+                // A bracket hugging the box's own rounded corner, the radius
+                // worked out as SchematicSymbols draws it, so the grip reads
+                // as that corner picked out rather than a square bolted on.
+                const auto frame = juce::Rectangle<float>(painter.toPixel(bounds.getTopLeft()),
+                                                          painter.toPixel(bounds.getBottomRight()));
+                const float radius = juce::jmin(grid * 0.7f, frame.getWidth() * 0.2f, frame.getHeight() * 0.2f);
+                const float arm = juce::jmin(radius + grid * 0.9f, frame.getWidth() * 0.5f, frame.getHeight() * 0.5f);
+                const auto corner = frame.getBottomRight();
+
+                juce::Path bracket;
+                bracket.startNewSubPath(corner.x, corner.y - arm);
+                bracket.lineTo(corner.x, corner.y - radius);
+                bracket.quadraticTo(corner.x, corner.y, corner.x - radius, corner.y);
+                bracket.lineTo(corner.x - arm, corner.y);
 
                 g.setColour(Theme::selected());
-                g.fillRect(juce::Rectangle<float>(size * 2.0f, size * 2.0f).withCentre(handle));
+                g.strokePath(bracket, juce::PathStrokeType(juce::jmax(2.5f, grid * 0.3f),
+                                                           juce::PathStrokeType::curved,
+                                                           juce::PathStrokeType::rounded));
             }
         }
 
