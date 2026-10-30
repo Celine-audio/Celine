@@ -51,10 +51,24 @@ namespace CelineEngine
             the solution. */
         void solveInPlace(double* rhs) const noexcept;
 
+        /** Factorises and solves in one pass, for a matrix that is used for a
+            single solve and then rebuilt -- a Newton iteration's Jacobian.
+
+            The right-hand side rides along with the elimination, so the forward
+            substitution happens inside the row operations rather than after
+            them, and none of what solveInPlace() needs for later solves is
+            built. Which is also why solveInPlace() must not be called after
+            this: the factorisation it would use is not there.
+
+            `rhs` (n elements) is overwritten with the solution. Returns false
+            if the matrix is singular. */
+        bool factoriseAndSolve(double* rhs) noexcept;
+
        private:
         int dimension = 0;
         std::vector<double> matrix;      // n x n, row-major; holds L and U after factorise()
         std::vector<int> rowSwaps;       // pivot row chosen at each elimination step
         std::vector<double> invDiagonal; // 1/U(k,k), so back substitution multiplies
+        std::vector<double> transposed;  // the factors again, column by column, for solveInPlace()
     };
 } // namespace CelineEngine

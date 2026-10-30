@@ -437,6 +437,8 @@ void Circuit::buildPortList()
     portResidual.assign(m, 0.0);
     portJacobian.assign(m * m, 0.0);
     portImpedance.assign(m * m, 0.0);
+    portImpedanceByColumn.assign(m * m, 0.0);
+    portJacobianColumn.assign(m, 0.0);
     portTransfer.assign(static_cast<size_t>(systemSize) * m, 0.0);
     portSolver.resize(portCount);
 
@@ -612,6 +614,7 @@ void Circuit::precomputeDkSystem()
                 k -= column[rb];
 
             portImpedance[static_cast<size_t>(p * portCount + q)] = k;
+            portImpedanceByColumn[static_cast<size_t>(q * portCount + p)] = k;
         }
     }
 }
@@ -734,38 +737,62 @@ bool Circuit::solveWithDk(double vIn) noexcept
         }
 
         // F(v) = v - vOpen + K i(v),  J = I + K di/dv
-        double* jacobian = portSolver.data();
-
+        //
+        // K i a column at a time: each port's current is spread over every
+        // residual at once, rather than each residual summing all the currents
+        // in turn -- the same sums in the same order, so the same answer to the
+        // bit, but without every multiply-add waiting on the one before it.
         for (int p = 0; p < portCount; ++p)
+            portResidual[static_cast<size_t>(p)] = portOpenVoltage[static_cast<size_t>(p)] - portVoltage[static_cast<size_t>(p)];
+
+        for (int q = 0; q < portCount; ++q)
         {
-            double residual = portVoltage[static_cast<size_t>(p)] - portOpenVoltage[static_cast<size_t>(p)];
+            const double current = portCurrent[static_cast<size_t>(q)];
+            if (current == 0.0)
+                continue;
 
-            for (int q = 0; q < portCount; ++q)
-                residual += portImpedance[static_cast<size_t>(p * portCount + q)]
-                          * portCurrent[static_cast<size_t>(q)];
-
-            // J = I + K * di/dv. di/dv is block diagonal, so column q only draws
-            // on the rows inside q's own device.
-            for (const auto& [firstPort, blockSize] : deviceBlocks)
-            {
-                for (int q = firstPort; q < firstPort + blockSize; ++q)
-                {
-                    double kg = 0.0;
-                    for (int r = firstPort; r < firstPort + blockSize; ++r)
-                        kg += portImpedance[static_cast<size_t>(p * portCount + r)]
-                            * portJacobian[static_cast<size_t>(r * portCount + q)];
-
-                    jacobian[p * portCount + q] = (p == q ? 1.0 : 0.0) + kg;
-                }
-            }
-
-            portResidual[static_cast<size_t>(p)] = -residual;
+            const double* column = portImpedanceByColumn.data() + static_cast<size_t>(q * portCount);
+            for (int p = 0; p < portCount; ++p)
+                portResidual[static_cast<size_t>(p)] -= column[p] * current;
         }
 
-        if (! portSolver.factorise())
-            return false;
+        // J = I + K * di/dv, a column at a time. di/dv is block diagonal, so
+        // column q only draws on K's columns for the ports inside q's own
+        // device -- two or three of them -- and each is a run down every row at
+        // once. Summed in the same order the row-at-a-time form used, so the
+        // same answer to the bit.
+        double* jacobian = portSolver.data();
+        double* column = portJacobianColumn.data();
+        const auto m = static_cast<size_t>(portCount);
 
-        portSolver.solveInPlace(portResidual.data());
+        for (const auto& [firstPort, blockSize] : deviceBlocks)
+        {
+            for (int q = firstPort; q < firstPort + blockSize; ++q)
+            {
+                std::fill(column, column + m, 0.0);
+
+                for (int r = firstPort; r < firstPort + blockSize; ++r)
+                {
+                    const double slope = portJacobian[static_cast<size_t>(r) * m + static_cast<size_t>(q)];
+                    if (slope == 0.0)
+                        continue;
+
+                    const double* impedance = portImpedanceByColumn.data() + static_cast<size_t>(r) * m;
+                    for (size_t p = 0; p < m; ++p)
+                        column[p] += impedance[p] * slope;
+                }
+
+                for (size_t p = 0; p < m; ++p)
+                    jacobian[p * m + static_cast<size_t>(q)] = column[p];
+
+                jacobian[static_cast<size_t>(q) * m + static_cast<size_t>(q)] += 1.0;
+            }
+        }
+
+        // Built for this one solve and rebuilt next iteration, so factorised and
+        // solved in one pass.
+        if (! portSolver.factoriseAndSolve(portResidual.data()))
+            return false;
 
         stepWasSmall = true;
         for (int p = 0; p < portCount; ++p)

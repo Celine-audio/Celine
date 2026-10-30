@@ -11,6 +11,7 @@ namespace CelineEngine
         matrix.assign(static_cast<size_t>(n * n), 0.0);
         rowSwaps.assign(static_cast<size_t>(n), 0);
         invDiagonal.assign(static_cast<size_t>(n), 0.0);
+        transposed.assign(static_cast<size_t>(n * n), 0.0);
     }
 
     bool DenseSolver::factorise() noexcept
@@ -68,13 +69,90 @@ namespace CelineEngine
             }
         }
 
+        // The substitutions below walk the factors a column at a time, so they
+        // want each column contiguous. Copied once here rather than built up
+        // during the elimination, because a later pivot swaps whole rows --
+        // the L entries already written included -- and only the finished
+        // factorisation says where everything ended up. O(n^2) against the
+        // elimination's O(n^3).
+        double* t = transposed.data();
+        for (int row = 0; row < n; ++row)
+            for (int col = 0; col < n; ++col)
+                t[col * n + row] = a[row * n + col];
+
+        return true;
+    }
+
+    bool DenseSolver::factoriseAndSolve(double* rhs) noexcept
+    {
+        const int n = dimension;
+        double* a = matrix.data();
+
+        // The same elimination as factorise(), pivot for pivot, with the
+        // right-hand side swapped and reduced alongside each row.
+        for (int k = 0; k < n; ++k)
+        {
+            int pivotRow = k;
+            double maxAbs = std::abs(a[k * n + k]);
+
+            for (int row = k + 1; row < n; ++row)
+            {
+                const double v = std::abs(a[row * n + k]);
+                if (v > maxAbs)
+                {
+                    maxAbs = v;
+                    pivotRow = row;
+                }
+            }
+
+            if (pivotRow != k)
+            {
+                std::swap_ranges(a + k * n + k, a + k * n + n, a + pivotRow * n + k);
+                std::swap(rhs[k], rhs[pivotRow]);
+            }
+
+            const double pivot = a[k * n + k];
+            if (std::abs(pivot) < 1.0e-300)
+                return false;
+
+            const double invPivot = 1.0 / pivot;
+            invDiagonal[static_cast<size_t>(k)] = invPivot;
+
+            for (int row = k + 1; row < n; ++row)
+            {
+                const double factor = a[row * n + k] * invPivot;
+                if (factor != 0.0)
+                {
+                    for (int col = k + 1; col < n; ++col)
+                        a[row * n + col] -= factor * a[k * n + col];
+
+                    rhs[row] -= factor * rhs[k];
+                }
+            }
+        }
+
+        // Back substitution a column at a time, as in solveInPlace(), though
+        // here the column is strided: copying U out to make it contiguous would
+        // cost as much as the substitution it speeds up. Each row is still
+        // independent of the others, which is what matters.
+        for (int col = n - 1; col >= 0; --col)
+        {
+            const double x = rhs[col] * invDiagonal[static_cast<size_t>(col)];
+            rhs[col] = x;
+            if (x == 0.0)
+                continue;
+
+            for (int row = 0; row < col; ++row)
+                rhs[row] -= a[row * n + col] * x;
+        }
+
         return true;
     }
 
     void DenseSolver::solveInPlace(double* rhs) const noexcept
     {
         const int n = dimension;
-        const double* a = matrix.data();
+        const double* t = transposed.data();
 
         // Apply the same row swaps the factorisation made.
         for (int k = 0; k < n; ++k)
@@ -84,13 +162,30 @@ namespace CelineEngine
                 std::swap(rhs[k], rhs[pivotRow]);
         }
 
+        // Both substitutions go a column at a time: once an unknown is known,
+        // its contribution is taken off every row still waiting on it. Written
+        // a row at a time instead -- a dot product per row -- every
+        // multiply-add waits on the one before it, and on a 19-port sheet that
+        // chain made this the single most expensive function in the engine.
+        // Column by column, the rows are independent and the inner loop
+        // vectorises, which is what the transposed copy is for.
+        //
+        // The forward pass subtracts in the same order as the row form did, so
+        // it is bit-identical to it. The back pass cannot be: its unknowns
+        // emerge last-first, so each row's terms are now taken off in the
+        // opposite order -- a difference in the last bits of a double, far
+        // below the Newton tolerance this feeds.
+
         // Forward substitution (L has an implicit unit diagonal).
-        for (int row = 1; row < n; ++row)
+        for (int col = 0; col < n - 1; ++col)
         {
-            double sum = rhs[row];
-            for (int col = 0; col < row; ++col)
-                sum -= a[row * n + col] * rhs[col];
-            rhs[row] = sum;
+            const double x = rhs[col];
+            if (x == 0.0)
+                continue;
+
+            const double* column = t + col * n;
+            for (int row = col + 1; row < n; ++row)
+                rhs[row] -= column[row] * x;
         }
 
         // Back substitution. Multiplying by the stored reciprocal rather than
@@ -98,12 +193,16 @@ namespace CelineEngine
         // rounded divide -- immaterial next to a solver whose convergence
         // tolerance is 1e-4 and whose result is rounded to float -- and saves n
         // divides on every solve, which for a linear circuit is every sample.
-        for (int row = n - 1; row >= 0; --row)
+        for (int col = n - 1; col >= 0; --col)
         {
-            double sum = rhs[row];
-            for (int col = row + 1; col < n; ++col)
-                sum -= a[row * n + col] * rhs[col];
-            rhs[row] = sum * invDiagonal[static_cast<size_t>(row)];
+            const double x = rhs[col] * invDiagonal[static_cast<size_t>(col)];
+            rhs[col] = x;
+            if (x == 0.0)
+                continue;
+
+            const double* column = t + col * n;
+            for (int row = 0; row < col; ++row)
+                rhs[row] -= column[row] * x;
         }
     }
 } // namespace CelineEngine

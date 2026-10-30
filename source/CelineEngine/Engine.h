@@ -808,12 +808,14 @@ class Circuit
     std::vector<double> portOpenVoltage; // vOpen -- port voltages with the devices removed
     std::vector<double> portJacobian;    // di/dv, block diagonal, stored m x m
     std::vector<double> portResidual;    // F(v)
+    std::vector<double> portJacobianColumn; // scratch: one column of J while it is built
 
     //==========================================================================
     // DK precomputation, valid until the linear system changes
     //==========================================================================
     std::vector<double> portTransfer;      // W = A^-1 N', n x m, column major
     std::vector<double> portImpedance;     // K = N W, m x m
+    std::vector<double> portImpedanceByColumn; // K again, column major, for the residual
     std::vector<double> linearSolution;    // z with the nonlinear devices removed
     CelineEngine::DenseSolver portSolver; // the m x m Newton system
 
