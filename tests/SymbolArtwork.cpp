@@ -322,21 +322,48 @@ TEST_CASE ("A diode's symbol follows its heading, not its name", "[artwork][gui]
     CHECK (distinct.size() == 4);
 }
 
-TEST_CASE ("Every symbol is kept whole, at its viewBox", "[artwork]")
+TEST_CASE ("Every symbol is drawn as authored, from its ink", "[artwork]")
 {
-    // Each file keeps its drawable and the viewBox it is rasterised into, in
-    // grid units, and still has its paths for bounds and hit testing.
+    // Every file becomes ink -- its fills and its strokes already outlined --
+    // which covers what the paths say the part covers, give or take the strokes'
+    // caps; and keeps its viewBox, in grid units, centred on the part.
+
     Element resistor;
     resistor.type = ElementType::Resistor;
     const auto* artwork = getSymbolArtwork (resistor);
     REQUIRE (artwork != nullptr);
-    CHECK (artwork->authored != nullptr);
     CHECK (artwork->viewBox == juce::Rectangle<float> (-6.0f, -6.0f, 12.0f, 12.0f));
     CHECK (! artwork->isEmpty());
+    REQUIRE (! artwork->ink.empty());
 
-    Element inductor;
-    inductor.type = ElementType::Inductor;
-    const auto* plain = getSymbolArtwork (inductor);
-    REQUIRE (plain != nullptr);
-    CHECK (plain->authored != nullptr);
+    // The body's fill-opacity of 0.07 survives as a faint run of its own, and the
+    // outline stays at full strength: a resistor is not drawn as a black slab.
+    bool faint = false, solid = false;
+    for (const auto& run : artwork->ink)
+    {
+        faint = faint || (run.alpha > 0.05f && run.alpha < 0.1f);
+        solid = solid || juce::approximatelyEqual (run.alpha, 1.0f);
+    }
+    CHECK (faint);
+    CHECK (solid);
+
+    for (int t = 0; t <= (int) ElementType::PowerAmp; ++t)
+    {
+        Element e;
+        e.type = (ElementType) t;
+        const auto* art = getSymbolArtwork (e);
+
+        if (art == nullptr)
+            continue;
+
+        INFO (getSymbolAssetName (e));
+        REQUIRE (! art->ink.empty());
+
+        juce::Rectangle<float> ink;
+        for (const auto& run : art->ink)
+            ink = ink.getUnion (run.path.getBounds());
+
+        CHECK (ink.expanded (0.2f).contains (art->bounds.reduced (0.2f)));
+        CHECK (art->bounds.expanded (0.2f).contains (ink));
+    }
 }

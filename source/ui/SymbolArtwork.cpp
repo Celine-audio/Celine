@@ -152,6 +152,106 @@ namespace Celine
                     collect(composite->getChild(i), out, here);
         }
 
+        /** What a group's opacity is, which JUCE keeps and will not say: a
+            DrawableComposite takes an opacity and has no getter for it. Measured
+            instead, once, by drawing the group alone in black, large enough that
+            its ink has fully covered pixels, and reading the deepest coverage --
+            which for black ink at full strength *is* the opacity. */
+        float measureOpacity(const juce::DrawableComposite& group)
+        {
+            const auto bounds = group.getDrawableBounds();
+
+            if (bounds.isEmpty())
+                return 1.0f;
+
+            // Thirty-two pixels to the SVG unit: a 1.2-unit line is then nearly
+            // forty pixels wide, with a solid core whatever the antialiasing.
+            const float scale = juce::jmin(32.0f, 512.0f / juce::jmax(bounds.getWidth(), bounds.getHeight()));
+            juce::Image probe(juce::Image::ARGB,
+                              juce::jmax(1, juce::roundToInt(bounds.getWidth() * scale) + 2),
+                              juce::jmax(1, juce::roundToInt(bounds.getHeight() * scale) + 2), true,
+                              juce::SoftwareImageType());
+            {
+                juce::Graphics g(probe);
+                group.draw(g, 1.0f, juce::AffineTransform::translation(-bounds.getX(), -bounds.getY())
+                                        .scaled(scale).translated(1.0f, 1.0f));
+            }
+
+            int deepest = 0;
+            const juce::Image::BitmapData pixels(probe, juce::Image::BitmapData::readOnly);
+
+            for (int y = 0; y < probe.getHeight(); ++y)
+                for (int x = 0; x < probe.getWidth(); ++x)
+                    deepest = juce::jmax(deepest, (int) pixels.getPixelColour(x, y).getAlpha());
+
+            return deepest > 0 ? (float) deepest / 255.0f : 1.0f;
+        }
+
+        /** How strongly a fill or stroke inks. `fill-opacity:0.07` arrives as
+            the colour's alpha, which is what FillType::getOpacity() reports for
+            a colour -- so it is that alone, not that times the alpha again. */
+        float strength(const juce::FillType& fill) noexcept
+        {
+            return fill.isInvisible() ? 0.0f : fill.getOpacity();
+        }
+
+        void addInk(SymbolArtwork& out, const juce::Path& path, float alpha)
+        {
+            // Next to whatever came just before at the same opacity, so a whole
+            // drawing at full strength is one path.
+            if (out.ink.empty() || ! juce::approximatelyEqual(out.ink.back().alpha, alpha))
+                out.ink.push_back({ {}, alpha });
+
+            out.ink.back().path.addPath(path);
+        }
+
+        /** Every fill and every stroke outline, in grid units, gathered by how
+            opaque it is. Strokes are outlined in their own coordinates and then
+            transformed, as SVG specifies -- so a stroke inside a group that is
+            squashed one way comes out squashed with it, as the file draws it. */
+        void collectInk(const juce::Drawable& drawable, SymbolArtwork& out,
+                        juce::AffineTransform accumulated, float alpha, bool isDocument)
+        {
+            const auto here = drawable.getDrawableTransform().followedBy(accumulated);
+
+            if (const auto* shape = dynamic_cast<const juce::DrawablePath*>(&drawable))
+            {
+                // The fill first and the stroke over it, as SVG paints them, each
+                // at its own strength: a body filled at 7% is outlined at 100%.
+                if (const auto fill = strength(shape->getFill()); fill > 0.0f)
+                {
+                    juce::Path ink(shape->getPath());
+                    ink.applyTransform(here);
+                    addInk(out, ink, alpha * fill);
+                }
+
+                if (const auto stroke = strength(shape->getStrokeFill());
+                    stroke > 0.0f && shape->getStrokeType().getStrokeThickness() > 0.0f)
+                {
+                    // Outlining flattens curves into straight runs, so the
+                    // precision is set by the closest anyone can look: 40 px to
+                    // the grid square on a 2x screen is 8 device pixels to the
+                    // SVG unit, and twenty times JUCE's default keeps a valve's
+                    // bulb within about a quarter of a pixel of round there. At
+                    // the default it was a visible thirteen-sided polygon.
+                    juce::Path outline;
+                    shape->getStrokeType().createStrokedPath(outline, shape->getPath(), {}, 20.0f);
+                    outline.applyTransform(here);
+                    addInk(out, outline, alpha * stroke);
+                }
+            }
+
+            if (const auto* composite = dynamic_cast<const juce::DrawableComposite*>(&drawable))
+            {
+                // Nested groups are where the parser puts an element's opacity;
+                // the document itself is drawn at full strength.
+                const float groupAlpha = isDocument ? alpha : alpha * measureOpacity(*composite);
+
+                for (int i = 0; i < composite->getNumChildren(); ++i)
+                    collectInk(composite->getChild(i), out, here, groupAlpha, false);
+            }
+        }
+
         /** The whole viewBox, in SVG units, or an empty rectangle if the file
             has none. */
         juce::Rectangle<float> viewBoxOf(const void* data, int size)
@@ -243,18 +343,15 @@ namespace Celine
                                                          : juce::Point<float>(-box.getWidth() * 0.5f,
                                                                               -box.getHeight() * 0.5f);
                         collect(*drawable, artwork, juce::AffineTransform::translation(shift.x, shift.y));
+                        collectInk(*drawable, artwork,
+                                   juce::AffineTransform::translation(shift.x, shift.y)
+                                       .scaled(1.0f / unitsPerGrid, 1.0f / unitsPerGrid),
+                                   1.0f, true);
 
-                        // Kept whole for the canvas to rasterise, when the file
-                        // draws. The viewBox is what it is drawn into,
-                        // centred on the part like the paths above.
+                        // Centred on the part like the paths above.
                         if (! box.isEmpty())
-                        {
                             artwork.viewBox = box.withPosition(-box.getWidth() * 0.5f, -box.getHeight() * 0.5f)
                                               / unitsPerGrid;
-
-                            if (! artwork.viewBox.isEmpty())
-                                artwork.authored = std::shared_ptr<const juce::Drawable>(drawable->createCopy());
-                        }
                     }
 
                 break;

@@ -65,15 +65,22 @@ namespace Celine
             box written out by hand in the element table would not. */
         juce::Rectangle<float> bounds;
 
-        /** The file kept whole, drawn **as authored**: fills, rounded corners,
-            line caps and joins and opacity. The canvas rasterises it and paints
-            the result in the part's colour. Every symbol is drawn this way; the
-            paths above are still extracted, for the bounds and the tests. Null
-            only for a file with no viewBox. */
-        std::shared_ptr<const juce::Drawable> authored;
-
-        /** The file's viewBox, in grid units: what `authored` is drawn into. */
+        /** The file's viewBox, in grid units, centred on the part. */
         juce::Rectangle<float> viewBox;
+
+        /** The artwork as the canvas paints it: every stroke already outlined at
+            its authored width, with its caps, joins and transform, and every fill
+            as it is, merged into one filled path per level of opacity, in grid
+            units about the part's centre. Painting a part is then a fill per run
+            and nothing else -- vector, so sharp at any zoom and nothing to redo
+            when the zoom changes. */
+        struct InkRun
+        {
+            juce::Path path;
+            float alpha = 1.0f;
+        };
+
+        std::vector<InkRun> ink;
 
         /** True when the file was missing or empty -- which is the one thing
             that must not be silent, since a part with no artwork is invisible
