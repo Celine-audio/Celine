@@ -101,7 +101,7 @@ The window is resizable and every pixel of a resize goes to the canvas: the pane
   Keyboard shortcuts match on the text character *or* the key code, because a real letter keypress carries the upper-case code while a `KeyPress` built from a character keeps whatever it was given.
 
   Note `Schematic::getElementBounds()` computes min/max by hand rather than with `Rectangle::getUnion`: a rectangle built from two identical points is zero-sized, JUCE counts that as empty, and `getUnion` returns the *other* operand when either side is empty — so unioning pin positions silently collapses to one pin. That made every part unclickable except exactly on a pin.
-- `modules/CelineEngine` - **the circuit simulator, in its own repository** (github.com/Celine-audio/CelineEngine), shared with Céline Player. Included by repository, `#include <CelineEngine/Engine.h>`, and built through `CelineEngine.cmake` exactly as CelineUI is. Its layout, the DK method, how to add a device, the stamping and solver rules and `LIMITATIONS.md` are all in **that repository's CLAUDE.md** — read it before touching the engine. The same two rules as the kit apply: work in the checkout beside the plugins, building with `-DCELINE_ENGINE_DIR=../CelineEngine`, never in `modules/CelineEngine`; and commit and push the engine before moving the submodule. The engine's tests stay here (`tests/CelineEngine.cpp`, `tests/ComponentModels.cpp`, `benchmarks/`), since some build drawn sheets, and so do the datasheets in `docs/specs/`.
+- `modules/CelineEngine` - **the circuit simulator, in its own repository** (github.com/Celine-audio/CelineEngine). Included by repository, `#include <CelineEngine/Engine.h>`, and built through `CelineEngine.cmake` exactly as CelineUI is. Its layout, the DK method, how to add a device, the stamping and solver rules and `LIMITATIONS.md` are all in **that repository's CLAUDE.md** — read it before touching the engine. The same two rules as the kit apply: work in the checkout beside the plugins, building with `-DCELINE_ENGINE_DIR=../CelineEngine`, never in `modules/CelineEngine`; and commit and push the engine before moving the submodule. The engine's tests stay here (`tests/CelineEngine.cpp`, `tests/ComponentModels.cpp`, `benchmarks/`), since some build drawn sheets, and so do the datasheets in `docs/specs/`.
 
 - `tests/` - Catch2 test files
 - `benchmarks/` - Catch2 benchmark files
@@ -275,7 +275,7 @@ the kit relies on.
 
 What is *not* shared is anything a plugin decides for itself: the roles it adds to the
 palette, the accessors and geometry in `PluginTheme.h`, its `PluginLookAndFeel` drawing,
-and everything under `source/Schematic/`. (The engine is shared too, but with Céline Player rather than with the whole house, and lives in its own repository.)
+and everything under `source/Schematic/`. (The engine lives in its own repository too, but it is Céline's rather than the house's.)
 
 **A tooltip is pinned to its control, not to the pointer**: bottom-left on the control's
 top-right corner, or below-right when there is no room above. That is the kit's

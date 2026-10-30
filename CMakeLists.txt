@@ -150,7 +150,7 @@ include("${CELINE_UI_DIR}/CelineUI.cmake")
 target_link_libraries(SharedCode INTERFACE CelineUI)
 
 # The circuit simulator lives in its own repository too,
-# github.com/Celine-audio/CelineEngine, shared with Céline Player. The same rule
+# github.com/Celine-audio/CelineEngine, so it can be maintained on its own. The same rule
 # as the kit: the submodule is what CI and a release build against, and
 # CELINE_ENGINE_DIR points at a checkout beside the plugins to work on it.
 set(CELINE_ENGINE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/modules/CelineEngine" CACHE PATH "The CelineEngine checkout to build against")
