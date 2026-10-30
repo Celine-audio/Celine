@@ -1,13 +1,6 @@
-<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
-<svg width="100%" height="100%" viewBox="0 0 120 120" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xml:space="preserve" xmlns:affinity="https://www.affinity.studio/" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linecap:round;">
-    <g transform="matrix(1,0,0,1,60,60)">
-        <path d="M0,-20L0,-12" style="fill:none;fill-rule:nonzero;stroke:black;stroke-width:1.2px;"/>
-    </g>
-    <g transform="matrix(1,0,0,1,60,60)">
-        <path d="M0,20L0,12" style="fill:none;fill-rule:nonzero;stroke:black;stroke-width:1.2px;"/>
-    </g>
-    <g transform="matrix(1,0,0,1,60,60)">
-        <path d="M4,-12C5.656,-12 7,-10.656 7,-9L7,9C7,10.656 5.656,12 4,12L-4,12C-5.656,12 -7,10.656 -7,9L-7,-9C-7,-10.656 -5.656,-12 -4,-12L4,-12Z" style="fill-opacity:0.07;stroke:black;stroke-width:1.2px;stroke-linecap:butt;stroke-linejoin:round;"/>
-    </g>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-60 -60 120 120" width="120" height="120">
+  <path d="M 0 -20 L 0 -12" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
+  <path d="M 0 20 L 0 12" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
+  <path d="M 4 -12 C 5.656 -12 7 -10.656 7 -9 L 7 9 C 7 10.656 5.656 12 4 12 L -4 12 C -5.656 12 -7 10.656 -7 9 L -7 -9 C -7 -10.656 -5.656 -12 -4 -12 L 4 -12 Z" fill="#000" fill-opacity="0.07" stroke="#000" stroke-width="1.2" stroke-linejoin="round"/>
 </svg>

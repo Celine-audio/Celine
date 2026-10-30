@@ -135,6 +135,18 @@ namespace Celine
 
                 const auto stroke = shape->getStrokeType().getStrokeThickness();
 
+                // A filled and stroked path comes back as one DrawablePath or
+                // as two, depending on its fill rule: the parser only merges
+                // the stroke into the fill when their paths compare equal, and
+                // an evenodd fill never equals the nonzero stroke. So split
+                // here, and a diode's triangle is a fill and an outline either way.
+                if (! shape->getFill().isInvisible() && stroke > 0.0f)
+                {
+                    auto fill = s;
+                    fill.filled = true;
+                    out.shapes.push_back(std::move(fill));
+                }
+
                 // No stroke means the path is a filled one -- a diode's
                 // triangle, an arrowhead, a contact dot.
                 s.filled = stroke <= 0.0f;

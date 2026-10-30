@@ -1,43 +1,16 @@
-<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
-<svg width="100%" height="100%" viewBox="0 0 120 120" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xml:space="preserve" xmlns:affinity="https://www.affinity.studio/" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linecap:round;">
-    <g transform="matrix(1,0,0,1,60,60)">
-        <path d="M-20,0L-6,0" style="fill:none;fill-rule:nonzero;stroke:black;stroke-width:1.2px;"/>
-    </g>
-    <g transform="matrix(1,0,0,1,60,60)">
-        <path d="M-6,-12L-6,12" style="fill:none;fill-rule:nonzero;stroke:black;stroke-width:1.8px;"/>
-    </g>
-    <g transform="matrix(1,0,0,1,60,60)">
-        <path d="M0,-15L0,-8" style="fill:none;fill-rule:nonzero;stroke:black;stroke-width:1.8px;"/>
-    </g>
-    <g transform="matrix(1,0,0,1,60,60)">
-        <path d="M0,-3.5L0,3.5" style="fill:none;fill-rule:nonzero;stroke:black;stroke-width:1.8px;"/>
-    </g>
-    <g transform="matrix(1,0,0,1,60,60)">
-        <path d="M0,8L0,15" style="fill:none;fill-rule:nonzero;stroke:black;stroke-width:1.8px;"/>
-    </g>
-    <g transform="matrix(1,0,0,1,60,60)">
-        <path d="M0,-11.5L20,-11.5L20,-20" style="fill:none;fill-rule:nonzero;stroke:black;stroke-width:1.2px;stroke-linejoin:round;"/>
-    </g>
-    <g transform="matrix(1,0,0,1,60,60)">
-        <path d="M0,11.5L20,11.5L20,20" style="fill:none;fill-rule:nonzero;stroke:black;stroke-width:1.2px;stroke-linejoin:round;"/>
-    </g>
-    <g transform="matrix(1,0,0,1,60,60)">
-        <path d="M0,0L20,0L20,11.5" style="fill:none;fill-rule:nonzero;stroke:black;stroke-width:1.2px;stroke-linejoin:round;"/>
-    </g>
-    <g transform="matrix(1,0,0,1,60,60)">
-        <path d="M12,0L6,-2.7L6,2.7L12,0Z" style="fill-rule:nonzero;stroke:black;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:round;stroke-miterlimit:2;"/>
-    </g>
-    <g transform="matrix(1,0,0,1,60,60)">
-        <path d="M20,-11.5L30,-11.5L30,-3" style="fill:none;fill-rule:nonzero;stroke:black;stroke-width:1.2px;stroke-linejoin:round;"/>
-    </g>
-    <g transform="matrix(1,0,0,1,60,60)">
-        <path d="M30,4L30,11.5L20,11.5" style="fill:none;fill-rule:nonzero;stroke:black;stroke-width:1.2px;stroke-linejoin:round;"/>
-    </g>
-    <g transform="matrix(1,0,0,1,60,60)">
-        <path d="M27,4L33,4" style="fill:none;fill-rule:nonzero;stroke:black;stroke-width:1.2px;"/>
-    </g>
-    <g transform="matrix(1,0,0,1,60,60)">
-        <path d="M30,4L27,-3L33,-3L30,4Z" style="fill-rule:nonzero;stroke:black;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:round;stroke-miterlimit:2;"/>
-    </g>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-60 -60 120 120" width="120" height="120">
+  <path d="M -20 0 L -6 0" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
+  <path d="M -6 -12 L -6 12" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round"/>
+  <path d="M 0 -15 L 0 -8" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round"/>
+  <path d="M 0 -3.5 L 0 3.5" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round"/>
+  <path d="M 0 8 L 0 15" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round"/>
+  <path d="M 0 -11.5 L 20 -11.5 L 20 -20" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 0 11.5 L 20 11.5 L 20 20" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 0 0 L 20 0 L 20 11.5" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 12 0 L 6 -2.7 L 6 2.7 L 12 0 Z" fill="#000" stroke="#000" stroke-width="1" stroke-linejoin="round"/>
+  <path d="M 20 -11.5 L 30 -11.5 L 30 -3" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 30 4 L 30 11.5 L 20 11.5" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 27 4 L 33 4" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
+  <path d="M 30 4 L 27 -3 L 33 -3 L 30 4 Z" fill="#000" stroke="#000" stroke-width="1" stroke-linejoin="round"/>
 </svg>

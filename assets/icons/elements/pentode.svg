@@ -1,21 +1,18 @@
-<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
-<svg width="100%" height="100%" viewBox="0 0 120 120" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xml:space="preserve" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linecap:round;stroke-linejoin:round;">
-    <g transform="matrix(1,0,0,1,60,60)" style="fill:none;stroke:black;stroke-width:1.2px;">
-        <!-- Envelope -->
-        <circle cx="0" cy="0" r="21"/>
-        <!-- Plate: lead and electrode -->
-        <path d="M0,-30L0,-16"/>
-        <path d="M-8.5,-16L8.5,-16" style="stroke-width:1.6px;"/>
-        <!-- Suppressor, screen and control grids, top to bottom -->
-        <path d="M-8.9,-10L-7.756,-10M-1.869,-10L1.619,-10M7.287,-10L9.25,-10"/>
-        <path d="M-8.9,0L-7.756,0M-1.869,0L1.619,0M7.287,0L9.25,0"/>
-        <path d="M-8.9,10L-7.756,10M-1.869,10L1.619,10M7.287,10L9.25,10"/>
-        <!-- Screen and control grid leads -->
-        <path d="M-30,0L-11.5,0"/>
-        <path d="M-30,10L-11.5,10"/>
-        <!-- Cathode lead, then the cathode, its corner and the suppressor strap as one stroke -->
-        <path d="M0,30L0,16"/>
-        <path d="M-8.5,16L8,16C10.209,16 12,14.209 12,12L12,-10"/>
-    </g>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-60 -60 120 120" width="120" height="120">
+  <!-- Envelope -->
+  <circle cx="0" cy="0" r="21" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Plate: lead and electrode -->
+  <path d="M 0 -30 L 0 -16" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M -8.5 -16 L 8.5 -16" fill="none" stroke="#000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Suppressor, screen and control grids, top to bottom -->
+  <path d="M -9 -10 L -6 -10 M -2 -10 L 2 -10 M 6 -10 L 9 -10" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M -9 0 L -6 0 M -2 0 L 2 0 M 6 0 L 9 0" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M -9 10 L -6 10 M -2 10 L 2 10 M 6 10 L 9 10" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Screen and control grid leads -->
+  <path d="M -30 0 L -11.5 0" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M -30 10 L -11.5 10" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Cathode lead, then the cathode, its corner and the suppressor strap as one stroke -->
+  <path d="M 0 30 L 0 16" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M -8.5 16 L 8 16 C 10.209 16 12 14.209 12 12 L 12 -10" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

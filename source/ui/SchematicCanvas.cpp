@@ -1397,6 +1397,13 @@ namespace Celine
         if (panning || event.mods.isPopupMenu())
             return;
 
+        // A sideways brush of a Magic Mouse or trackpad, and the tail of a
+        // scroll's momentum, arrive with no vertical travel. Read as "not
+        // forward", each one zoomed out a step, so the sheet backed off as the
+        // mouse moved.
+        if (wheel.deltaY == 0.0f)
+            return;
+
         // Zoom about the cursor. The *unrounded* position: toGrid() snaps, and
         // anchoring on a snapped point drifts the sheet up to half a square a
         // wheel step.
