@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../CelineEngine/Engine.h"
+#include <CelineEngine/Engine.h>
 #include "Schematic.h"
 
 #include <memory>

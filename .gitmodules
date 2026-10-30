@@ -14,3 +14,7 @@
 	path = modules/CelineUI
 	url = https://github.com/Celine-audio/CelineUI.git
 	branch = main
+[submodule "modules/CelineEngine"]
+	path = modules/CelineEngine
+	url = https://github.com/Celine-audio/CelineEngine.git
+	branch = main

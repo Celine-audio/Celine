@@ -149,6 +149,20 @@ endif ()
 include("${CELINE_UI_DIR}/CelineUI.cmake")
 target_link_libraries(SharedCode INTERFACE CelineUI)
 
+# The circuit simulator lives in its own repository too,
+# github.com/Celine-audio/CelineEngine, shared with Céline Player. The same rule
+# as the kit: the submodule is what CI and a release build against, and
+# CELINE_ENGINE_DIR points at a checkout beside the plugins to work on it.
+set(CELINE_ENGINE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/modules/CelineEngine" CACHE PATH "The CelineEngine checkout to build against")
+
+if (NOT EXISTS "${CELINE_ENGINE_DIR}/CelineEngine.cmake")
+    message(FATAL_ERROR "CelineEngine not found at ${CELINE_ENGINE_DIR}. "
+                        "Run: git submodule update --init --recursive")
+endif ()
+
+include("${CELINE_ENGINE_DIR}/CelineEngine.cmake")
+target_link_libraries(SharedCode INTERFACE CelineEngine)
+
 # Embeds everything in assets/ into the binary, but only if there is anything
 # there: juce_add_binary_data refuses an empty source list, and nothing is
 # embedded at the moment. Drop a file in assets/ and it comes back on its own.
