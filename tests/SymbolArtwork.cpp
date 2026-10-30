@@ -148,7 +148,8 @@ TEST_CASE ("Stroke weights survive the round trip through SVG", "[artwork][gui]"
 {
     // The schematic's line weight is a multiplier on the canvas's own stroke,
     // not a width baked into the file -- that is what keeps lines visible when
-    // the sheet is zoomed out. A capacitor's plates are the 1.3x case.
+    // the sheet is zoomed out. The house draws small lines at 1.2 and bigger
+    // elements at 1.6, so a capacitor's plates come back as 1.6 / 1.2.
     Element capacitor;
     capacitor.type = ElementType::Capacitor;
 
@@ -164,7 +165,7 @@ TEST_CASE ("Stroke weights survive the round trip through SVG", "[artwork][gui]"
             continue;
 
         sawNormal = sawNormal || std::abs (shape.strokeScale - 1.0f) < 0.02f;
-        sawHeavy = sawHeavy || std::abs (shape.strokeScale - 1.3f) < 0.02f;
+        sawHeavy = sawHeavy || std::abs (shape.strokeScale - 1.6f / 1.2f) < 0.02f;
     }
 
     CHECK (sawNormal);

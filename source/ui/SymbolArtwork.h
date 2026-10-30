@@ -26,10 +26,10 @@ namespace Celine
           the viewBox's *centre* is the part's centre, so an editor that
           writes `0 0 120 120` (Affinity does) lands in the same place.
         - **10 SVG units = 1 grid square.** A pin at grid (0,-2) is at (0,-20).
-        - stroke-width `1.2` is the schematic's normal line weight. Heavier
-          strokes are multiples of it: 1.56 is the 1.3x used for capacitor
-          plates and valve electrodes, 1.8 the 1.5x used for a transistor's base
-          bar.
+        - stroke-width `1.2` is the schematic's normal line weight, for small
+          lines, and `1.6` the weight for bigger elements -- capacitor plates,
+          valve electrodes, a transistor's base bar. Any other width works too:
+          it is read back as a multiple of 1.2.
         - colour is ignored. Everything is recoloured by the canvas, so a
           selected part can go orange and a ghost can go translucent.
 
@@ -51,8 +51,8 @@ namespace Celine
                 arrowhead, a switch contact. Everything else is stroked. */
             bool filled = false;
 
-            /** Authored stroke width over the 1.2 baseline, so 1.3 comes back
-                out of a stroke-width of 1.56. Multiplied into the canvas's own
+            /** Authored stroke width over the 1.2 baseline, so 1.33 comes back
+                out of a stroke-width of 1.6. Multiplied into the canvas's own
                 line weight rather than scaled by the view transform. */
             float strokeScale = 1.0f;
         };
