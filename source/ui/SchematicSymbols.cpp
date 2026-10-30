@@ -463,6 +463,117 @@ namespace Celine
 
     namespace
     {
+        //======================================================================
+        /** Authored artwork, rasterised: one coverage mask per artwork per zoom.
+
+            A mask rather than a picture because a part's colour is the theme's
+            (and the selection's, and the ghost's), not the file's: the mask
+            says where the ink is and how opaque, and the colour is supplied when
+            it is drawn. So a file can use fills, rounded corners, round caps and
+            opacity, and still follow a theme.
+
+            A DeletedAtShutdown, as the artwork cache is, so the images are freed
+            before the leak detector counts them. Message thread only, like all
+            painting. */
+        struct AuthoredRasterCache final : public juce::DeletedAtShutdown
+        {
+            ~AuthoredRasterCache() override { instance = nullptr; }
+
+            struct Entry
+            {
+                const SymbolArtwork* artwork = nullptr;
+                int scaleKey = 0;
+                int orientation = 0;
+                bool mirrored = false;
+                juce::Image mask;
+
+                /** Where the mask's top-left sits, in device pixels from the
+                    part's centre. */
+                juce::Point<int> offset;
+            };
+
+            /** Most recently used last. A sheet shows a few dozen kinds of part,
+                in up to eight orientations, at one zoom, and a zoom gesture
+                walks through a few scales before it settles. */
+            std::vector<Entry> entries;
+            static constexpr size_t capacity = 192;
+
+            static AuthoredRasterCache* instance;
+        };
+
+        AuthoredRasterCache* AuthoredRasterCache::instance = nullptr;
+
+        /** The mask for `artwork` at `pixelsPerGrid` device pixels to the grid
+            square, turned and mirrored as the part is, made on first use.
+
+            Two things keep painting it cheap, and both matter: it covers only
+            the ink, not the viewBox (a resistor is a sliver of its 12-square
+            frame, and compositing the empty rest cost ~20x the stroked paths),
+            and the orientation is baked in, so drawing it is a copy at a pixel
+            offset rather than a resample through a rotation. The scale is keyed
+            to a sixty-fourth of a pixel, so it lands on the device's grid. */
+        const AuthoredRasterCache::Entry& rasterFor(const SymbolArtwork& artwork, float pixelsPerGrid,
+                                                    int orientation, bool mirrored)
+        {
+            if (AuthoredRasterCache::instance == nullptr)
+                AuthoredRasterCache::instance = new AuthoredRasterCache();
+
+            auto& entries = AuthoredRasterCache::instance->entries;
+            const int key = juce::jmax(1, juce::roundToInt(pixelsPerGrid * 64.0f));
+
+            for (size_t i = 0; i < entries.size(); ++i)
+            {
+                const auto& e = entries[i];
+
+                if (e.artwork == &artwork && e.scaleKey == key && e.orientation == orientation && e.mirrored == mirrored)
+                {
+                    // To the back, as the most recent.
+                    std::rotate(entries.begin() + (std::ptrdiff_t) i, entries.begin() + (std::ptrdiff_t) i + 1, entries.end());
+                    return entries.back();
+                }
+            }
+
+            if (entries.size() >= AuthoredRasterCache::capacity)
+                entries.erase(entries.begin());
+
+            const float k = static_cast<float>(key) / 64.0f;
+
+            // Grid units about the part's centre, turned like the part, in
+            // device pixels. The same order as Element::getPinPosition.
+            const auto orient = juce::AffineTransform::scale(mirrored ? -k : k, k)
+                                    .rotated(static_cast<float>(orientation) * juce::MathConstants<float>::halfPi);
+
+            // The ink, with a little room for antialiasing and anything the
+            // extracted paths understate (a fill's rounding, a cap).
+            const auto ink = artwork.bounds.isEmpty() ? artwork.viewBox : artwork.bounds.expanded(0.3f);
+            const auto region = ink.transformedBy(orient).getSmallestIntegerContainer();
+
+            AuthoredRasterCache::Entry entry;
+            entry.artwork = &artwork;
+            entry.scaleKey = key;
+            entry.orientation = orientation;
+            entry.mirrored = mirrored;
+            entry.offset = region.getPosition();
+            entry.mask = juce::Image(juce::Image::ARGB, juce::jmax(1, region.getWidth()), juce::jmax(1, region.getHeight()), true);
+
+            {
+                // At the viewBox's own scale, not drawWithin: that fits the
+                // drawing's *ink* to the box, which blew a resistor up to fill
+                // the whole frame. The parser has already moved the viewBox's
+                // origin to (0,0), so it is a scale to grid units and a shift
+                // to centre it on the part.
+                juce::Graphics g(entry.mask);
+                artwork.authored->draw(g, 1.0f,
+                                       juce::AffineTransform::scale(0.1f) // 10 SVG units to the grid square
+                                           .translated(artwork.viewBox.getX(), artwork.viewBox.getY())
+                                           .followedBy(orient)
+                                           .translated(static_cast<float>(-region.getX()), static_cast<float>(-region.getY())));
+            }
+
+            entries.push_back(std::move(entry));
+            return entries.back();
+        }
+
         /** The part's body, from assets/icons/elements. Mirror, then rotate, then
             place -- the same order as Element::getPinPosition, or the pins stop
             landing on the terminals. */
@@ -472,6 +583,25 @@ namespace Celine
 
             if (artwork == nullptr)
                 return;
+
+            if (artwork->authored != nullptr)
+            {
+                // Drawn as authored: rasterised at the device's own resolution,
+                // then painted through as a mask in the part's colour -- tinted,
+                // like a line drawing, so a selected part goes the selection's
+                // colour and the ghost its own.
+                const float physical = g.getInternalContext().getPhysicalPixelScaleFactor();
+                const auto& raster = rasterFor(*artwork, painter.gridSize * physical,
+                                               element.orientation & 3, element.mirrored);
+
+                const auto centre = painter.toPixel(juce::Point<int>(element.x, element.y));
+                g.drawImageTransformed(raster.mask,
+                                       juce::AffineTransform::translation(raster.offset.toFloat())
+                                           .scaled(1.0f / physical)
+                                           .translated(centre),
+                                       true);
+                return;
+            }
 
             const auto placement =
                 juce::AffineTransform::scale(element.mirrored ? -painter.gridSize : painter.gridSize, painter.gridSize)

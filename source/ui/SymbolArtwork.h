@@ -22,7 +22,9 @@ namespace Celine
         terminals:
 
         - viewBox is `-60 -60 120 120`, and **(0,0) is the part's centre** --
-          the same origin `Element::getPinPosition` measures from.
+          the same origin `Element::getPinPosition` measures from. Strictly,
+          the viewBox's *centre* is the part's centre, so an editor that
+          writes `0 0 120 120` (Affinity does) lands in the same place.
         - **10 SVG units = 1 grid square.** A pin at grid (0,-2) is at (0,-20).
         - stroke-width `1.2` is the schematic's normal line weight. Heavier
           strokes are multiples of it: 1.56 is the 1.3x used for capacitor
@@ -62,6 +64,16 @@ namespace Celine
             only moment it can go stale: redraw an SVG and this follows, which a
             box written out by hand in the element table would not. */
         juce::Rectangle<float> bounds;
+
+        /** The file kept whole, drawn **as authored**: fills, rounded corners,
+            line caps and joins and opacity. The canvas rasterises it and paints
+            the result in the part's colour. Every symbol is drawn this way; the
+            paths above are still extracted, for the bounds and the tests. Null
+            only for a file with no viewBox. */
+        std::shared_ptr<const juce::Drawable> authored;
+
+        /** The file's viewBox, in grid units: what `authored` is drawn into. */
+        juce::Rectangle<float> viewBox;
 
         /** True when the file was missing or empty -- which is the one thing
             that must not be silent, since a part with no artwork is invisible

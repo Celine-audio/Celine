@@ -152,6 +152,29 @@ namespace Celine
                     collect(composite->getChild(i), out, here);
         }
 
+        /** The whole viewBox, in SVG units, or an empty rectangle if the file
+            has none. */
+        juce::Rectangle<float> viewBoxOf(const void* data, int size)
+        {
+            const auto text = juce::String::createStringFromData(data, size);
+
+            if (const auto xml = juce::XmlDocument::parse(text))
+            {
+                auto numbers = juce::StringArray::fromTokens(
+                    xml->getStringAttribute("viewBox").trim(), " ,", "");
+                numbers.removeEmptyStrings();
+
+                if (numbers.size() >= 4)
+                    return {numbers[0].getFloatValue(), numbers[1].getFloatValue(),
+                            numbers[2].getFloatValue(), numbers[3].getFloatValue()};
+
+                if (numbers.size() >= 2)
+                    return {numbers[0].getFloatValue(), numbers[1].getFloatValue(), 0.0f, 0.0f};
+            }
+
+            return {};
+        }
+
         /** The viewBox origin, which the SVG parser normalises away.
 
             JUCE 9 replaced its own SVG parser with LunaSVG, and LunaSVG maps the
@@ -174,19 +197,7 @@ namespace Celine
             compiler or a test saying anything. */
         juce::Point<float> viewBoxOrigin(const void* data, int size)
         {
-            const auto text = juce::String::createStringFromData(data, size);
-
-            if (const auto xml = juce::XmlDocument::parse(text))
-            {
-                auto numbers = juce::StringArray::fromTokens(
-                    xml->getStringAttribute("viewBox").trim(), " ,", "");
-                numbers.removeEmptyStrings();
-
-                if (numbers.size() >= 2)
-                    return {numbers[0].getFloatValue(), numbers[1].getFloatValue()};
-            }
-
-            return {};
+            return viewBoxOf(data, size).getPosition();
         }
 
         /** Loads one asset by *filename*, or leaves it empty if there isn't one.
@@ -219,9 +230,31 @@ namespace Celine
                     {
                         // Seeded with the viewBox origin, so the parser's
                         // normalisation is cancelled before anything is cached.
-                        const auto origin = viewBoxOrigin(data, size);
-                        collect(*drawable, artwork,
-                                juce::AffineTransform::translation(origin.x, origin.y));
+                        // The part's centre is the *centre of the viewBox*,
+                        // whatever its origin: the house files say
+                        // "-60 -60 120 120" and Affinity can only export
+                        // "0 0 120 120" with the drawing around (60,60), and
+                        // both mean the same thing. The parser has already
+                        // moved the viewBox's corner to (0,0), so taking half
+                        // its size off puts its centre there. A file with no
+                        // usable viewBox falls back to its origin.
+                        const auto box = viewBoxOf(data, size);
+                        const auto shift = box.isEmpty() ? viewBoxOrigin(data, size)
+                                                         : juce::Point<float>(-box.getWidth() * 0.5f,
+                                                                              -box.getHeight() * 0.5f);
+                        collect(*drawable, artwork, juce::AffineTransform::translation(shift.x, shift.y));
+
+                        // Kept whole for the canvas to rasterise, when the file
+                        // draws. The viewBox is what it is drawn into,
+                        // centred on the part like the paths above.
+                        if (! box.isEmpty())
+                        {
+                            artwork.viewBox = box.withPosition(-box.getWidth() * 0.5f, -box.getHeight() * 0.5f)
+                                              / unitsPerGrid;
+
+                            if (! artwork.viewBox.isEmpty())
+                                artwork.authored = std::shared_ptr<const juce::Drawable>(drawable->createCopy());
+                        }
                     }
 
                 break;

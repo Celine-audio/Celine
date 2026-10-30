@@ -320,3 +320,22 @@ TEST_CASE ("A diode's symbol follows its heading, not its name", "[artwork][gui]
                                                     byGroup["LED"], byGroup["Zener"] };
     CHECK (distinct.size() == 4);
 }
+
+TEST_CASE ("Every symbol is kept whole, at its viewBox", "[artwork]")
+{
+    // Each file keeps its drawable and the viewBox it is rasterised into, in
+    // grid units, and still has its paths for bounds and hit testing.
+    Element resistor;
+    resistor.type = ElementType::Resistor;
+    const auto* artwork = getSymbolArtwork (resistor);
+    REQUIRE (artwork != nullptr);
+    CHECK (artwork->authored != nullptr);
+    CHECK (artwork->viewBox == juce::Rectangle<float> (-6.0f, -6.0f, 12.0f, 12.0f));
+    CHECK (! artwork->isEmpty());
+
+    Element inductor;
+    inductor.type = ElementType::Inductor;
+    const auto* plain = getSymbolArtwork (inductor);
+    REQUIRE (plain != nullptr);
+    CHECK (plain->authored != nullptr);
+}
