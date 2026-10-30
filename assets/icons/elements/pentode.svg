@@ -1,38 +1,21 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
-<svg width="100%" height="100%" viewBox="0 0 120 120" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xml:space="preserve" xmlns:affinity="https://www.affinity.studio/" style="fill-rule:evenodd;clip-rule:evenodd;">
-    <g transform="matrix(1,0,0,1,60,60)">
-        <circle cx="0" cy="0" r="21" style="fill:none;stroke:black;stroke-width:1.2px;"/>
-    </g>
-    <g transform="matrix(1,0,0,1,60,60)">
-        <path d="M0,-30L0,-16" style="fill:none;fill-rule:nonzero;stroke:black;stroke-width:1.2px;stroke-linecap:round;"/>
-    </g>
-    <g transform="matrix(1,0,0,1,60,60)">
-        <path d="M-8.5,-16L8.5,-16" style="fill:none;fill-rule:nonzero;stroke:black;stroke-width:1.56px;stroke-linecap:round;"/>
-    </g>
-    <path d="M62.219,49.4C62.55,49.4 62.819,49.669 62.819,50C62.819,50.331 62.55,50.6 62.219,50.6L57.531,50.6C57.2,50.6 56.931,50.331 56.931,50C56.931,49.669 57.2,49.4 57.531,49.4L62.219,49.4ZM69.25,49.4L69.25,50.6L66.687,50.6C66.356,50.6 66.087,50.331 66.087,50C66.087,49.669 66.356,49.4 66.687,49.4L69.25,49.4ZM50.5,50.6C50.169,50.6 49.9,50.331 49.9,50C49.9,49.669 50.169,49.4 50.5,49.4L52.844,49.4C53.175,49.4 53.444,49.669 53.444,50C53.444,50.331 53.175,50.6 52.844,50.6L50.5,50.6Z"/>
-    <g transform="matrix(1,0,0,1,0,10)">
-        <path d="M62.219,49.4C62.55,49.4 62.819,49.669 62.819,50C62.819,50.331 62.55,50.6 62.219,50.6L57.531,50.6C57.2,50.6 56.931,50.331 56.931,50C56.931,49.669 57.2,49.4 57.531,49.4L62.219,49.4ZM69.25,49.4L69.25,50.6L66.687,50.6C66.356,50.6 66.087,50.331 66.087,50C66.087,49.669 66.356,49.4 66.687,49.4L69.25,49.4ZM50.5,50.6C50.169,50.6 49.9,50.331 49.9,50C49.9,49.669 50.169,49.4 50.5,49.4L52.844,49.4C53.175,49.4 53.444,49.669 53.444,50C53.444,50.331 53.175,50.6 52.844,50.6L50.5,50.6Z"/>
-    </g>
-    <g transform="matrix(1,0,0,1,0,20)">
-        <path d="M62.219,49.4C62.55,49.4 62.819,49.669 62.819,50C62.819,50.331 62.55,50.6 62.219,50.6L57.531,50.6C57.2,50.6 56.931,50.331 56.931,50C56.931,49.669 57.2,49.4 57.531,49.4L62.219,49.4ZM69.25,49.4C69.581,49.4 69.85,49.669 69.85,50C69.85,50.331 69.581,50.6 69.25,50.6L66.687,50.6C66.356,50.6 66.087,50.331 66.087,50C66.087,49.669 66.356,49.4 66.687,49.4L69.25,49.4ZM50.5,50.6C50.169,50.6 49.9,50.331 49.9,50C49.9,49.669 50.169,49.4 50.5,49.4L52.844,49.4C53.175,49.4 53.444,49.669 53.444,50C53.444,50.331 53.175,50.6 52.844,50.6L50.5,50.6Z"/>
-    </g>
-    <g transform="matrix(0.902439,0,0,1,57.073171,60)">
-        <path d="M-30,0L-9.5,0" style="fill:none;fill-rule:nonzero;stroke:black;stroke-width:1.26px;stroke-linecap:round;"/>
-    </g>
-    <g transform="matrix(0.902439,0,0,1,57.073171,60)">
-        <path d="M-30,10L-9.5,10" style="fill:none;fill-rule:nonzero;stroke:black;stroke-width:1.26px;stroke-linecap:round;"/>
-    </g>
-    <g transform="matrix(1,0,0,1,60,60)">
-        <path d="M-8.5,16L0,16" style="fill:none;fill-rule:nonzero;stroke:black;stroke-width:1.2px;stroke-linecap:round;"/>
-    </g>
-    <g transform="matrix(1,0,0,1,60,60)">
-        <path d="M0,16L0,30" style="fill:none;fill-rule:nonzero;stroke:black;stroke-width:1.2px;stroke-linecap:round;"/>
-    </g>
-    <g transform="matrix(1,0,0,0.846154,60,58.461538)">
-        <path d="M12,-10L12,16" style="fill:none;fill-rule:nonzero;stroke:black;stroke-width:1.3px;stroke-linecap:round;"/>
-    </g>
-    <g transform="matrix(0.666667,0,0,1,60,60)">
-        <path d="M18,12L18,12C18,14.209 15.314,16 12,16C12,16 0,16 0,16" style="fill:none;fill-rule:nonzero;stroke:black;stroke-width:1.41px;stroke-linecap:round;"/>
+<svg width="100%" height="100%" viewBox="0 0 120 120" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xml:space="preserve" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linecap:round;stroke-linejoin:round;">
+    <g transform="matrix(1,0,0,1,60,60)" style="fill:none;stroke:black;stroke-width:1.2px;">
+        <!-- Envelope -->
+        <circle cx="0" cy="0" r="21"/>
+        <!-- Plate: lead and electrode -->
+        <path d="M0,-30L0,-16"/>
+        <path d="M-8.5,-16L8.5,-16" style="stroke-width:1.6px;"/>
+        <!-- Suppressor, screen and control grids, top to bottom -->
+        <path d="M-8.9,-10L-7.756,-10M-1.869,-10L1.619,-10M7.287,-10L9.25,-10"/>
+        <path d="M-8.9,0L-7.756,0M-1.869,0L1.619,0M7.287,0L9.25,0"/>
+        <path d="M-8.9,10L-7.756,10M-1.869,10L1.619,10M7.287,10L9.25,10"/>
+        <!-- Screen and control grid leads -->
+        <path d="M-30,0L-11.5,0"/>
+        <path d="M-30,10L-11.5,10"/>
+        <!-- Cathode lead, then the cathode, its corner and the suppressor strap as one stroke -->
+        <path d="M0,30L0,16"/>
+        <path d="M-8.5,16L8,16C10.209,16 12,14.209 12,12L12,-10"/>
     </g>
 </svg>
