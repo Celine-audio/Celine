@@ -249,7 +249,9 @@ namespace Celine
             Six is what the design draws, to within a pixel. */
         constexpr float previewSquares = 6.0f;
 
-        void drawArrowHead(juce::Graphics& g, juce::Point<float> tip, juce::Point<float> from, float size)
+
+        void drawArrow(juce::Graphics& g, const SymbolPainter& painter,
+                       juce::Point<float> from, juce::Point<float> tip)
         {
             const auto direction = (tip - from);
             const auto length = direction.getDistanceFromOrigin();
@@ -257,16 +259,26 @@ namespace Celine
             if (length < 0.0001f)
                 return;
 
+            const float grid = painter.gridSize;
+            const float headLength = grid * 0.5f;
             const auto unit = direction / length;
             const juce::Point<float> normal(-unit.y, unit.x);
+            const auto base = tip - unit * headLength;
+
+            juce::Path shaft;
+            shaft.startNewSubPath(from);
+            shaft.lineTo(base);
+            g.strokePath(shaft, juce::PathStrokeType(painter.strokeWidth(), juce::PathStrokeType::curved,
+                                                     juce::PathStrokeType::rounded));
 
             juce::Path head;
             head.startNewSubPath(tip);
-            head.lineTo(tip - unit * size + normal * size * 0.45f);
-            head.lineTo(tip - unit * size - normal * size * 0.45f);
+            head.lineTo(base + normal * grid * 0.25f);
+            head.lineTo(base - normal * grid * 0.25f);
             head.closeSubPath();
 
             g.fillPath(head);
+            g.strokePath(head, juce::PathStrokeType(grid * 0.1f, juce::PathStrokeType::curved));
         }
     } // namespace
 
@@ -551,10 +563,9 @@ namespace Celine
             // see Potentiometer::setPosition, where position 1 sends the
             // resistance above the wiper to its minimum.
             const float tap = 1.0f - 2.0f * element.getControlPosition();
-            const auto tip = s(0.85f, tap);
+            const auto tip = s(0.83f, tap);
             const auto tail = s(2.6f, 0.0f);
-            g.drawLine(juce::Line<float>(tail, tip), painter.strokeWidth());
-            drawArrowHead(g, tip, tail, painter.gridSize * 0.55f);
+            drawArrow(g, painter, tail, tip);
         }
 
         void drawNodeTag(juce::Graphics& g, const SymbolPainter& painter,
