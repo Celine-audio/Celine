@@ -207,6 +207,78 @@ namespace Celine
             return fill.isInvisible() ? 0.0f : fill.getOpacity();
         }
 
+        /** `source` in `transform`, as straight runs, every outline turned so it
+            can share one non-zero path with any other.
+
+            A run is filled by winding, so ink that merely overlaps must wind the
+            same way: a fill traced clockwise inside a stroke outline traced the
+            other way cancels it, and a MOSFET's arrow came out hollow. So each
+            outline here winds positively, and each hole -- an outline inside an
+            odd number of others, the inside of a stroked ring -- negatively.
+            Nesting decides what is a hole, as for an even-odd fill, which is
+            what a symbol's fills are; a non-zero fill that needs nesting to stay
+            solid would lose it, and none does. */
+        juce::Path oriented(const juce::Path& source, const juce::AffineTransform& transform)
+        {
+            // A quarter of a device pixel at the closest zoom: 40 px to the
+            // grid square at 2x. Stroke outlines arrive already flattened.
+            constexpr float tolerance = 0.25f / 80.0f;
+
+            std::vector<std::vector<juce::Point<float>>> contours;
+
+            for (juce::PathFlatteningIterator it(source, transform, tolerance); it.next();)
+            {
+                if (it.subPathIndex == 0)
+                    contours.push_back({{it.x1, it.y1}});
+
+                contours.back().push_back({it.x2, it.y2});
+            }
+
+            std::vector<juce::Path> shapes;
+
+            for (const auto& c : contours)
+            {
+                juce::Path p;
+                p.startNewSubPath(c.front());
+                for (size_t i = 1; i < c.size(); ++i)
+                    p.lineTo(c[i]);
+                p.closeSubPath();
+                shapes.push_back(std::move(p));
+            }
+
+            juce::Path result;
+
+            for (size_t i = 0; i < contours.size(); ++i)
+            {
+                auto points = contours[i];
+                float area = 0.0f;
+
+                for (size_t k = 0; k < points.size(); ++k)
+                {
+                    const auto& a = points[k];
+                    const auto& b = points[(k + 1) % points.size()];
+                    area += a.x * b.y - b.x * a.y;
+                }
+
+                int depth = 0;
+
+                for (size_t j = 0; j < contours.size(); ++j)
+                    if (j != i && shapes[j].contains(points.front(), 0.0f))
+                        ++depth;
+
+                // Positive area is clockwise on screen, y pointing down.
+                if ((area > 0.0f) != (depth % 2 == 0))
+                    std::reverse(points.begin(), points.end());
+
+                result.startNewSubPath(points.front());
+                for (size_t k = 1; k < points.size(); ++k)
+                    result.lineTo(points[k]);
+                result.closeSubPath();
+            }
+
+            return result;
+        }
+
         void addInk(SymbolArtwork& out, const juce::Path& path, float alpha)
         {
             // Next to whatever came just before at the same opacity, so a whole
@@ -232,9 +304,7 @@ namespace Celine
                 // at its own strength: a body filled at 7% is outlined at 100%.
                 if (const auto fill = strength(shape->getFill()); fill > 0.0f)
                 {
-                    juce::Path ink(shape->getPath());
-                    ink.applyTransform(here);
-                    addInk(out, ink, alpha * fill);
+                    addInk(out, oriented(shape->getPath(), here), alpha * fill);
                 }
 
                 if (const auto stroke = strength(shape->getStrokeFill());
@@ -248,8 +318,7 @@ namespace Celine
                     // the default it was a visible thirteen-sided polygon.
                     juce::Path outline;
                     shape->getStrokeType().createStrokedPath(outline, shape->getPath(), {}, 20.0f);
-                    outline.applyTransform(here);
-                    addInk(out, outline, alpha * stroke);
+                    addInk(out, oriented(outline, here), alpha * stroke);
                 }
             }
 

@@ -1,16 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="-60 -60 120 120" width="120" height="120">
-  <path d="M -20 0 L -6 0" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
-  <path d="M -6 -12 L -6 12" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round"/>
-  <path d="M 0 -15 L 0 -8" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round"/>
-  <path d="M 0 -3.5 L 0 3.5" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round"/>
-  <path d="M 0 8 L 0 15" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round"/>
-  <path d="M 0 -11.5 L 20 -11.5 L 20 -20" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M 0 11.5 L 20 11.5 L 20 20" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M 0 0 L 20 0 L 20 11.5" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M 12 0 L 6 -2.7 L 6 2.7 L 12 0 Z" fill="#000" stroke="#000" stroke-width="1" stroke-linejoin="round"/>
-  <path d="M 20 -11.5 L 30 -11.5 L 30 -3" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M 30 4 L 30 11.5 L 20 11.5" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M 27 4 L 33 4" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
-  <path d="M 30 4 L 27 -3 L 33 -3 L 30 4 Z" fill="#000" stroke="#000" stroke-width="1" stroke-linejoin="round"/>
+  <!-- MOSFET, P-channel: the body arrow points out of the channel -->
+  <!-- Insulated gate: lead and plate -->
+  <path d="M -20 0 L -6 0" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M -6 -11 L -6 11" fill="none" stroke="#000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Channel, broken because the part is off until the gate says otherwise -->
+  <path d="M 0 -11 L 0 -6" fill="none" stroke="#000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 0 -2.5 L 0 2.5" fill="none" stroke="#000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 0 6 L 0 11" fill="none" stroke="#000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Drain, source, and the body tied to the source -->
+  <path d="M 0 -8.5 L 20 -8.5 L 20 -20" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 0 8.5 L 20 8.5 L 20 20" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 0 0 L 20 0 L 20 8.5" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 7.8 0 L 2.3 -2.5 L 2.3 2.5 Z" fill="#000" stroke="#000" stroke-width="1" stroke-linejoin="round"/>
+  <!-- Body diode -->
+  <path d="M 20 -8.5 L 30 -8.5 L 30 8.5 L 20 8.5" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 30 2.5 L 27 -2.5 L 33 -2.5 Z" fill="#000" stroke="#000" stroke-width="1" stroke-linejoin="round"/>
+  <path d="M 27 2.5 L 33 2.5" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="-60 -60 120 120" width="120" height="120">
-  <path d="M -20 0 L -6 0" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
-  <path d="M 0 -16 L 0 16" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round"/>
-  <path d="M 0 -13 L 20 -13" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
-  <path d="M 20 -13 L 20 -20" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
-  <path d="M 0 13 L 20 13" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
-  <path d="M 20 13 L 20 20" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
-  <path d="M -8 0 L -2 -2.7 L -2 2.7 L -8 0 Z" fill="#000" stroke="#000" stroke-width="1" stroke-linejoin="round"/>
+  <!-- JFET, P-channel: the gate arrow points out of the channel -->
+  <!-- Channel, drain and source -->
+  <path d="M 0 -12 L 0 12" fill="none" stroke="#000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 0 -8 L 20 -8 L 20 -20" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 0 8 L 20 8 L 20 20" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Gate -->
+  <path d="M -20 0 L 0 0" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M -8.5 0 L -3 -2.5 L -3 2.5 Z" fill="#000" stroke="#000" stroke-width="1" stroke-linejoin="round"/>
 </svg>

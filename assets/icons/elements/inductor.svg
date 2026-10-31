@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="-60 -60 120 120" width="120" height="120">
-  <path d="M 0 -20 L 0 -12" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
-  <path d="M 0 20 L 0 12" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
-  <path d="M 0 -12 C 6 -10 6 -8 0 -6 C 6 -4 6 -2 0 0 C 6 2 6 4 0 6 C 6 8 6 10 0 12" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
+  <!-- Leads -->
+  <path d="M 0 -20 L 0 -12" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 0 20 L 0 12" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Winding -->
+  <path d="M 0 -12 A 3 3 0 0 1 0 -6 A 3 3 0 0 1 0 0 A 3 3 0 0 1 0 6 A 3 3 0 0 1 0 12" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
