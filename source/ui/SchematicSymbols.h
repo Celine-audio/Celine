@@ -157,6 +157,21 @@ namespace Celine
             its ends, which reads as a dumbbell rather than as a resistor. */
         bool connectionDots = true;
 
+        /** How much a caption would land on, given the part and the box it
+            would fill, in grid units: nothing at all is zero.
+
+            The painter draws one part and knows nothing of the sheet, so the
+            sheet answers -- the canvas counts the wires crossing the box, and
+            counts other parts and their captions far heavier, since text over
+            text or over a symbol is unreadable where text over a wire is only
+            untidy. draw() takes the part's first clear side, or failing that
+            its least cluttered. Unset, every caption goes on its part's own side. */
+        std::function<float(const SchematicModel::Element&, juce::Rectangle<float>)> captionClutter;
+
+        /** Told where each caption went, in grid units, so the sheet can keep
+            the next one off it. */
+        std::function<void(juce::Rectangle<float>)> onCaptionPlaced;
+
         /** Line weight that keeps symbols legible as the view zooms. */
         float strokeWidth() const noexcept
         {

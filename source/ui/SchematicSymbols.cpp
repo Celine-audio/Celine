@@ -1,5 +1,7 @@
 #include "SchematicSymbols.h"
 
+#include <limits>
+
 #include <CelineUI/Fonts.h>
 #include "SymbolArtwork.h"
 #include <CelineUI/Theme.h>
@@ -92,39 +94,77 @@ namespace Celine
             return Theme::groupBox(modelIndex);
         }
 
-        /** How far below its centre an element's lowest pin sits, in grid
-            squares. Never less than two, so a one-pin terminal still gets its
-            caption clear of the symbol. */
-        float lowestPinBelowCentre(const Element& element)
+        /** Which side of its body a part's caption sits on, as the part is
+            drawn facing its default way: 0 right, 1 below, 2 left, 3 above --
+            the order a quarter-turn moves them in, so turning the part turns
+            this with it.
+
+            The side its wires don't leave from. A resistor's leave top and
+            bottom, so its value goes beside it, where a schematic writes it;
+            under it, where it used to go, was on top of the wire leaving its
+            lower pin. A pot's wiper takes its right, so it reads on the left;
+            an op-amp has pins on three sides and is read across, so it keeps
+            the caption under; a scope's probes hang below it, so its caption
+            goes above. Everything with a pin column on the right -- the
+            transistors, the valves -- reads to the right of its body, between
+            those pins. */
+        int naturalCaptionSide(ElementType type)
         {
-            float lowest = 2.0f;
+            switch (type)
+            {
+                case ElementType::Potentiometer:
+                    return 2;
 
-            for (int pin = 0; pin < getElementInfo(element.type).pinCount; ++pin)
-                lowest = juce::jmax(lowest,
-                                    static_cast<float>(element.getPinPosition(pin).y - element.y));
+                case ElementType::OpAmp:
+                case ElementType::PowerAmp:
+                case ElementType::Transformer:
+                case ElementType::CenterTapTransformer:
+                case ElementType::Ground:
+                case ElementType::Input:
+                case ElementType::Output:
+                    return 1;
 
-            return lowest;
+                case ElementType::Scope:
+                    return 3;
+
+                case ElementType::Resistor:
+                case ElementType::Capacitor:
+                case ElementType::Inductor:
+                case ElementType::Switch:
+                case ElementType::Spdt:
+                case ElementType::VoltageSource:
+                case ElementType::Diode:
+                case ElementType::Transistor:
+                case ElementType::Jfet:
+                case ElementType::Mosfet:
+                case ElementType::Triode:
+                case ElementType::Pentode:
+                case ElementType::VacuumDiode:
+                case ElementType::Text:
+                case ElementType::Rectangle:
+                case ElementType::Node:
+                    break;
+            }
+
+            return 0;
         }
 
-        /** How far below its centre an element's *drawn body* reaches, for the
-            few whose symbol hangs lower than any of their pins -- an op-amp's
-            triangle, a transformer's core. Only the exceptions are listed:
-            saying so for twenty parts would be twenty chances to disagree with
-            the drawing code. Rotation is ignored, since the caption is always
-            written under the part and upright. */
-        float bodyDepthBelowCentre(const Element& element)
+        /** Where a caption of `size` goes on `side` of `body`, in grid units.
+            Half a square of air off the drawn body, and centred on the part's
+            own centre across the other way, so a value sits level with the
+            part it belongs to rather than with its leads. */
+        juce::Rectangle<float> captionBox(juce::Rectangle<float> body, juce::Point<float> centre,
+                                          int side, juce::Point<float> size)
         {
-            // Deliberately not a switch: the build asks for every enumerator to
-            // be named in one, and listing all twenty to say "nothing" nineteen
-            // times would bury the two that matter.
-            if (element.type == ElementType::OpAmp)
-                return 3.0f;
+            constexpr float gap = 0.5f;
 
-            if (element.type == ElementType::Transformer
-                || element.type == ElementType::CenterTapTransformer)
-                return 3.2f;
-
-            return 0.0f;
+            switch (side & 3)
+            {
+                case 0:  return { body.getRight() + gap, centre.y - size.y * 0.5f, size.x, size.y };
+                case 2:  return { body.getX() - gap - size.x, centre.y - size.y * 0.5f, size.x, size.y };
+                case 1:  return { centre.x - size.x * 0.5f, body.getBottom() + gap, size.x, size.y };
+                default: return { centre.x - size.x * 0.5f, body.getY() - gap - size.y, size.x, size.y };
+            }
         }
 
         /** Rotates a point about the origin by an element's orientation, in grid
@@ -434,42 +474,92 @@ namespace Celine
         const juce::Font font(Fonts::light(gridSize * 0.92f));
         g.setFont(font);
 
-        const float captionHeight = gridSize * 1.25f;
-
-        const float space = gridSize * 0.45f;
+        // In grid units from here until the drawing, since that is what the
+        // sheet's wires and parts are measured in.
+        const float lineHeight = 1.25f;
+        const float space = 0.45f;
         float widths[3];
-        float total = 0.0f;
+        float widest = 0.0f, inLine = 0.0f;
 
         for (int i = 0; i < count; ++i)
         {
-            widths[i] = juce::GlyphArrangement::getStringWidth(font, runs[i].text);
-            total += widths[i] + (i > 0 ? space : 0.0f);
+            widths[i] = juce::GlyphArrangement::getStringWidth(font, runs[i].text) / gridSize;
+            widest = juce::jmax(widest, widths[i]);
+            inLine += widths[i] + (i > 0 ? space : 0.0f);
         }
 
-        // Clear of the symbol rather than a fixed distance below its centre. A
-        // valve reaches five grid squares down where a resistor reaches two, so
-        // a single offset either buries the caption in the bottle or leaves it
-        // floating well away from the small parts.
-        const float reach = juce::jmax(lowestPinBelowCentre(element), bodyDepthBelowCentre(element));
+        // Beside a part the runs stack, name over value, so the caption is as
+        // tall as the part rather than three times as wide as it; above or
+        // below, they share a line, the way a part lying across is read.
+        const auto sizeOn = [&](int side)
+        {
+            return (side & 1) == 0 ? juce::Point<float>(widest, lineHeight * (float) count)
+                                   : juce::Point<float>(inLine, lineHeight);
+        };
 
-        const auto anchor = toPixel(juce::Point<int>(element.x, element.y));
+        const auto body = elementBounds(element);
+        const juce::Point<float> centre((float) element.x, (float) element.y);
 
-        // One square of air under whatever the symbol actually reaches. It used
-        // to be nearly two, measured from the pins alone -- which had to be
-        // generous enough to clear the few bodies that hang below their lowest
-        // pin, and so left every other part's caption adrift. Measuring the body
-        // as well buys that clearance back for the parts that never needed it.
-        const float top = anchor.y + gridSize * (reach + 1.0f) - captionHeight * 0.5f;
-        float x = anchor.x - total * 0.5f;
+        // The part's own side, turned as the part is; then the one opposite,
+        // then the two across. The first with nothing in the way wins; if
+        // every side has something, the least cluttered does, earlier sides
+        // winning ties -- so a crowded part still lands where it is expected
+        // unless somewhere else is plainly better.
+        const int mirroredSide = element.mirrored && (naturalCaptionSide(element.type) & 1) == 0
+                                     ? naturalCaptionSide(element.type) + 2
+                                     : naturalCaptionSide(element.type);
+        const int natural = (mirroredSide + element.orientation) & 3;
+        int side = natural;
+
+        if (captionClutter)
+        {
+            float best = std::numeric_limits<float>::max();
+
+            for (const int candidate : { natural, natural + 2, natural + 1, natural + 3 })
+            {
+                const float clutter = captionClutter(element, captionBox(body, centre, candidate, sizeOn(candidate)));
+
+                if (clutter < best)
+                {
+                    best = clutter;
+                    side = candidate & 3;
+                }
+
+                if (clutter <= 0.0f)
+                    break;
+            }
+        }
+
+        const auto box = captionBox(body, centre, side, sizeOn(side));
+
+        if (onCaptionPlaced)
+            onCaptionPlaced(box);
+
+        const auto topLeft = toPixel(box.getX(), box.getY());
 
         for (int i = 0; i < count; ++i)
         {
+            juce::Rectangle<float> line;
+
+            if ((side & 1) == 0)
+            {
+                // Stacked, and ragged away from the part: flush to it on
+                // whichever side it is.
+                const float x = side == 0 ? 0.0f : widest - widths[i];
+                line = { x, lineHeight * (float) i, widths[i], lineHeight };
+            }
+            else
+            {
+                float x = 0.0f;
+                for (int j = 0; j < i; ++j)
+                    x += widths[j] + space;
+                line = { x, 0.0f, widths[i], lineHeight };
+            }
+
             // The alpha rides along so a dimmed element keeps a dimmed caption,
             // while the colour still says what the text means.
             g.setColour(runs[i].colour.withMultipliedAlpha(colour.getFloatAlpha()));
-            g.drawText(runs[i].text, juce::Rectangle<float>(x, top, widths[i], captionHeight),
-                       juce::Justification::centredLeft, false);
-            x += widths[i] + space;
+            g.drawText(runs[i].text, (line * gridSize) + topLeft, juce::Justification::centredLeft, false);
         }
     }
 

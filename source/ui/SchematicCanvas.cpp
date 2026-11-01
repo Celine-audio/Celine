@@ -29,6 +29,32 @@ namespace Celine
         painter.gridSize = 16.0f;
         painter.origin = {40.0f, 40.0f};
 
+        // What a caption would cover where it is being tried: other
+        // captions and other parts, which make it unreadable, and wires, which
+        // only make it untidy. Captions are kept off each other in drawing
+        // order, so the first part on the sheet gets its own side and a
+        // neighbour moves.
+        painter.captionClutter = [this](const Element& element, juce::Rectangle<float> box)
+        {
+            float clutter = 0.0f;
+
+            for (const auto& placed : placedCaptions)
+                if (placed.intersects(box))
+                    clutter += 10.0f;
+
+            for (const auto& [id, bounds] : captionObstacles)
+                if (id != element.id && bounds.intersects(box))
+                    clutter += 10.0f;
+
+            for (const auto& wire : schematic.getWires())
+                if (box.intersects(juce::Line<float>(wire.a.toFloat(), wire.b.toFloat())))
+                    clutter += 1.0f;
+
+            return clutter;
+        };
+
+        painter.onCaptionPlaced = [this](juce::Rectangle<float> box) { placedCaptions.push_back(box); };
+
         setWantsKeyboardFocus(true);
 
         addAndMakeVisible(topRuler);
@@ -465,6 +491,13 @@ namespace Celine
             g.fillEllipse(juce::Rectangle<float>(junctionRadius * 2.0f, junctionRadius * 2.0f).withCentre(p));
         }
 
+        captionObstacles.clear();
+        placedCaptions.clear();
+
+        for (const auto& element : schematic.getElements())
+            if (element.type != ElementType::Rectangle)
+                captionObstacles.emplace_back(element.id, painter.elementBounds(element));
+
         for (const auto& element : schematic.getElements())
             if (element.type != ElementType::Rectangle)
                 painter.draw(g, element, isSelected(element.id) ? Theme::selected() : Theme::element());
@@ -786,9 +819,9 @@ namespace Celine
             drawScopeTrace(g, area.reduced(painter.gridSize * 0.18f), reading,
                            Theme::captionValue(), Theme::comment(), Theme::background());
 
-            // Below the part's own caption, which SymbolPainter puts one square
-            // under the lowest pin -- exactly where a readout would otherwise
-            // go. Only when there is room to read it.
+            // Under the screen, where the probes hang: the part's own caption
+            // goes above it, so this space is the readout's. Only when there
+            // is room to read it.
             if (painter.gridSize < 11.0f || ! reading.live)
                 continue;
 

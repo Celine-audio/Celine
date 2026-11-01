@@ -410,6 +410,14 @@ namespace Celine
         SchematicModel::Schematic& schematic;
         SymbolPainter painter;
 
+        /** Every part's bounds and id, gathered once a paint for the captions
+            to steer round -- asking each part for its bounds per caption was
+            a pass over the sheet per part. */
+        mutable std::vector<std::pair<int, juce::Rectangle<float>>> captionObstacles;
+
+        /** The captions already down this paint, so the next keeps off them. */
+        mutable std::vector<juce::Rectangle<float>> placedCaptions;
+
         Tool tool = Tool::Select;
         /** Set when the Place tool is cloning: the part middle-click picked up.
             Its properties go onto every part placed until something else is
