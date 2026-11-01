@@ -323,13 +323,13 @@ TEST_CASE ("Editor size rides with the session, not with a preset", "[plugin]")
 }
 
 
-TEST_CASE ("The window is never smaller than 1024 x 687", "[plugin]")
+TEST_CASE ("The window is never smaller than 1024 x 689", "[plugin]")
 {
     runWithinPluginEditor ([] (PluginProcessor& plugin) {
         auto* limits = plugin.getActiveEditor()->getConstrainer();
         REQUIRE (limits != nullptr);
         CHECK (limits->getMinimumWidth() == 1024);
-        CHECK (limits->getMinimumHeight() == 687);
+        CHECK (limits->getMinimumHeight() == 689);
     });
 
     // And a size remembered from before the floor rose opens at the floor
@@ -340,7 +340,7 @@ TEST_CASE ("The window is never smaller than 1024 x 687", "[plugin]")
 
     std::unique_ptr<juce::AudioProcessorEditor> editor (plugin.createEditor());
     CHECK (editor->getWidth() == 1024);
-    CHECK (editor->getHeight() == 687);
+    CHECK (editor->getHeight() == 689);
 }
 
 TEST_CASE ("The smallest window shows the whole palette", "[plugin][ui]")

@@ -77,6 +77,12 @@ namespace Celine
         /** The panel itself, without the tab standing off its edge. */
         juce::Rectangle<int> getBodyBounds() const;
 
+        /** How wide the panel is folded to symbols alone, tab excluded and
+            not scrolling -- whether or not it is folded now. The bottom band's
+            INPUT bar is this wide, so it lines up under the folded panel and
+            stays put when the palette is opened over it. */
+        static int getFoldedBodyWidth() noexcept;
+
         /** Only the panel and its tab, not the empty corners beside the tab,
             so the sheet under those still takes its clicks. */
         bool hitTest(int x, int y) override;

@@ -1927,10 +1927,25 @@ void PluginEditor::layOutPanels (juce::Rectangle<int> area)
     // three bars floating over its bottom edge, as the panels float over the rest.
     canvas.setBounds (area);
 
-    auto row = area.withTrimmedLeft (Celine::SchematicCanvas::leftRulerThickness)
-                   .reduced (margin)
-                   .removeFromBottom (Strip::preferredHeight);
-    bandTop = row.getY();
+    bandRow = area.withTrimmedLeft (Celine::SchematicCanvas::leftRulerThickness)
+                  .reduced (margin)
+                  .removeFromBottom (Strip::preferredHeight);
+    bandTop = bandRow.getY();
+
+    // The panels first: the band's two end bars line up under them.
+    layOutFloatingPanels();
+}
+
+void PluginEditor::layOutBand()
+{
+    using Strip = Celine::ControlStrip;
+    constexpr int margin = Celine::Theme::floatingMargin;
+
+    const auto area = canvas.getBounds();
+    auto row = bandRow;
+
+    if (area.isEmpty() || row.isEmpty())
+        return;
 
     // Caption over control, in the strip's own proportions -- see
     // ControlStrip::layOutCell, which the drawn knobs go through, so the fixed
@@ -1943,16 +1958,31 @@ void PluginEditor::layOutPanels (juce::Rectangle<int> area)
 
     // INPUT on its own bar at the left, OUTPUT and the channel picker on theirs at
     // the right: it reads as signal flow, and keeping them apart from the middle
-    // bar says that neither is part of any circuit.
-    // Each runs in from the window's edge; the knobs sit where they did.
-    const auto inputArea = row.removeFromLeft (Strip::cellWidth + 2 * Strip::padding);
+    // bar says that neither is part of any circuit. Each runs in from the
+    // window's edge and stops under a panel above it: INPUT where the palette's
+    // card ends when folded to symbols, OUTPUT at the inspector's left edge.
+    // Never narrower than what the bar holds. The contents sit against the
+    // bar's inner edge -- the one facing the sheet -- at the strip's own
+    // padding, so both knobs stand the same distance in from it however wide
+    // their bars come out; any width to spare goes to the window's edge.
+    const int inputContent = Strip::cellWidth + 2 * Strip::padding;
+    // The folded palette's edge, not its fold tab's, which stands off it --
+    // and the folded one whether or not it is folded, so opening the palette
+    // does not move the band.
+    const int paletteEdge = palette.getX() + Celine::ElementPalette::getFoldedBodyWidth();
+    const int inputRight = juce::jmax (row.getX() + inputContent, paletteEdge);
+    const auto inputArea = row.removeFromLeft (juce::jmin (row.getWidth(), inputRight - row.getX()));
     inputBar.setBounds (inputArea.withLeft (area.getX()));
-    placeKnob (inputArea.reduced (Strip::padding, 4), inputSlider, inputLabel);
+    placeKnob (inputArea.withTrimmedLeft (inputArea.getWidth() - inputContent).reduced (Strip::padding, 4),
+               inputSlider, inputLabel);
 
     constexpr int channelsWidth = Strip::comboWidth + 12;
-    const auto outputArea = row.removeFromRight (Strip::cellWidth + channelsWidth + 2 * Strip::padding);
+    const int outputContent = Strip::cellWidth + channelsWidth + 2 * Strip::padding;
+    const int outputLeft = juce::jmin (row.getRight() - outputContent,
+                                       inspector.isVisible() ? inspector.getX() : row.getRight() - outputContent);
+    const auto outputArea = row.removeFromRight (juce::jlimit (0, row.getWidth(), row.getRight() - outputLeft));
     outputBar.setBounds (outputArea.withRight (area.getRight()));
-    auto fixed = outputArea.reduced (Strip::padding, 4);
+    auto fixed = outputArea.withWidth (outputContent).reduced (Strip::padding, 4);
 
     channelModeBox.setBounds (
         Strip::layOutCell (fixed.removeFromRight (channelsWidth), &channelModeLabel,
@@ -1972,8 +2002,6 @@ void PluginEditor::layOutPanels (juce::Rectangle<int> area)
 
     controlStrip.setVisible (! controlStrip.isEmpty() && width > 0);
     controlStrip.setBounds (x, row.getY(), juce::jmax (0, width), row.getHeight());
-
-    layOutFloatingPanels();
 }
 
 void PluginEditor::layOutFloatingPanels()
@@ -1998,7 +2026,10 @@ void PluginEditor::layOutFloatingPanels()
                           .withBottom (bandTop - margin);
 
     if (room.getWidth() <= 0 || room.getHeight() <= 0)
+    {
+        layOutBand();
         return;
+    }
 
     //--------------------------------------------------------------------------
     // The palette down the left and the inspector down the right, both from the
@@ -2063,6 +2094,8 @@ void PluginEditor::layOutFloatingPanels()
                                palette.getRight() - sheet.getX(),
                                sheet.getBottom() - bandTop,
                                sheet.getRight() - inspector.getX() });
+
+    layOutBand();
 }
 
 int PluginEditor::narrowestWindow() const

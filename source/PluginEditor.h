@@ -91,6 +91,11 @@ private:
         window has not moved. */
     void layOutFloatingPanels();
 
+    /** The bottom band's three bars, the two at the ends lined up under the
+        palette and the inspector -- so it runs after them, from
+        layOutFloatingPanels, and again whenever they move. */
+    void layOutBand();
+
     void buildToolbar();
     void buildPanels();
     void buildBottomBand();
@@ -116,8 +121,8 @@ private:
         constructor because resized() has to know it too -- it will not record a size
         below this as one worth reopening at.
 
-        1024 x 687 is the chosen floor. The height is the shortest window whose
-        palette shows every row without scrolling -- its 469 px list, plus the
+        1024 x 689 is the chosen floor. The height is the shortest window whose
+        palette shows every row without scrolling -- its 471 px list, plus the
         toolbar, the top ruler, the floating bottom band with a margin under it, and a
         margin above and below the palette -- and
         "The smallest window shows the whole palette" holds it to that. The width can
@@ -126,7 +131,7 @@ private:
         console room between them. */
     int minimumWidth = 0;
     static constexpr int smallestWidth = 1024;
-    static constexpr int minimumHeight = 687;
+    static constexpr int minimumHeight = 689;
 
     /** The narrowest window in which the console fits between the palette and the
         inspector with every margin kept, so the palette can always run the full
@@ -343,6 +348,9 @@ private:
 
     /** Where the band's bars start, for the panels above them to stay clear of. */
     int bandTop = 0;
+
+    /** The band's row: the width it spans and the height of its bars. */
+    juce::Rectangle<int> bandRow;
 
     /** Kept alive for the duration of an async file dialog. */
     std::unique_ptr<juce::FileChooser> fileChooser;

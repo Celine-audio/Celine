@@ -38,10 +38,12 @@ namespace Celine
         constexpr int paletteCount = static_cast<int>(std::size(paletteOrder));
         static_assert(paletteCount == numElementTypes, "every element type should be reachable from the palette");
 
-        /** The panel's own padding, and the gap between its two columns. The
-            gap between rows is in Theme::paletteRowHeight. */
-        constexpr int palettePadX = 10;
-        constexpr int palettePadY = 9;
+        /** The panel's own padding, the same on all four sides -- it was a
+            pixel less top and bottom than at the sides, which read as the
+            buttons sitting high and off-centre in the card -- and the gap
+            between its two columns. The gap between rows is in
+            Theme::paletteRowHeight. */
+        constexpr int palettePad = 10;
         constexpr int paletteColumnGap = 4;
         constexpr int paletteEntryHeight = Theme::paletteRowHeight - 4;
 
@@ -390,8 +392,8 @@ namespace Celine
         cells.reserve(static_cast<size_t>(entries.size()));
 
         for (int i = 0; i < entries.size(); ++i)
-            cells.push_back({palettePadX + (i % 2) * (column + paletteColumnGap),
-                             palettePadY + (i / 2) * Theme::paletteRowHeight,
+            cells.push_back({palettePad + (i % 2) * (column + paletteColumnGap),
+                             palettePad + (i / 2) * Theme::paletteRowHeight,
                              column, paletteEntryHeight});
 
         return cells;
@@ -400,14 +402,14 @@ namespace Celine
     int ElementPalette::listWidth() const
     {
         const int column = collapsed ? paletteEntryHeight : Theme::paletteColumnWidth;
-        return 2 * palettePadX + 2 * column + paletteColumnGap;
+        return 2 * palettePad + 2 * column + paletteColumnGap;
     }
 
     int ElementPalette::listHeight() const
     {
         const auto cells = layOutGrid();
-        const int lastBottom = cells.empty() ? palettePadY : cells.back().getBottom();
-        return lastBottom + palettePadY;
+        const int lastBottom = cells.empty() ? palettePad : cells.back().getBottom();
+        return lastBottom + palettePad;
     }
 
     juce::Point<int> ElementPalette::getPreferredSize(int maxHeight) const
@@ -421,9 +423,14 @@ namespace Celine
         return {listWidth() + viewport.getScrollBarThickness() + paletteTabWidth, juce::jmax(0, maxHeight)};
     }
 
+    int ElementPalette::getFoldedBodyWidth() noexcept
+    {
+        return 2 * palettePad + 2 * paletteEntryHeight + paletteColumnGap;
+    }
+
     int ElementPalette::getMaximumWidth() const
     {
-        return 2 * palettePadX + 2 * Theme::paletteColumnWidth + paletteColumnGap
+        return 2 * palettePad + 2 * Theme::paletteColumnWidth + paletteColumnGap
                + viewport.getScrollBarThickness() + paletteTabWidth;
     }
 
@@ -1471,11 +1478,12 @@ namespace Celine
 
     namespace
     {
-        /** Between the card's edge and the viewport the fields scroll in. The
-            fields keep their own 8 px inside that, which puts the text where the
-            design has it; the extra vertical room clears the rounded corners. */
-        constexpr int inspectorInsetX = 12;
-        constexpr int inspectorInsetY = 14;
+        /** Between the card's edge and the fields, the same on all four sides
+            and the palette's padding (`palettePad`), so the two cards down
+            either side of the sheet are cut alike. It was 12 by 14 to the
+            viewport and 8 more inside it, 20 by 22 in all, which read as a
+            card with its contents shrunk into the middle. */
+        constexpr int inspectorPad = 10;
 
         /** A Label's own border either side of its text, which a measurement of
             the text alone leaves out. */
@@ -1515,17 +1523,16 @@ namespace Celine
     {
         // One width whatever is showing, so the card does not jump sideways as
         // the selection changes. What it shows is fitted to it instead.
-        return Theme::inspectorWidth - 2 * inspectorInsetX;
+        return Theme::inspectorWidth - 2 * inspectorPad;
     }
 
     void ElementInspector::fitHintToWidth()
     {
-        // The width a hint line has: the field column less the fields' own
-        // margin either side, as layOutFields leaves it, and a scrollbar's
-        // width spare -- on a short window the list scrolls, the bar takes its
+        // The width a hint line has: the field column, as layOutFields
+        // leaves it, and a scrollbar's width spare -- on a short window the list scrolls, the bar takes its
         // width from the text, and a line measured to fit exactly then wraps,
         // pushing the last lines out of a label sized for one line each.
-        const int room = contentWidth() - 16 - viewport.getScrollBarThickness();
+        const int room = contentWidth() - viewport.getScrollBarThickness();
 
         // The largest size, half a point at a time, at which the longest line
         // fits. Measured rather than scaled, since lettering is hinted to the
@@ -1549,7 +1556,7 @@ namespace Celine
         // the card actually is.
         resized();
 
-        return {width + 2 * inspectorInsetX, height + 2 * inspectorInsetY};
+        return {width + 2 * inspectorPad, height + 2 * inspectorPad};
     }
 
     int ElementInspector::layOutFields(int width)
@@ -1562,7 +1569,7 @@ namespace Celine
         constexpr int roomToMeasureIn = 4000;
         content.setSize(width, roomToMeasureIn);
 
-        auto area = content.getLocalBounds().reduced(8);
+        auto area = content.getLocalBounds();
 
         titleLabel.setBounds(area.removeFromTop(22));
         area.removeFromTop(6);
@@ -1685,12 +1692,12 @@ namespace Celine
         if (hintLabel.isVisible())
             hintLabel.setBounds(area.removeFromTop(hintHeight()));
 
-        return area.getY() + 8;
+        return area.getY();
     }
 
     void ElementInspector::resized()
     {
-        viewport.setBounds(getLocalBounds().reduced(inspectorInsetX, inspectorInsetY));
+        viewport.setBounds(getLocalBounds().reduced(inspectorPad));
 
         // Same two-pass as the console: a scrollbar takes width, and whether one
         // is needed depends on the height. Field heights here don't depend on
