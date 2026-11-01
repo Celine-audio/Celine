@@ -144,13 +144,16 @@ namespace Celine
         void setElement(SchematicModel::Element* element);
 
         /** A live reading -- a current, a power, a scope's voltages -- in
-            engineering notation with exactly four digits after the point.
+            engineering notation with exactly two digits after the point. The
+            prefix already moves the point to where the number is: a third
+            or fourth decimal of a value written in nanowatts is a digit of
+            noise that only cluttered the panel.
 
             Not SymbolPainter::formatValue, which is for a part's value as it
             is written on a schematic: that one trims to two decimals and falls
             back to scientific notation below a pico, which is where a leakage
             current through a big resistor lives -- it came out as
-            "-1.14447e-13A", cut off at the edge of its box. A fixed four
+            "-1.14447e-13A", cut off at the edge of its box. A fixed two
             decimals also keeps the number from changing width as it changes
             value, so a live readout does not shimmer. */
         static juce::String formatReading(double value, const juce::String& unit);

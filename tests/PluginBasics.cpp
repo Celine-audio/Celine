@@ -769,31 +769,33 @@ TEST_CASE ("The inspector is one width whatever it shows, and everything fits it
     }
 }
 
-TEST_CASE ("Readings show four digits after the point", "[plugin][ui]")
+TEST_CASE ("Readings show two digits after the point", "[plugin][ui]")
 {
     using Celine::ElementInspector;
 
-    // The readout that prompted it: a picoamp leak through 475k, which came out
-    // as "-1.14447e-13A" and was cut off at the edge of its box.
-    CHECK (ElementInspector::formatReading (-1.14447e-13, "A") == "-0.1144pA");
-    CHECK (ElementInspector::formatReading (-0.114447, "A") == "-114.4470mA");
-    CHECK (ElementInspector::formatReading (6.22162e-9, "W") == "6.2216nW");
-    CHECK (ElementInspector::formatReading (12.5, "V") == "12.5000V");
-    CHECK (ElementInspector::formatReading (0.0, "V") == "0.0000V");
+    // The readout that prompted the fixed format: a picoamp leak through 475k,
+    // which came out as "-1.14447e-13A" and was cut off at the edge of its box.
+    CHECK (ElementInspector::formatReading (-1.14447e-13, "A") == "-0.11pA");
+    CHECK (ElementInspector::formatReading (-0.114447, "A") == "-114.45mA");
+    CHECK (ElementInspector::formatReading (6.22162e-9, "W") == "6.22nW");
+    CHECK (ElementInspector::formatReading (12.5, "V") == "12.50V");
+    CHECK (ElementInspector::formatReading (0.0, "V") == "0.00V");
 
     // Rounding to zero does not leave a sign behind, and a value that rounds up
     // to the next prefix is written in it.
-    CHECK (ElementInspector::formatReading (-1.0e-18, "A") == "0.0000A");
-    CHECK (ElementInspector::formatReading (0.99999999, "V") == "1.0000V");
+    CHECK (ElementInspector::formatReading (-1.0e-18, "A") == "0.00A");
+    CHECK (ElementInspector::formatReading (0.99999999, "V") == "1.00V");
+    CHECK (ElementInspector::formatReading (0.996, "V") == "1.00V");
+    CHECK (ElementInspector::formatReading (0.994, "V") == "994.00mV");
 
-    // Always exactly four, whatever the size.
+    // Always exactly two, whatever the size.
     for (const double value : { 3.0e-15, 2.2e-11, 4.7e-7, 0.0331, 1.0, 47.0, 999.0, 12345.0, -8.2e5, 3.3e9 })
     {
         const auto text = ElementInspector::formatReading (value, "V");
         INFO (value << " -> " << text);
         const auto decimals = text.fromFirstOccurrenceOf (".", false, false)
                                   .initialSectionContainingOnly ("0123456789");
-        CHECK (decimals.length() == 4);
+        CHECK (decimals.length() == 2);
         CHECK (! text.containsChar ('e'));
     }
 }

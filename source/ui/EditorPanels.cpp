@@ -100,13 +100,14 @@ namespace Celine
         if (! std::isfinite(value))
             return "--" + unit;
 
-        // The largest prefix the value reaches -- pico for anything smaller,
-        // where four decimals still show a few hundredths of a picoamp.
+        // The largest prefix the value reaches once rounded to two decimals --
+        // so 0.999 V reads "1.00V" rather than "999.00mV" -- and pico for
+        // anything smaller.
         const auto* prefix = &prefixes[std::size(prefixes) - 1];
 
         for (const auto& candidate : prefixes)
         {
-            if (std::abs(value) >= candidate.scale * 0.99995)
+            if (std::abs(value) >= candidate.scale * 0.995)
             {
                 prefix = &candidate;
                 break;
@@ -116,11 +117,11 @@ namespace Celine
         const double scaled = value / prefix->scale;
 
         // Nothing to read, or so little it rounds to nothing: plain zero, with
-        // no prefix and no sign -- "-0.0000pV" says something that isn't so.
-        if (std::abs(scaled) < 0.00005)
-            return "0.0000" + unit;
+        // no prefix and no sign -- "-0.00pV" says something that isn't so.
+        if (std::abs(scaled) < 0.005)
+            return "0.00" + unit;
 
-        return juce::String(scaled, 4) + prefix->suffix + unit;
+        return juce::String(scaled, 2) + prefix->suffix + unit;
     }
 
     //==========================================================================
