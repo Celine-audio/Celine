@@ -75,6 +75,12 @@ public:
     /** Whether that preset is a shipped example rather than a file. */
     bool isFactoryPresetLoaded() const { return presetsButton.isFactoryPreset(); }
 
+    /** The dBu switch, kept with this computer's other choices rather than in
+        the session: it is how the person at it reads levels, not part of any
+        circuit, and every window on the machine shows the same. */
+    static bool levelsShownInDbu();
+    static void setLevelsShownInDbu (bool inDbu);
+
 private:
     // Construction, in three parts: the strip along the top, the four panels
     // filling the middle, and the band of fixed controls along the bottom.
@@ -106,6 +112,13 @@ private:
         follow -- and the sheet and the inspector redraw to match. */
     void writeControlPositionToSchematic (const std::vector<int>& elementIds, float position);
     void showSettingsMenu();
+
+    /** Installs what the INPUT and OUTPUT knobs say under themselves: their
+        gain in dB, or -- with the settings menu's dBu switch on -- the
+        calibration level that gain amounts to, which is what a NAM capture
+        rendered here is labelled with (see PluginProcessor::inputGainToDbu).
+        Either way, what is typed back is read in the same unit. */
+    void applyLevelReadouts();
 
     /** Credits and licensing, in a window rather than only in the repository.
 

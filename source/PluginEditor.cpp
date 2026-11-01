@@ -396,9 +396,7 @@ void PluginEditor::buildBottomBand()
     addAndMakeVisible (inputBar);
     addAndMakeVisible (outputBar);
 
-    inputSlider.setTooltip ("Input level");
-    outputSlider.setTooltip ("Output level");
-
+    // Their tooltips are set with their readouts -- see applyLevelReadouts.
     for (auto* slider : { &inputSlider, &outputSlider })
     {
         slider->setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
@@ -443,10 +441,8 @@ void PluginEditor::buildBottomBand()
     outputAttachment = std::make_unique<SliderAttachment> (processorRef.apvts, "output", outputSlider);
 
     // After the attachments, which install the parameters' own text ("3.0", no
-    // unit) and would replace these. Typed back with or without the "dB".
-    for (auto* slider : { &inputSlider, &outputSlider })
-        Celine::ControlStrip::showValueBelow (*slider, Celine::ControlStrip::formatDecibels,
-                                              [] (const juce::String& text) { return text.getDoubleValue(); });
+    // unit) and would replace these.
+    applyLevelReadouts();
     bypassAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
         processorRef.apvts, "bypass", *bypassButton);
     channelModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
@@ -1562,6 +1558,56 @@ juce::StandalonePluginHolder* PluginEditor::standalonePluginHolder()
     return juce::StandalonePluginHolder::getInstance();
 }
 
+namespace
+{
+    const juce::String levelsInDbuKey { "levelsInDbu" };
+}
+
+bool PluginEditor::levelsShownInDbu()
+{
+    // Opened for each read and write, as PresetLibrary does: every instance on
+    // the machine shares the file, and one holding it open would answer stale.
+    const juce::PropertiesFile file (PresetLibrary().getSettingsFile(), PresetLibrary::getSettingsOptions());
+    return file.getBoolValue (levelsInDbuKey, false);
+}
+
+void PluginEditor::setLevelsShownInDbu (bool inDbu)
+{
+    juce::PropertiesFile file (PresetLibrary().getSettingsFile(), PresetLibrary::getSettingsOptions());
+    file.setValue (levelsInDbuKey, inDbu);
+    file.saveIfNeeded();
+}
+
+void PluginEditor::applyLevelReadouts()
+{
+    using Strip = Celine::ControlStrip;
+
+    // Typed back with or without the unit, in whichever unit is showing.
+    const auto number = [] (const juce::String& text) { return text.getDoubleValue(); };
+
+    if (levelsShownInDbu())
+    {
+        Strip::showValueBelow (inputSlider,
+                               [] (double gain) { return Strip::formatDbu (PluginProcessor::inputGainToDbu (gain)); },
+                               [number] (const juce::String& text)
+                               { return number (text) - PluginProcessor::fullScaleSineDbu(); });
+        Strip::showValueBelow (outputSlider,
+                               [] (double gain) { return Strip::formatDbu (PluginProcessor::outputGainToDbu (gain)); },
+                               [number] (const juce::String& text)
+                               { return PluginProcessor::fullScaleSineDbu() - number (text); });
+
+        inputSlider.setTooltip ("Input level, as the dBu a full-scale sine reaches the circuit at");
+        outputSlider.setTooltip ("Output level, as the dBu at the circuit's output that comes out at full scale");
+        return;
+    }
+
+    for (auto* slider : { &inputSlider, &outputSlider })
+        Strip::showValueBelow (*slider, Strip::formatDecibels, number);
+
+    inputSlider.setTooltip ("Input level");
+    outputSlider.setTooltip ("Output level");
+}
+
 void PluginEditor::showSettingsMenu()
 {
     // Accuracy and CPU, and nothing else.
@@ -1646,6 +1692,25 @@ void PluginEditor::showSettingsMenu()
     };
 
     addToggles (performanceToggles, std::size (performanceToggles));
+
+    //--------------------------------------------------------------------------
+    // How the band's two levels read: their gain, or the calibration levels a
+    // capture rendered here is labelled with.
+    menu.addSectionHeader ("Levels");
+
+    juce::PopupMenu::Item dbu ("Show input and output in dBu");
+    dbu.isTicked = levelsShownInDbu();
+    dbu.setAction ([this, wasOn = dbu.isTicked]
+    {
+        setLevelsShownInDbu (! wasOn);
+        applyLevelReadouts();
+
+        setStatus (wasOn ? juce::String ("Input and output shown as gain in dB.")
+                         : juce::String ("Input and output shown in dBu: the level of a full-scale sine at the circuit. "
+                                         "These are the calibration levels for a capture rendered here."),
+                   false);
+    });
+    menu.addItem (dbu);
 
     // Standalone only: in a host the device is the host's business. Straight to
     // the dialog rather than through JUCE's Options button, whose menu of four

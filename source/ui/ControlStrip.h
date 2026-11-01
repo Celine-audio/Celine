@@ -111,6 +111,11 @@ namespace Celine
         /** A gain in decibels, signed, so 0.0 dB reads as the unity it is. */
         static juce::String formatDecibels(double decibels);
 
+        /** A level in dBu, signed, to the hundredth -- which is how a capture's
+            calibration is written down, and every step of a knob moving in
+            tenths of a dB still reads distinctly once -0.79 is added to it. */
+        static juce::String formatDbu(double dbu);
+
         /** The channel picker, which is the one control in the band that is a
             dropdown rather than a knob. */
         static constexpr int comboWidth = 97;

@@ -1,4 +1,5 @@
 #include "helpers/test_helpers.h"
+#include <PluginEditor.h>
 #include <PluginProcessor.h>
 #include <CelineEngine/Components/FastMath.h>
 #include <Schematic/ExampleSchematics.h>
@@ -766,6 +767,61 @@ TEST_CASE ("The inspector is one width whatever it shows, and everything fits it
         inspector.setElement (&part);
         check (SchematicModel::getElementInfo (part.type).name);
         inspector.setElement (nullptr);
+    }
+}
+
+TEST_CASE ("Input and output can read as calibration levels in dBu", "[plugin][ui]")
+{
+    // One volt peak per unit of full scale: a full-scale sine is 0.707 V RMS,
+    // against dBu's 0.775 V.
+    CHECK (PluginProcessor::fullScaleSineDbu() == Catch::Approx (-0.7918).margin (0.0001));
+    CHECK (PluginProcessor::inputGainToDbu (6.0) == Catch::Approx (5.2082).margin (0.0001));
+    CHECK (PluginProcessor::outputGainToDbu (-12.0) == Catch::Approx (11.2082).margin (0.0001));
+
+    CHECK (Celine::ControlStrip::formatDbu (5.2082) == "+5.21 dBu");
+    CHECK (Celine::ControlStrip::formatDbu (-0.7918) == "-0.79 dBu");
+    CHECK (Celine::ControlStrip::formatDbu (-0.001) == "0.00 dBu");
+
+    const auto findKnob = [] (juce::Component& editor, const juce::String& tooltipStart) -> juce::Slider*
+    {
+        for (auto* child : editor.getChildren())
+            if (auto* slider = dynamic_cast<juce::Slider*> (child))
+                if (slider->getTooltip().startsWith (tooltipStart))
+                    return slider;
+        return nullptr;
+    };
+
+    struct Restore
+    {
+        bool was = PluginEditor::levelsShownInDbu();
+        ~Restore() { PluginEditor::setLevelsShownInDbu (was); }
+    } restore;
+
+    PluginEditor::setLevelsShownInDbu (true);
+    {
+        PluginProcessor plugin;
+        std::unique_ptr<juce::AudioProcessorEditor> editor (plugin.createEditor());
+
+        auto* input = findKnob (*editor, "Input level");
+        auto* output = findKnob (*editor, "Output level");
+        REQUIRE (input != nullptr);
+        REQUIRE (output != nullptr);
+
+        CHECK (input->getTextFromValue (0.0) == "-0.79 dBu");
+        CHECK (output->getTextFromValue (-12.0) == "+11.21 dBu");
+
+        // Typed in dBu, it sets the gain that level amounts to.
+        CHECK (input->getValueFromText ("5.21 dBu") == Catch::Approx (6.0).margin (0.01));
+        CHECK (output->getValueFromText ("11.21") == Catch::Approx (-12.0).margin (0.01));
+    }
+
+    PluginEditor::setLevelsShownInDbu (false);
+    {
+        PluginProcessor plugin;
+        std::unique_ptr<juce::AudioProcessorEditor> editor (plugin.createEditor());
+        auto* input = findKnob (*editor, "Input level");
+        REQUIRE (input != nullptr);
+        CHECK (input->getTextFromValue (0.0) == "0.0 dB");
     }
 }
 

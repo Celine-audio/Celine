@@ -384,6 +384,23 @@ public:
     /** Parameter id for live control `index`. */
     static juce::String getControlParameterId (int index) { return "knob" + juce::String (index + 1); }
 
+    /** The level of a full-scale sine at the circuit with its gain at 0 dB, in
+        dBu: one volt peak per unit of full scale (see the input parameter), so
+        0.707 V RMS against dBu's 0.775 V -- -10 log10(1.2), about -0.79. The
+        output is read at the same scale, so it holds at both ends. */
+    static double fullScaleSineDbu() noexcept { return -10.0 * std::log10 (1.2); }
+
+    /** The INPUT knob as a calibration level: the dBu a full-scale sine reaches
+        the circuit at. NAM's `input_level_dbu`, for a capture rendered here.
+        Turning the knob up puts more volts on the circuit for the same signal. */
+    static double inputGainToDbu (double gainDb) noexcept { return fullScaleSineDbu() + gainDb; }
+
+    /** The OUTPUT knob as a calibration level: the dBu at the circuit's output
+        that comes out at full scale. NAM's `output_level_dbu`. The opposite sign
+        to the input's, because this gain comes after the circuit -- turning it
+        down takes more circuit volts to fill the same scale. */
+    static double outputGainToDbu (double gainDb) noexcept { return fullScaleSineDbu() - gainDb; }
+
     juce::AudioProcessorValueTreeState apvts;
 
 private:

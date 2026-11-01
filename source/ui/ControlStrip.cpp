@@ -212,6 +212,13 @@ namespace Celine
         return (tenths > 0 ? "+" : "") + juce::String(tenths / 10.0, 1) + " dB";
     }
 
+    juce::String ControlStrip::formatDbu(double dbu)
+    {
+        // Rounded first, as formatDecibels is, so nothing reads "-0.00".
+        const auto hundredths = juce::roundToInt(dbu * 100.0);
+        return (hundredths > 0 ? "+" : "") + juce::String(hundredths / 100.0, 2) + " dBu";
+    }
+
     void ControlStrip::paint(juce::Graphics& g)
     {
         // The second of the two light surfaces -- see Theme.h. It painted nothing
