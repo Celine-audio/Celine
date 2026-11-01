@@ -149,13 +149,14 @@ namespace Celine
 
         /** Whether a part's pins are marked with a dot.
 
-            On the sheet they are, because that is what says where a wire has to
-            land. In a palette swatch there is nothing to land on: the row is
-            offering you a type, not a placed part, and at swatch size the dots
-            are a large fraction of the symbol -- a resistor is a rectangle a
-            square and a half across with two dots very nearly as wide bolted to
-            its ends, which reads as a dumbbell rather than as a resistor. */
-        bool connectionDots = true;
+            Nowhere, now. On the sheet they once said where a wire had to land,
+            but every lead already ends on its pin, and a dot at each end of
+            every part was clutter a clean schematic doesn't carry -- the dots
+            left on the sheet are the junction dots, which mean something. In
+            a palette swatch they were worse: at swatch size a resistor with a
+            dot at each end read as a dumbbell. Kept as a switch for a view that
+            wants them back. */
+        bool connectionDots = false;
 
         /** How much a caption would land on, given the part and the box it
             would fill, in grid units: nothing at all is zero.

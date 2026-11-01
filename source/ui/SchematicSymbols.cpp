@@ -992,9 +992,6 @@ namespace Celine
         // SymbolPainter::textShowsContents.
         painter.textShowsContents = false;
 
-        // No pin dots -- see SymbolPainter::connectionDots.
-        painter.connectionDots = false;
-
         // No caption in a preview -- the palette already says the name.
         juce::Graphics::ScopedSaveState state(g);
         g.reduceClipRegion(area.toNearestInt());
