@@ -635,10 +635,14 @@ void PluginEditor::updateActionButtons()
     actionButton (Action::Redo).setEnabled (history.canRedo());
 
     const bool hasSelection = ! canvas.getSelection().empty();
+    const bool placing = canvas.getTool() == Celine::SchematicCanvas::Tool::Place;
 
-    for (const auto action : { Action::Mirror, Action::Flip, Action::Copy, Action::Rotate })
-        actionButton (action).setEnabled (hasSelection
-                                         || canvas.getTool() == Celine::SchematicCanvas::Tool::Place);
+    for (const auto action : { Action::Mirror, Action::Flip, Action::Rotate })
+        actionButton (action).setEnabled (hasSelection || placing);
+
+    // Duplicate copies wires as well as parts, so wires alone are enough for it.
+    // The other three turn parts, and have nothing to do to a wire.
+    actionButton (Action::Copy).setEnabled (hasSelection || ! canvas.getSelectedWires().empty() || placing);
 
     // setEnabled repaints the button it is called on, but the undo/redo housing
     // is painted by the editor, so nothing above would bring it up to date.

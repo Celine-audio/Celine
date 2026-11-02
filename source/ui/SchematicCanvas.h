@@ -97,9 +97,9 @@ namespace Celine
         void rotate();
         void deleteSelection();
 
-        /** Duplicates everything selected, a couple of squares down and right,
-            and selects the copies -- so the next drag moves the new ones and
-            the originals stay where they were. */
+        /** Duplicates everything selected -- parts and wires -- a couple of
+            squares down and right, and selects the copies, so the next drag
+            moves the new ones and the originals stay where they were. */
         void duplicateSelection();
 
         /** Mirrors about the part's own vertical axis: the part being placed

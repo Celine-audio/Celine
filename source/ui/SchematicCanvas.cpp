@@ -1646,7 +1646,7 @@ namespace Celine
 
     void SchematicCanvas::duplicateSelection()
     {
-        if (selectedIds.empty())
+        if (selectedIds.empty() && selectedWireIds.empty())
             return;
 
         // Offset so the copies are visibly separate and immediately draggable,
@@ -1678,10 +1678,31 @@ namespace Celine
             }
         }
 
+        // The wires come along at the same offset, so a stage copied with its
+        // wiring arrives wired. They used to be left behind, and a box-selected
+        // stage came out as loose parts. A wire is always straight -- addWire
+        // only splits a diagonal -- so each copy is the one wire added last.
+        std::vector<int> wireCopies;
+
+        for (const int id : selectedWireIds)
+        {
+            const auto* source = schematic.findWire(id);
+
+            if (source == nullptr)
+                continue;
+
+            const juce::Point<int> delta(offset, offset);
+            const auto count = schematic.getWires().size();
+            schematic.addWire(source->a + delta, source->b + delta);
+
+            if (schematic.getWires().size() > count)
+                wireCopies.push_back(schematic.getWires().back().id);
+        }
+
         // The copies become the selection: the thing you just made is the thing
         // you want to move, and leaving the originals selected would make the
         // next drag pull the wrong set.
-        setSelection(std::move(copies));
+        setSelection(std::move(copies), std::move(wireCopies));
         notifyChanged();
     }
 

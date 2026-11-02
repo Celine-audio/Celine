@@ -302,3 +302,66 @@ TEST_CASE ("Duplicate copies the selection and selects the copies", "[gui]")
     // exactly behind what it came from.
     CHECK (copy->x != 4);
 }
+
+TEST_CASE ("Duplicate copies the selected wires with the parts", "[gui]")
+{
+    // A stage selected with its wiring comes out wired. The wires used to be
+    // left behind, and a wire-only selection duplicated nothing at all.
+    Schematic sheet;
+    const auto id = sheet.addElement (ElementType::Resistor, 4, 4);
+    sheet.addWire ({ 4, 6 }, { 4, 10 });
+    sheet.addWire ({ 4, 10 }, { 9, 10 });
+    const int wireA = sheet.getWires()[0].id;
+    const int wireB = sheet.getWires()[1].id;
+
+    SchematicCanvas canvas { sheet };
+    canvas.setBounds (0, 0, 600, 400);
+    canvas.setSelection ({ id }, { wireA, wireB });
+
+    canvas.duplicateSelection();
+
+    REQUIRE (sheet.getElements().size() == 2);
+    REQUIRE (sheet.getWires().size() == 4);
+
+    // The copies are selected, parts and wires together, so the next drag
+    // moves them as one.
+    REQUIRE (canvas.getSelection().size() == 1);
+    REQUIRE (canvas.getSelectedWires().size() == 2);
+    CHECK (canvas.getSelection().front() != id);
+
+    // Each wire is copied at the parts' offset, so it still meets their pins.
+    const auto* part = sheet.findElement (canvas.getSelection().front());
+    const auto* first = sheet.findWire (canvas.getSelectedWires()[0]);
+    const auto* second = sheet.findWire (canvas.getSelectedWires()[1]);
+    REQUIRE (part != nullptr);
+    REQUIRE (first != nullptr);
+    REQUIRE (second != nullptr);
+
+    const juce::Point<int> delta (part->x - 4, part->y - 4);
+    CHECK (first->a == juce::Point<int> (4, 6) + delta);
+    CHECK (first->b == juce::Point<int> (4, 10) + delta);
+    CHECK (second->a == juce::Point<int> (4, 10) + delta);
+    CHECK (second->b == juce::Point<int> (9, 10) + delta);
+
+    // And the originals are where they were.
+    CHECK (sheet.findWire (wireA)->a == juce::Point<int> (4, 6));
+    CHECK (sheet.findWire (wireB)->b == juce::Point<int> (9, 10));
+}
+
+TEST_CASE ("Duplicate works on wires alone", "[gui]")
+{
+    Schematic sheet;
+    sheet.addWire ({ 2, 2 }, { 8, 2 });
+    const int wire = sheet.getWires()[0].id;
+
+    SchematicCanvas canvas { sheet };
+    canvas.setBounds (0, 0, 600, 400);
+    canvas.setSelection ({}, { wire });
+
+    canvas.duplicateSelection();
+
+    REQUIRE (sheet.getWires().size() == 2);
+    REQUIRE (canvas.getSelectedWires().size() == 1);
+    CHECK (canvas.getSelectedWires().front() != wire);
+    CHECK (canvas.getSelection().empty());
+}
