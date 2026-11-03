@@ -1614,7 +1614,8 @@ void PluginEditor::applyLevelReadouts()
 
 void PluginEditor::showSettingsMenu()
 {
-    // Accuracy and CPU, and nothing else.
+    // What the sheet costs and how it reads, then the audio device, then the
+    // plugin itself.
     juce::PopupMenu menu;
 
     //--------------------------------------------------------------------------
@@ -1646,60 +1647,31 @@ void PluginEditor::showSettingsMenu()
         menu.addItem (item);
     }
 
-    menu.addSeparator();
-
-    struct Toggle
-    {
-        const char* name;
-        bool SchematicModel::BuildOptions::* member;
-    };
-
-    const auto addToggles = [this, &menu] (const Toggle* toggles, size_t count)
-    {
-        for (size_t i = 0; i < count; ++i)
-        {
-            const auto member = toggles[i].member;
-
-            juce::PopupMenu::Item item (toggles[i].name);
-            item.isTicked = processorRef.buildOptions.*member;
-            item.setAction ([this, member, name = juce::String (toggles[i].name)]
-            {
-                auto& option = processorRef.buildOptions.*member;
-                option = ! option;
-
-                // All of them change what the matrix contains or how it is
-                // solved, so they need the circuit built again rather than a
-                // live re-stamp.
-                rebuildCircuit();
-                setStatus (name + (option ? " on" : " off"), false);
-            });
-
-            menu.addItem (item);
-        }
-    };
-
     //--------------------------------------------------------------------------
-    // All accurate by default: this section is what you give up to save CPU.
+    // Fast maths is the one build option, and it is not an accuracy trade: the
+    // approximations are four orders tighter than Newton's tolerance. Whether it
+    // saves anything depends on the platform's own maths library.
+    menu.addSeparator();
     menu.addSectionHeader ("Performance");
 
-    const Toggle performanceToggles[] = {
-        { "Model valve interelectrode capacitance",
-          &SchematicModel::BuildOptions::interelectrodeCapacitance },
-        { "Model semiconductor junction capacitance",
-          &SchematicModel::BuildOptions::transistorJunctionCapacitance },
-        { "Model transistor Early effect",
-          &SchematicModel::BuildOptions::transistorEarlyEffect },
-        { "Fast exp / log / pow",
-          &SchematicModel::BuildOptions::fastMath },
-        { "Predict the Newton convergence starting point",
-          &SchematicModel::BuildOptions::predictNewtonSeed },
-    };
+    juce::PopupMenu::Item fastMath ("Fast exp / log / pow");
+    fastMath.isTicked = processorRef.buildOptions.fastMath;
+    fastMath.setAction ([this]
+    {
+        auto& option = processorRef.buildOptions.fastMath;
+        option = ! option;
 
-    addToggles (performanceToggles, std::size (performanceToggles));
+        // Process-wide in the engine and set by the build, so it takes a rebuild
+        // rather than a live re-stamp.
+        rebuildCircuit();
+        setStatus (option ? juce::String ("Fast exp / log / pow on.") : juce::String ("Fast exp / log / pow off."), false);
+    });
+    menu.addItem (fastMath);
 
     //--------------------------------------------------------------------------
     // How the band's two levels read: their gain, or the calibration levels a
     // capture rendered here is labelled with.
+    menu.addSeparator();
     menu.addSectionHeader ("Levels");
 
     juce::PopupMenu::Item dbu ("Show input and output in dBu");
@@ -1716,12 +1688,14 @@ void PluginEditor::showSettingsMenu()
     });
     menu.addItem (dbu);
 
+    //--------------------------------------------------------------------------
     // Standalone only: in a host the device is the host's business. Straight to
     // the dialog rather than through JUCE's Options button, whose menu of four
     // is three things nobody clicking this is asking for.
     if (auto* holder = standalonePluginHolder())
     {
         menu.addSeparator();
+        menu.addSectionHeader ("Audio");
 
         juce::PopupMenu::Item audio ("Audio / MIDI settings" + ellipsis);
         audio.setAction ([holder] { holder->showAudioSettingsDialog(); });
@@ -1729,9 +1703,11 @@ void PluginEditor::showSettingsMenu()
         menu.addItem (audio);
     }
 
-    // Every build, not the standalone only: in a host this is the only route to
-    // the licence notice.
+    //--------------------------------------------------------------------------
+    // The plugin itself. Every build, not the standalone only: in a host this is
+    // the only route to the licence notice.
     menu.addSeparator();
+    menu.addSectionHeader (PresetLibrary::getProductName());
 
     // The update check, which the first-run question set and this can change.
     juce::PopupMenu::Item updates ("Check for updates at launch");

@@ -1299,31 +1299,14 @@ juce::ValueTree PluginProcessor::createDocument()
     document.appendChild (apvts.copyState(), nullptr);
     document.appendChild (schematic.toValueTree(), nullptr);
 
-    // Always written, unlike the build options below. Those are omitted when
-    // they hold their default so that an unchanged sheet stays byte-identical
-    // to one saved before the option existed; this one has no default worth
+    // Always written, unlike the build option below. That is omitted when it
+    // holds its default so that an unchanged sheet stays byte-identical to one
+    // saved before the option existed; this one has no default worth
     // preserving and is only useful when it is there.
     document.setProperty (documentVersionProperty, getBuildVersion(), nullptr);
 
-    // Written only when switched off, so an accurate sheet stays byte-identical
-    // to one saved before the option existed.
-    if (! buildOptions.interelectrodeCapacitance)
-        document.setProperty ("interelectrodeCapacitance", false, nullptr);
-
     if (buildOptions.fastMath)
         document.setProperty ("fastMath", true, nullptr);
-
-    if (buildOptions.predictNewtonSeed)
-        document.setProperty ("predictNewtonSeed", true, nullptr);
-
-    // Same rule as the valve capacitance above, and for the same reason: these
-    // are accurate by default, so they are written only when switched off and
-    // an accurate sheet stays byte-identical to one saved before they existed.
-    if (! buildOptions.transistorJunctionCapacitance)
-        document.setProperty ("transistorJunctionCapacitance", false, nullptr);
-
-    if (! buildOptions.transistorEarlyEffect)
-        document.setProperty ("transistorEarlyEffect", false, nullptr);
 
     if (oversamplingFactor != 1)
         document.setProperty ("oversampling", oversamplingFactor, nullptr);
@@ -1344,16 +1327,11 @@ bool PluginProcessor::restoreDocument (const juce::ValueTree& document)
     if (! drawing.isValid())
         return false;
 
-    // Absent means accurate: files written before the option existed, and every
-    // sheet that never turned it off, land on the full simulation.
-    buildOptions.interelectrodeCapacitance = document.getProperty ("interelectrodeCapacitance", true);
+    // A sheet saved with interelectrodeCapacitance, transistorJunctionCapacitance
+    // or transistorEarlyEffect switched off, or with predictNewtonSeed on, still
+    // carries the property. It is ignored: the physics is always modelled now,
+    // and the seed prediction is gone, so such a sheet opens on the full model.
     buildOptions.fastMath = document.getProperty ("fastMath", false);
-    buildOptions.predictNewtonSeed = document.getProperty ("predictNewtonSeed", false);
-
-    // Absent means accurate, as above: a sheet drawn before these existed opens
-    // on the full model rather than being frozen at the older, simpler one.
-    buildOptions.transistorJunctionCapacitance = document.getProperty ("transistorJunctionCapacitance", true);
-    buildOptions.transistorEarlyEffect = document.getProperty ("transistorEarlyEffect", true);
 
     // Set before the rebuild below, so the circuits are prepared at the right
     // rate first time rather than being built and immediately rebuilt.

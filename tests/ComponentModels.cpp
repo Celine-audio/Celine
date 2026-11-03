@@ -1763,8 +1763,7 @@ namespace
         Pins are joined to named nodes rather than to each other: a label names
         its net, which spares routing wires past other parts' pins. Returns the
         settled amplitude at the output. */
-    float probeStage(ElementType type, int modelIndex, const BuildOptions& options = {},
-                     double frequency = 1000.0)
+    float probeStage(ElementType type, int modelIndex, double frequency = 1000.0)
     {
         Schematic schematic;
 
@@ -1822,7 +1821,7 @@ namespace
         const auto output = schematic.addElement(ElementType::Output, 0, 80);
         label(pin(output, 0), "outn", -4);
 
-        auto result = buildCircuits(schematic, sampleRate, 1, options);
+        auto result = buildCircuits(schematic, sampleRate, 1);
         INFO(result.error);
         REQUIRE(result.isValid());
 
@@ -1993,29 +1992,6 @@ TEST_CASE("An amplifier with too low a supply is refused by name", "[plugin][sch
 
         CHECK(stage(type, 9.0).first.isValid());
     }
-}
-
-TEST_CASE("The junction capacitance option reaches the MOSFET", "[plugin][schematic]")
-{
-    // Driven through 100k, the gate-drain capacitance times the stage's gain
-    // is a lowpass near the top of the audio band -- near rather than inside,
-    // since the drain feedback that biases the stage also lowers the gate's
-    // impedance. Off, it goes.
-    BuildOptions with, without;
-    without.transistorJunctionCapacitance = false;
-
-    const float on = probeStage(ElementType::Mosfet, 0, with, 10000.0);
-    const float off = probeStage(ElementType::Mosfet, 0, without, 10000.0);
-
-    // 8.5% down at 10 kHz with Vishay's 6.3 pF gate-drain, which is half
-    // what the card used to carry -- the test is that the option reaches the
-    // part, not how much there is to reach.
-    INFO("10 kHz: " << on << " with the capacitances, " << off << " without");
-    CHECK(on < 0.95f * off);
-
-    // And at a low frequency they agree: it is only the capacitance.
-    CHECK(probeStage(ElementType::Mosfet, 0, with, 100.0)
-          == Catch::Approx(probeStage(ElementType::Mosfet, 0, without, 100.0)).epsilon(0.02));
 }
 
 TEST_CASE("A drawn LM386 builds, amplifies, and leaves its gain pins open quietly", "[plugin][schematic][poweramp]")

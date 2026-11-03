@@ -98,58 +98,6 @@ namespace SchematicModel
             }
         }
 
-        /** Applies the build options to a valve model. Turning the capacitance
-            off is a matter of zeroing it: the engine already reads a zero as
-            "don't model this", so there is no second switch to keep in step. */
-        template <typename Model>
-        Model withOptions(Model model, const BuildOptions& options)
-        {
-            if (! options.interelectrodeCapacitance)
-                model.capGridCathode = model.capGridPlate = model.capPlateCathode = 0.0;
-
-            return model;
-        }
-
-        /** Same idea for transistors: off zeroes the fields and the device
-            model reads a zero as "don't model it". */
-        Circuit::BjtModel withOptions(Circuit::BjtModel model, const BuildOptions& options)
-        {
-            if (! options.transistorJunctionCapacitance)
-                model.capBaseEmitter = model.capBaseCollector = 0.0;
-
-            if (! options.transistorEarlyEffect)
-                model.forwardEarlyVoltage = 0.0;
-
-            return model;
-        }
-
-        /** The other semiconductors' junction capacitances go with the
-            transistors': one switch, "junction capacitance", for every part
-            whose capacitance is a junction's. */
-        Circuit::DiodeModel withOptions(Circuit::DiodeModel model, const BuildOptions& options)
-        {
-            if (! options.transistorJunctionCapacitance)
-                model.junctionCapacitance = 0.0;
-
-            return model;
-        }
-
-        Circuit::JfetModel withOptions(Circuit::JfetModel model, const BuildOptions& options)
-        {
-            if (! options.transistorJunctionCapacitance)
-                model.capGateSource = model.capGateDrain = 0.0;
-
-            return model;
-        }
-
-        Circuit::MosfetModel withOptions(Circuit::MosfetModel model, const BuildOptions& options)
-        {
-            if (! options.transistorJunctionCapacitance)
-                model.capGateSource = model.capGateDrain = 0.0;
-
-            return model;
-        }
-
         Circuit::PentodeModel pentodeModelFor(int index)
         {
             switch (index)
@@ -697,8 +645,7 @@ namespace SchematicModel
         /** Stamps one element. Terminals, annotations and scopes stamp nothing:
             a terminal has already named its net, an annotation has no pins, and
             a scope must not change the node it watches. */
-        void addElement(Circuit& circuit, const Element& element, const PinNets& net,
-                        const BuildOptions& options, double sampleRate,
+        void addElement(Circuit& circuit, const Element& element, const PinNets& net, double sampleRate,
                         std::vector<LiveControl>& controls, int& potOrdinal, int& switchOrdinal)
         {
             switch (element.type)
@@ -735,21 +682,19 @@ namespace SchematicModel
                     break;
 
                 case ElementType::Diode:
-                    circuit.addDiode(net(0), net(1), withOptions(diodeModelFor(element.modelIndex), options));
+                    circuit.addDiode(net(0), net(1), diodeModelFor(element.modelIndex));
                     break;
 
                 case ElementType::Transistor:
-                    circuit.addTransistor(net(0), net(1), net(2),
-                                          withOptions(transistorModelFor(element.modelIndex), options));
+                    circuit.addTransistor(net(0), net(1), net(2), transistorModelFor(element.modelIndex));
                     break;
 
                 case ElementType::Jfet:
-                    circuit.addJfet(net(0), net(1), net(2), withOptions(jfetModelFor(element.modelIndex), options));
+                    circuit.addJfet(net(0), net(1), net(2), jfetModelFor(element.modelIndex));
                     break;
 
                 case ElementType::Mosfet:
-                    circuit.addMosfet(net(0), net(1), net(2),
-                                      withOptions(mosfetModelFor(element.modelIndex), options));
+                    circuit.addMosfet(net(0), net(1), net(2), mosfetModelFor(element.modelIndex));
                     break;
 
                 case ElementType::PowerAmp:
@@ -760,8 +705,7 @@ namespace SchematicModel
                     break;
 
                 case ElementType::Triode:
-                    circuit.addTriode(net(0), net(1), net(2),
-                                      withOptions(triodeModelFor(element.modelIndex), options));
+                    circuit.addTriode(net(0), net(1), net(2), triodeModelFor(element.modelIndex));
                     break;
 
                 case ElementType::VacuumDiode:
@@ -771,8 +715,7 @@ namespace SchematicModel
                 case ElementType::Pentode:
                     // No suppressor node: the Koren model has no term for it,
                     // g3 being taken to sit at the cathode.
-                    circuit.addPentode(net(0), net(1), net(2), net(3),
-                                       withOptions(pentodeModelFor(element.modelIndex), options));
+                    circuit.addPentode(net(0), net(1), net(2), net(3), pentodeModelFor(element.modelIndex));
                     break;
 
                 case ElementType::OpAmp:
@@ -918,10 +861,9 @@ namespace SchematicModel
             int potOrdinal = 1, switchOrdinal = 1;
 
             for (size_t e = 0; e < elements.size(); ++e)
-                addElement(*circuit, elements[e], PinNets{nets, e}, options, sampleRate,
+                addElement(*circuit, elements[e], PinNets{nets, e}, sampleRate,
                            controls, potOrdinal, switchOrdinal);
 
-            circuit->setPortVoltagePrediction(options.predictNewtonSeed);
             circuit->setInputNode("in");
             circuit->setOutputNode("out");
             circuit->prepare(sampleRate);

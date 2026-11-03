@@ -52,8 +52,6 @@ namespace
         double load = 4.7e3; // the follower's load when there is no tone stack
         double outputCoupling = 100e-9;
         bool secondHalf = false;
-        bool interelectrode = true;
-        bool predict = false;
     };
 
     enum class Drive
@@ -93,9 +91,7 @@ namespace
 
     Circuit build(const Preamp& preamp)
     {
-        auto model = Circuit::TriodeModel::ecc83();
-        if (! preamp.interelectrode)
-            model.capGridCathode = model.capGridPlate = model.capPlateCathode = 0.0;
+        const auto model = Circuit::TriodeModel::ecc83();
 
         Circuit c;
         c.addVoltageSource("bplus", "gnd", preamp.bplus);
@@ -153,7 +149,6 @@ namespace
 
         c.setInputNode("in");
         c.setOutputNode(out);
-        c.setPortVoltagePrediction(preamp.predict);
         c.prepare(preamp.rate);
         return c;
     }
@@ -233,10 +228,11 @@ TEST_CASE("High-gain preamps converge on every sample", "[circuit][valve]")
         double level;
     };
 
-    // Two seconds of each, at the rate and with the seed prediction each one
-    // was found with. Where a version failed is chaotic -- it moves with the
-    // bits of every sample before -- so these are the whole renders that
-    // caught them, not a window around the sample.
+    // Two seconds of each, at the rate each one was found at. Where a version
+    // failed is chaotic -- it moves with the bits of every sample before -- so
+    // these are the whole renders that caught them, not a window around the
+    // sample. Three were found with Newton seeded by a straight-line guess,
+    // since removed; they stay as hard cases without it.
     const Case cases[] = {
         // A squared-off edge flips four stages within a thousandth of one
         // sample's step. Wherever a grid crossed the onset of grid current
@@ -248,7 +244,7 @@ TEST_CASE("High-gain preamps converge on every sample", "[circuit][valve]")
               { 68e3, 220e3, 820.0, 22e-6, 47e-9, 3.3e6 },
               { 1e3, 68e3, 2700.0, 22e-6, 22e-9, 3.3e6 },
               { 68e3, 68e3, 10e3, 0.68e-6, 4.7e-9, 470e3 } },
-            100e3, true, 4.7e3, 100e-9, true, true, true },
+            100e3, true, 4.7e3, 100e-9, true },
           Drive::clippedNotes, 2.0 },
 
         // The Dual Rectifier's arrangement: cold clippers on 39k cathodes ahead
@@ -261,7 +257,7 @@ TEST_CASE("High-gain preamps converge on every sample", "[circuit][valve]")
               { 0.0, 100e3, 1500.0, 0.0, 4.7e-9, 220e3 },
               { 33e3, 68e3, 39e3, 0.0, 47e-9, 220e3 },
               { 470e3, 150e3, 39e3, 0.0, 47e-9, 1e6 } },
-            100e3, true, 4.7e3, 22e-9, false, true, true },
+            100e3, true, 4.7e3, 22e-9, false },
           Drive::clippedNotes, 1.0 },
 
         { "680k and 470k grid stoppers around a cold stage, the follower, tone stack and second half, a sweep at 0.5 V",
@@ -270,7 +266,7 @@ TEST_CASE("High-gain preamps converge on every sample", "[circuit][valve]")
               { 33e3, 150e3, 1500.0, 1e-6, 1e-9, 470e3 },
               { 680e3, 100e3, 680.0, 0.0, 22e-9, 3.3e6 },
               { 470e3, 220e3, 680.0, 22e-6, 22e-9, 1e6 } },
-            120e3, true, 4.7e3, 100e-9, true, true, false },
+            120e3, true, 4.7e3, 100e-9, true },
           Drive::sweep, 0.5 },
 
         { "three stages at 96 kHz, a 680k stopper and a 39k cold clipper, the follower, tone stack and second half, a sweep at 0.2 V",
@@ -278,7 +274,7 @@ TEST_CASE("High-gain preamps converge on every sample", "[circuit][valve]")
             { { 0.0, 120e3, 1800.0, 22e-6, 4.7e-9, 3.3e6 },
               { 680e3, 220e3, 1800.0, 0.0, 4.7e-9, 1e6 },
               { 68e3, 220e3, 39e3, 0.0, 22e-9, 3.3e6 } },
-            100e3, true, 4.7e3, 220e-9, true, true, true },
+            100e3, true, 4.7e3, 220e-9, true },
           Drive::sweep, 0.2 },
     };
 
@@ -307,6 +303,73 @@ TEST_CASE("High-gain preamps converge on every sample", "[circuit][valve]")
         // A sample given up on leaves whatever the iteration was holding, and
         // that has reached kilovolts. Nothing real leaves the supply.
         CHECK(peak < test.preamp.bplus);
+    }
+}
+
+//==============================================================================
+namespace
+{
+    /** Two of the preamps above, one clipping hard through every stage and one
+        played cleanly, between them grids that conduct on every peak and grids
+        that never do -- the two kinds of current row a Newton step has. */
+    struct SolverCase
+    {
+        const char* what;
+        Preamp preamp;
+        Drive drive;
+        double level;
+    };
+
+    std::vector<SolverCase> solverCases()
+    {
+        const Preamp fourStages { 48000.0, 420.0,
+                                  { { 0.0, 120e3, 1800.0, 22e-6, 22e-9, 470e3 },
+                                    { 68e3, 220e3, 820.0, 22e-6, 47e-9, 3.3e6 },
+                                    { 1e3, 68e3, 2700.0, 22e-6, 22e-9, 3.3e6 },
+                                    { 68e3, 68e3, 10e3, 0.68e-6, 4.7e-9, 470e3 } },
+                                  100e3, true, 4.7e3, 100e-9, true };
+
+        return { { "four stages and the VH4's second half, clipped notes at 2 V", fourStages, Drive::clippedNotes, 2.0 },
+                 { "the same, plucked at 20 mV", fourStages, Drive::plucks, 0.02 } };
+    }
+} // namespace
+
+TEST_CASE("The reduced Newton step lands where the full one does", "[circuit][valve]")
+{
+    // Each reduced step is Newton's on a Jacobian a millionth from exact, so it
+    // has to arrive at the same answer to well under anything audible. And it
+    // has to have actually been taken: a reduced step that always fell back to
+    // the full one would pass the comparison and test nothing.
+    for (const auto& test : solverCases())
+    {
+        INFO(test.what);
+
+        auto full = build(test.preamp);
+        auto reduced = build(test.preamp);
+        full.setReducedNewtonStep(false);
+
+        Guitar guitar(test.drive, test.preamp.rate, test.level);
+        double peak = 0.0, largestDifference = 0.0;
+        long long iterations = 0, activeRows = 0;
+
+        for (int i = 0; i < static_cast<int>(test.preamp.rate); ++i)
+        {
+            const auto in = static_cast<float>(guitar(i));
+            const double a = full.process(in);
+            const double b = reduced.process(in);
+
+            peak = std::max(peak, std::abs(a));
+            largestDifference = std::max(largestDifference, std::abs(a - b));
+            iterations += reduced.getLastIterationCount();
+            activeRows += reduced.getLastActiveRowCount();
+        }
+
+        CHECK(full.getNonConvergenceCount() == 0);
+        CHECK(reduced.getNonConvergenceCount() == 0);
+        CHECK(largestDifference <= 1.0e-6 * peak); // -120 dB
+
+        CHECK(activeRows > 0);
+        CHECK(activeRows < iterations * reduced.getPortCount());
     }
 }
 
@@ -348,8 +411,6 @@ namespace
         p.load = pick(random, { 4.7e3, 10e3, 33e3, 100e3 });
         p.outputCoupling = pick(random, { 22e-9, 100e-9, 220e-9 });
         p.secondHalf = pick(random, { 0.0, 1.0 }) > 0.5;
-        p.interelectrode = pick(random, { 0.0, 1.0, 1.0 }) > 0.5;
-        p.predict = pick(random, { 0.0, 1.0 }) > 0.5;
         level = pick(random, { 0.05, 0.2, 0.5, 1.0, 2.0 });
         drive = static_cast<Drive>(static_cast<int>(pick(random, { 0.0, 1.0, 2.0, 3.0 })));
         return p;
@@ -372,7 +433,6 @@ namespace
 
         s << "], follower Rk " << p.followerCathode << (p.toneStack ? " into the tone stack" : " into " + juce::String(p.load))
           << ", Cout " << p.outputCoupling << (p.secondHalf ? ", second half" : "")
-          << (p.interelectrode ? ", interelectrode" : ", no interelectrode") << (p.predict ? ", predict" : "")
           << ", " << drives[static_cast<int>(drive)] << " at " << level << " V";
         return s;
     }

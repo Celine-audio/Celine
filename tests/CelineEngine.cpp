@@ -733,53 +733,47 @@ TEST_CASE("A gain stage driving a loaded cathode follower converges on every sam
     // ran away on hundreds of samples a second of this, each one a click: the
     // follower's grid came out at 190 V. Continuation in solveWithDk() walks
     // the hard samples there instead.
-    for (const bool predict : {false, true})
+    Circuit c;
+    c.addVoltageSource("bplus", "gnd", 370.0);
+    c.addTriode("plate", "in", "cathode", Circuit::TriodeModel::ecc83());
+    c.addResistor("bplus", "plate", 120e3);
+    c.addResistor("cathode", "gnd", 640.0);
+    c.addTriode("bplus", "plate", "follower", Circuit::TriodeModel::ecc83());
+    c.addResistor("follower", "gnd", 120e3);
+    c.addCapacitor("follower", "out", 220e-9);
+    c.addResistor("out", "gnd", 4.7e3);
+    c.setInputNode("in");
+    c.setOutputNode("out");
+    c.prepare(sampleRate);
+
+    REQUIRE(c.foundOperatingPoint());
+
+    const auto plate = c.getNodeIndex("plate");
+    const auto follower = c.getNodeIndex("follower");
+    double worstGridToCathode = -1.0e9;
+
+    // Notes as they reach the last stage of a high-gain preamp: already
+    // clipped nearly square by the stages before, so their edges are a
+    // sample or two long, and decaying as the string does.
+    for (const double frequency : {82.41, 110.0, 146.83, 196.0, 329.63, 659.26})
     {
-        INFO("Newton seed prediction " << (predict ? "on" : "off"));
-
-        Circuit c;
-        c.addVoltageSource("bplus", "gnd", 370.0);
-        c.addTriode("plate", "in", "cathode", Circuit::TriodeModel::ecc83());
-        c.addResistor("bplus", "plate", 120e3);
-        c.addResistor("cathode", "gnd", 640.0);
-        c.addTriode("bplus", "plate", "follower", Circuit::TriodeModel::ecc83());
-        c.addResistor("follower", "gnd", 120e3);
-        c.addCapacitor("follower", "out", 220e-9);
-        c.addResistor("out", "gnd", 4.7e3);
-        c.setInputNode("in");
-        c.setOutputNode("out");
-        c.setPortVoltagePrediction(predict);
-        c.prepare(sampleRate);
-
-        REQUIRE(c.foundOperatingPoint());
-
-        const auto plate = c.getNodeIndex("plate");
-        const auto follower = c.getNodeIndex("follower");
-        double worstGridToCathode = -1.0e9;
-
-        // Notes as they reach the last stage of a high-gain preamp: already
-        // clipped nearly square by the stages before, so their edges are a
-        // sample or two long, and decaying as the string does.
-        for (const double frequency : {82.41, 110.0, 146.83, 196.0, 329.63, 659.26})
+        for (int i = 0; i < static_cast<int>(sampleRate); ++i)
         {
-            for (int i = 0; i < static_cast<int>(sampleRate); ++i)
-            {
-                const double t = i / sampleRate;
-                const double note = std::tanh(12.0 * std::sin(2.0 * std::numbers::pi * frequency * t));
+            const double t = i / sampleRate;
+            const double note = std::tanh(12.0 * std::sin(2.0 * std::numbers::pi * frequency * t));
 
-                REQUIRE(std::isfinite(c.process(static_cast<float>(60.0 * std::exp(-2.0 * t) * note))));
-                worstGridToCathode = std::max(worstGridToCathode, c.getNodeVoltage(plate) - c.getNodeVoltage(follower));
-            }
+            REQUIRE(std::isfinite(c.process(static_cast<float>(60.0 * std::exp(-2.0 * t) * note))));
+            worstGridToCathode = std::max(worstGridToCathode, c.getNodeVoltage(plate) - c.getNodeVoltage(follower));
         }
-
-        CHECK(c.getNonConvergenceCount() == 0);
-
-        // The follower's grid really did conduct, so the hard case is the one
-        // being run, and stayed where a valve's grid can be.
-        INFO("follower grid above its cathode, at most " << worstGridToCathode << " V");
-        CHECK(worstGridToCathode > 0.5);
-        CHECK(worstGridToCathode < 3.0);
     }
+
+    CHECK(c.getNonConvergenceCount() == 0);
+
+    // The follower's grid really did conduct, so the hard case is the one
+    // being run, and stayed where a valve's grid can be.
+    INFO("follower grid above its cathode, at most " << worstGridToCathode << " V");
+    CHECK(worstGridToCathode > 0.5);
+    CHECK(worstGridToCathode < 3.0);
 }
 
 TEST_CASE("A pentode stage's currents add up", "[circuit][valve]")

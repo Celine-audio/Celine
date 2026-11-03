@@ -1477,7 +1477,7 @@ namespace
         audio band. The same layout discipline as the valve probe: coincident
         pins wherever they reach, and wires routed clear of other parts' pins
         (a wire's corner goes across first, then down). */
-    float probeTransistorStage (const SchematicModel::BuildOptions& options, double frequency)
+    float probeTransistorStage (double frequency)
     {
         using namespace SchematicModel;
 
@@ -1530,7 +1530,7 @@ namespace
         schematic.addWire (pin (coupling, 0), pin (source, 1));
         schematic.addWire (pin (source, 0), base);
 
-        auto result = buildCircuits (schematic, 48000.0, 1, options);
+        auto result = buildCircuits (schematic, 48000.0, 1);
         INFO (result.error);
         REQUIRE (result.isValid());
 
@@ -1555,170 +1555,45 @@ namespace
     }
 }
 
-TEST_CASE ("Transistor modelling options change the built circuit", "[plugin][schematic]")
+TEST_CASE ("A built transistor stage carries its junction capacitance", "[plugin][schematic]")
 {
-    using namespace SchematicModel;
+    // Built without its junction capacitances this stage measured flat to
+    // 20 kHz, within 5% of its 1 kHz gain, when they could still be switched
+    // off. So a rolloff here is the Miller-multiplied base-collector
+    // capacitance, and nothing else in the stage: the ~9 kHz pole leaves the
+    // 1 kHz gain alone and takes the top end away.
+    const float at1k = probeTransistorStage (1000.0);
+    const float at20k = probeTransistorStage (20000.0);
 
-    // Both default to on, with the rest of BuildOptions: accurate unless the
-    // CPU is wanted back.
-    const BuildOptions defaults;
-    CHECK (defaults.transistorJunctionCapacitance);
-    CHECK (defaults.transistorEarlyEffect);
-
-    // Each comparison sets *both* flags explicitly rather than leaning on the
-    // defaults for one side. Leaning on them is how this test came to pass
-    // vacuously when they flipped: "off" and "on" were the same build, and a
-    // difference of exactly zero satisfied an approximate equality.
-    BuildOptions bare;
-    bare.transistorJunctionCapacitance = false;
-    bare.transistorEarlyEffect = false;
-
-    // Junction capacitance: at 1 kHz the pole hasn't bitten yet, at 20 kHz it
-    // is well past it -- so the toggle should leave the low end alone and take
-    // the top end away.
-    BuildOptions caps = bare;
-    caps.transistorJunctionCapacitance = true;
-
-    const float flat1k = probeTransistorStage (bare, 1000.0);
-    const float capped1k = probeTransistorStage (caps, 1000.0);
-    const float flat20k = probeTransistorStage (bare, 20000.0);
-    const float capped20k = probeTransistorStage (caps, 20000.0);
-
-    INFO ("1 kHz: " << flat1k << " off, " << capped1k << " on;  20 kHz: "
-          << flat20k << " off, " << capped20k << " on");
-
-    CHECK (capped1k == Catch::Approx (flat1k).epsilon (0.05));
-    CHECK (flat20k == Catch::Approx (flat1k).epsilon (0.05));  // no caps, no pole
-    CHECK (capped20k < capped1k * 0.7f);                       // past the ~9 kHz pole
-
-    // Early effect: a few percent of gain, present at 1 kHz already. The sign
-    // is the topology's business (see the engine-level test), so what is pinned
-    // here is that it is small, and that it is there.
-    BuildOptions early = bare;
-    early.transistorEarlyEffect = true;
-
-    const float withEarly = probeTransistorStage (early, 1000.0);
-    const float change = withEarly / flat1k - 1.0f;
-
-    INFO ("Early effect gain change: " << change * 100.0f << "%");
-    CHECK (std::abs (change) > 0.005f);
-    CHECK (std::abs (change) < 0.10f);
+    INFO ("1 kHz: " << at1k << ", 20 kHz: " << at20k);
+    CHECK (at20k < at1k * 0.7f);
 }
 
-TEST_CASE ("Interelectrode capacitance can be traded away for CPU", "[plugin][schematic]")
+TEST_CASE ("Sheets saved with the old accuracy switches open on the full model", "[plugin]")
 {
-    using namespace SchematicModel;
-
-    // A valve stage is the case the option exists for -- three capacitors per
-    // valve, and in DK every capacitor is a state variable. Any example with a
-    // valve in it will do, so take the first one that has one.
-    Schematic schematic;
-    const auto names = Examples::getNames();
-    bool found = false;
-
-    for (int i = 0; i < names.size() && ! found; ++i)
-    {
-        Examples::load (schematic, i);
-
-        for (const auto& e : schematic.getElements())
-            found = found || e.type == ElementType::Triode || e.type == ElementType::Pentode;
-    }
-
-    REQUIRE (found);
-
-    auto settle = [&schematic] (bool interelectrode)
-    {
-        auto result = buildCircuits (schematic, 48000.0, 1, BuildOptions { interelectrode });
-        REQUIRE (result.isValid());
-
-        auto& circuit = *result.circuits[0];
-        float out = 0.0f;
-        double phase = 0.0;
-
-        for (int i = 0; i < 4000; ++i)
-        {
-            out = circuit.process (0.2f * (float) std::sin (phase));
-            phase += 2.0 * juce::MathConstants<double>::pi * 4000.0 / 48000.0;
-        }
-
-        REQUIRE (std::isfinite (out));
-        return out;
-    };
-
-    // Turning it off has to actually change the circuit -- at 4 kHz, which is
-    // where the rolloff it models lives.
-    CHECK (std::abs (settle (true) - settle (false)) > 1.0e-6f);
-}
-
-TEST_CASE ("Build options travel with the document", "[plugin]")
-{
+    // Interelectrode capacitance, junction capacitance and the Early effect
+    // could once be switched off, and Newton's starting point predicted. A
+    // sheet saved that way still carries the properties. They are ignored --
+    // the physics is always modelled -- and the next save leaves them out, so
+    // the sheet stops claiming a setting nothing reads.
     PluginProcessor plugin;
-
-    // Accurate by default: nobody opts into the full simulation.
-    CHECK (plugin.buildOptions.interelectrodeCapacitance);
-
-    // An untouched sheet carries no option at all, so a file saved today still
-    // matches one saved before the setting existed.
-    CHECK (! plugin.createDocument().hasProperty ("interelectrodeCapacitance"));
-
-    plugin.buildOptions.interelectrodeCapacitance = false;
-    const auto preset = plugin.createDocument();
-    CHECK (preset.hasProperty ("interelectrodeCapacitance"));
-
-    // Unlike the window size, this one belongs to the circuit: it changes what
-    // the sheet sounds like, so a shared .celsch has to bring it along.
-    PluginProcessor loaded;
-    REQUIRE (loaded.restoreDocument (preset));
-    CHECK (! loaded.buildOptions.interelectrodeCapacitance);
-
-    // And a document from before the option existed reads as accurate.
     auto old = plugin.createDocument();
-    old.removeProperty ("interelectrodeCapacitance", nullptr);
-
-    PluginProcessor upgraded;
-    upgraded.buildOptions.interelectrodeCapacitance = false;
-    REQUIRE (upgraded.restoreDocument (old));
-    CHECK (upgraded.buildOptions.interelectrodeCapacitance);
-}
-
-TEST_CASE ("The transistor options travel with the document too", "[plugin]")
-{
-    // Same rule as the valve capacitance above -- accurate by default, written
-    // only when switched off, absent means on. Worth its own test because the
-    // pair briefly shipped the other way up, and both halves of the inversion
-    // fail quietly: a wrong default writes a property nobody expects, and a
-    // wrong fallback silently opens old sheets on the older, simpler model.
-    PluginProcessor plugin;
-
-    CHECK (plugin.buildOptions.transistorJunctionCapacitance);
-    CHECK (plugin.buildOptions.transistorEarlyEffect);
-
-    CHECK (! plugin.createDocument().hasProperty ("transistorJunctionCapacitance"));
-    CHECK (! plugin.createDocument().hasProperty ("transistorEarlyEffect"));
-
-    plugin.buildOptions.transistorJunctionCapacitance = false;
-    plugin.buildOptions.transistorEarlyEffect = false;
-    const auto preset = plugin.createDocument();
-    CHECK (preset.hasProperty ("transistorJunctionCapacitance"));
-    CHECK (preset.hasProperty ("transistorEarlyEffect"));
+    old.setProperty ("interelectrodeCapacitance", false, nullptr);
+    old.setProperty ("transistorJunctionCapacitance", false, nullptr);
+    old.setProperty ("transistorEarlyEffect", false, nullptr);
+    old.setProperty ("predictNewtonSeed", true, nullptr);
 
     PluginProcessor loaded;
-    REQUIRE (loaded.restoreDocument (preset));
-    CHECK (! loaded.buildOptions.transistorJunctionCapacitance);
-    CHECK (! loaded.buildOptions.transistorEarlyEffect);
+    REQUIRE (loaded.restoreDocument (old));
 
-    // A sheet from before these existed carries neither property, and must come
-    // back on the full model rather than frozen at the simpler one.
-    auto old = preset.createCopy();
-    old.removeProperty ("transistorJunctionCapacitance", nullptr);
-    old.removeProperty ("transistorEarlyEffect", nullptr);
+    const auto saved = loaded.createDocument();
 
-    PluginProcessor upgraded;
-    upgraded.buildOptions.transistorJunctionCapacitance = false;
-    upgraded.buildOptions.transistorEarlyEffect = false;
-    REQUIRE (upgraded.restoreDocument (old));
-    CHECK (upgraded.buildOptions.transistorJunctionCapacitance);
-    CHECK (upgraded.buildOptions.transistorEarlyEffect);
+    for (const auto* name : { "interelectrodeCapacitance", "transistorJunctionCapacitance",
+                              "transistorEarlyEffect", "predictNewtonSeed" })
+    {
+        INFO (name);
+        CHECK (! saved.hasProperty (name));
+    }
 }
 
 TEST_CASE ("A text note annotates the sheet without joining the circuit", "[schematic]")
@@ -2699,7 +2574,7 @@ TEST_CASE ("An oversampling factor from a document is a power of two in range", 
     }
 }
 
-TEST_CASE ("Performance options do not change the output", "[plugin][schematic]")
+TEST_CASE ("Fast exp / log / pow does not change the output", "[plugin][schematic]")
 {
     using namespace SchematicModel;
 
@@ -2728,22 +2603,13 @@ TEST_CASE ("Performance options do not change the output", "[plugin][schematic]"
 
     const auto reference = render ({});
 
-    // The Newton seed only changes where the iteration starts, so it must land
-    // on exactly the same root.
-    BuildOptions seeded;
-    seeded.predictNewtonSeed = true;
-    const auto withSeed = render (seeded);
-
-    REQUIRE (withSeed.size() == reference.size());
-
-    for (size_t i = 0; i < reference.size(); ++i)
-        REQUIRE (std::abs (withSeed[i] - reference[i]) < 1.0e-5f);
-
     // Fast math is an approximation, but at 3e-10 relative it has four orders
     // of headroom over the Newton tolerance it feeds.
     BuildOptions fast;
     fast.fastMath = true;
     const auto withFastMath = render (fast);
+
+    REQUIRE (withFastMath.size() == reference.size());
 
     for (size_t i = 0; i < reference.size(); ++i)
         REQUIRE (std::abs (withFastMath[i] - reference[i]) < 1.0e-5f);
@@ -2757,14 +2623,12 @@ TEST_CASE ("Performance settings travel with the document", "[plugin]")
 
     CHECK (plugin.oversamplingFactor == 1);
     CHECK (! plugin.buildOptions.fastMath);
-    CHECK (! plugin.buildOptions.predictNewtonSeed);
 
     // An untouched sheet writes none of them, so a file saved today still
     // matches one saved before any of this existed.
     CHECK (! plugin.createDocument().hasProperty ("oversampling"));
 
     plugin.buildOptions.fastMath = true;
-    plugin.buildOptions.predictNewtonSeed = true;
     plugin.oversamplingFactor = 16;
 
     const auto document = plugin.createDocument();
@@ -2773,7 +2637,6 @@ TEST_CASE ("Performance settings travel with the document", "[plugin]")
     REQUIRE (loaded.restoreDocument (document));
     CHECK (loaded.oversamplingFactor == 16);
     CHECK (loaded.buildOptions.fastMath);
-    CHECK (loaded.buildOptions.predictNewtonSeed);
 
     CircuitComponents::FastMath::setEnabled (false);
 }

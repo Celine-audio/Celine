@@ -245,71 +245,24 @@ namespace SchematicModel
 
     //==========================================================================
     /**
-        Deliberate inaccuracies, traded for CPU.
+        How a circuit is built, beyond what the drawing says.
 
-        Everything here defaults to the accurate answer, so a caller that says
-        nothing gets the full simulation. These are build-time rather than live:
-        each one changes what the matrix contains, so changing one costs a
-        rebuild and a fresh bias point.
+        Build-time rather than live, because each one changes what the matrix
+        contains or how it is solved, so changing one costs a rebuild and a
+        fresh bias point. Nothing here may make the simulation less accurate:
+        the physics is not optional, and switches that traded it for CPU were
+        measured to buy almost nothing and removed.
     */
     struct BuildOptions
     {
-        /** Whether valves wire in their own interelectrode capacitance. The
-            grid-plate one is the Miller path, which rolls off the top of a stage
-            driven from a high source impedance.
-
-            Three capacitors per valve, and in DK every capacitor is a state
-            variable. Measured at **+23% CPU** on a six-triode channel: the most
-            expensive thing the simulation does that a player might reasonably
-            choose to go without. */
-        bool interelectrodeCapacitance = true;
-
-        /** Whether semiconductors wire in their junction capacitances: a BJT's
-            CJE/CJC, a MOSFET's gate capacitances and a diode's depletion
-            capacitance. Miller multiplies a transistor's base-collector (or
-            gate-drain) one by the stage's gain, which is what darkens a
-            high-gain stage driven through a large resistance.
-
-            The name says transistor because it predates the other two, and it
-            is also the key a saved sheet carries, so it stays.
-
-            On by default like the rest: the CPU is opt-out rather than the
-            physics opt-in. A sheet drawn before this existed does sound slightly
-            darker now, which is the right answer -- the circuit has this
-            capacitance in it.
-
-            Two DK state variables per transistor: **+12% CPU** on a
-            two-transistor fuzz, +3-4% on a booster. */
-        bool transistorJunctionCapacitance = true;
-
-        /** Whether the transistor Early effect is modelled -- an output
-            resistance ro = VAF/Ic across the collector load, trimming a stage's
-            gain by a few percent.
-
-            Costs nothing measurable: two multiplies inside a Newton step that
-            was happening anyway, no new state variable. Only models whose cards
-            carry a VAF figure respond; the rest read as an infinite Early
-            voltage, which is what they did before this existed. */
-        bool transistorEarlyEffect = true;
-
         /** Whether the device models use approximations of exp, log and pow.
 
             Accurate to about 3e-10 relative, four orders tighter than the Newton
             tolerance they feed. Whether it is *faster* is a platform question:
-            measured a wash on Apple Silicon, whose libm is already excellent.
-            Hence a switch rather than a decision baked in. */
+            0.3-2.8% slower on Apple Silicon, whose libm is excellent, but
+            Windows' and Linux's runtimes have historically been slower. Hence a
+            switch rather than a decision baked in. */
         bool fastMath = false;
-
-        /** Whether Newton starts each sample from a straight-line extrapolation
-            of the last two rather than from the last one alone.
-
-            Not an inaccuracy: Newton reaches the same root either way and the
-            output is bit-identical. Purely a guess at where the answer will be,
-            and whether it pays depends on the circuit -- **-7% to -12%** on
-            pedals, but **+11%** on a six-triode high-gain preamp, where the port
-            trajectories are clipped rather than smooth and the guess triggers
-            the voltage limiters. Off by default for that reason. */
-        bool predictNewtonSeed = false;
     };
 
     //==========================================================================
