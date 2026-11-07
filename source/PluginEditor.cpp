@@ -286,7 +286,34 @@ void PluginEditor::buildToolbar()
     loadButton->onClick       = [this] { browseForCircuit (false); };
     importButton->onClick     = [this] { browseForImport(); };
     presetsButton.setTooltip ("Preset selection list");
-    presetsButton.onClick     = [this] { showPresetsMenu(); };
+    presetsButton.onClick     = [this] { showPresetLibrary(); };
+
+    // Made after the field, so it lies over it. Frameless: it sits inside the field's
+    // own fill, and a button-shaped housing there would read as a second field.
+    presetFolderButton = std::make_unique<Celine::IconButton> (
+        "Choose the preset folder", Celine::Assets::drawable ("folder-open-solid-full.svg"));
+    presetFolderButton->setDrawsFrame (false);
+    presetFolderButton->setWantsKeyboardFocus (false);
+    presetFolderButton->setTooltip ("Choose the folder your presets are kept in. Right-click the library to reveal it.");
+    presetFolderButton->onClick = [this] { choosePresetFolder(); };
+    addAndMakeVisible (*presetFolderButton);
+
+    // The library drops down from the field. Hidden until asked for, and above
+    // everything else when it is -- see showPresetLibrary.
+    presetLibrary.onDismiss = [this] { closePresetLibrary(); };
+    presetLibrary.onNewSheet = [this] { closePresetLibrary(); startNewSheet(); };
+    presetLibrary.onFactoryPresetChosen = [this] (int index) { closePresetLibrary(); loadFactoryPreset (index); };
+    presetLibrary.onPresetChosen = [this] (const juce::File& file) { closePresetLibrary(); loadPresetFile (file); };
+
+    // Left up: the folder dialog is a window of its own, and the library re-lists the
+    // folder once one is chosen -- see choosePresetFolder.
+    presetLibrary.onChooseFolder = [this] { choosePresetFolder(); };
+
+    presetLibrary.onPreferredHeightChanged = [this] { if (isPresetLibraryShowing()) placePresetLibrary(); };
+    libraryDismisser.onClick = [this] { closePresetLibrary(); };
+
+    addChildComponent (libraryDismisser);
+    addChildComponent (presetLibrary);
     settingsButton->onClick   = [this] { showSettingsMenu(); };
     rebuildButton.setTooltip ("Sends the current schematic to the audio engine");
     rebuildButton.onClick     = [this] { rebuildCircuit(); };
@@ -1136,116 +1163,84 @@ bool PluginEditor::loadPresetFile (const juce::File& file)
 }
 
 //==============================================================================
-namespace
+void PluginEditor::showPresetLibrary()
 {
-    // Three id ranges in one menu, kept well apart so a folder with a lot of
-    // presets in it can never collide with a command.
-    constexpr int userPresetBaseId = 1;
-    constexpr int factoryPresetBaseId = 50000;
-    constexpr int choosePresetFolderId = 100001;
-    constexpr int revealPresetFolderId = 100002;
-    constexpr int clearSheetId = 100003;
-} // namespace
+    // The field toggles it, as it toggled the menu. While the library is up the
+    // dismisser covers the field, so in practice a second click lands there.
+    if (isPresetLibraryShowing())
+    {
+        closePresetLibrary();
+        return;
+    }
 
-void PluginEditor::showPresetsMenu()
+    // Read fresh every time: a preset folder is an ordinary folder that files get
+    // dropped into behind our back.
+    refreshPresetLibrary();
+
+    libraryDismisser.setBounds (getLocalBounds());
+    libraryDismisser.setVisible (true);
+    libraryDismisser.toFront (false);
+
+    placePresetLibrary();
+    presetLibrary.setVisible (true);
+    presetLibrary.toFront (false);
+
+    // Over the library's field too, so the one icon stays where it was and clickable.
+    presetFolderButton->toFront (false);
+
+    // Typing on opening searches, as typing into an open menu would want to.
+    presetLibrary.focusSearch();
+}
+
+void PluginEditor::closePresetLibrary()
 {
-    juce::PopupMenu menu;
+    if (! isPresetLibraryShowing())
+        return;
 
-    // Factory first: on a fresh install it is the only thing in here.
-    const auto factory = SchematicModel::Examples::getNames();
+    presetLibrary.setVisible (false);
+    libraryDismisser.setVisible (false);
 
-    menu.addSeparator();
-    menu.addItem (clearSheetId, "New (empty sheet)");
+    // The search field had the keyboard, and the sheet's shortcuts stop working
+    // until it is given back -- see "Keyboard focus" in CLAUDE.md.
+    if (canvas.isShowing())
+        canvas.grabKeyboardFocus();
+}
 
-    menu.addSectionHeader ("Factory presets");
+void PluginEditor::placePresetLibrary()
+{
+    constexpr int edge = 8;
 
-    for (int i = 0; i < factory.size(); ++i)
-        menu.addItem (juce::PopupMenu::Item (factory[i])
-                          .setID (factoryPresetBaseId + i)
-                          .setTicked (presetsButton.isFactoryPreset()
-                                      && factory[i] == presetsButton.getPresetName()));
+    // Exactly the field: its top part lies over the preset field and stands in for it,
+    // and the list below is the same width, so the two read as one control. A name
+    // longer than that is cut with an ellipsis rather than the list growing past it.
+    const auto field = presetsButton.getBounds();
 
-    // Read fresh every time: a preset folder is an ordinary folder that files
-    // get dropped into behind our back.
-    const auto files = presets.getPresets();
-    const bool haveFolder = presets.hasDirectory();
+    presetLibrary.setFieldArea (field.withZeroOrigin());
 
-    menu.addSectionHeader ("User presets");
+    const int height = juce::jmin (presetLibrary.getPreferredHeight(), getHeight() - field.getY() - edge);
 
-    if (! haveFolder)
-    {
-        menu.addItem (juce::PopupMenu::Item ("No preset folder chosen yet").setEnabled (false));
-    }
-    else if (files.isEmpty())
-    {
-        menu.addItem (juce::PopupMenu::Item ("Nothing in " + presets.getDirectory().getFileName())
-                          .setEnabled (false));
-    }
-    else
-    {
-        for (int i = 0; i < files.size(); ++i)
-        {
-            const auto name = files[i].getFileNameWithoutExtension();
+    presetLibrary.setBounds (field.withHeight (height));
+    libraryDismisser.setBounds (getLocalBounds());
+}
 
-            // Ticked, so the menu agrees with the button.
-            menu.addItem (juce::PopupMenu::Item (name)
-                              .setID (userPresetBaseId + i)
-                              .setTicked (! presetsButton.isFactoryPreset()
-                                          && name == presetsButton.getPresetName()));
-        }
-    }
+void PluginEditor::refreshPresetLibrary()
+{
+    presetLibrary.setFactoryPresets (SchematicModel::Examples::getNames());
+    presetLibrary.setFolder (presets.hasDirectory() ? presets.getDirectory() : juce::File{});
 
-    menu.addSeparator();
-    menu.addItem (choosePresetFolderId, haveFolder ? "Change preset folder..." : "Choose preset folder...");
+    // What the toolbar says is loaded is what the library marks.
+    presetLibrary.setCurrentPreset (presetsButton.isFactoryPreset() ? juce::File{} : processorRef.presetFile,
+                                    presetsButton.isFactoryPreset() ? presetsButton.getPresetName() : juce::String());
+}
 
-    if (haveFolder)
-        menu.addItem (revealPresetFolderId, "Reveal preset folder");
-
-    // Menus inherit a look and feel from nothing: withTargetComponent says only
-    // *where* to open, and a PopupMenu is a parentless desktop window, so
-    // untold it resolves against the default -- the host's, inside a DAW.
-    menu.setLookAndFeel (&lookAndFeel);
-
-    // The listing goes into the callback by value: the menu is async, and the
-    // folder can change under it between opening and choosing.
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (presetsButton),
-                        [this, files, factory] (int choice)
-    {
-        if (choice == 0)
-            return; // dismissed
-
-        if (choice == choosePresetFolderId)
-        {
-            choosePresetFolder();
-            return;
-        }
-
-        if (choice == revealPresetFolderId)
-        {
-            presets.getDirectory().revealToUser();
-            return;
-        }
-
-        if (choice == clearSheetId)
-        {
-            processorRef.getSchematic().clear();
-            setLoadedPreset ({});
-            canvas.refresh();
-            canvas.zoomToFit();
-            inspector.setElement (nullptr);
-            rebuildCircuit();
-            return;
-        }
-
-        if (juce::isPositiveAndBelow (choice - factoryPresetBaseId, factory.size()))
-        {
-            loadFactoryPreset (choice - factoryPresetBaseId);
-            return;
-        }
-
-        if (juce::isPositiveAndBelow (choice - userPresetBaseId, files.size()))
-            loadPresetFile (files[choice - userPresetBaseId]);
-    });
+void PluginEditor::startNewSheet()
+{
+    processorRef.getSchematic().clear();
+    setLoadedPreset ({});
+    canvas.refresh();
+    canvas.zoomToFit();
+    inspector.setElement (nullptr);
+    rebuildCircuit();
 }
 
 void PluginEditor::loadFactoryPreset (int index)
@@ -1285,6 +1280,13 @@ void PluginEditor::choosePresetFolder()
                 return; // cancelled, or a folder that went away while we asked
 
             presets.setDirectory (folder);
+
+            // The library asked for this if it is up, and lists the new folder now.
+            if (isPresetLibraryShowing())
+            {
+                refreshPresetLibrary();
+                placePresetLibrary();
+            }
 
             const auto count = presets.getPresets().size();
             setStatus ("Preset folder: " + folder.getFullPathName() + "  --  "
@@ -1769,7 +1771,8 @@ void PluginEditor::showSettingsMenu()
     about.setAction ([this] { showAboutDialog(); });
     menu.addItem (about);
 
-    // See showPresetsMenu: a menu has no parent to inherit from.
+    // A menu has no parent to inherit a look and feel from: it is a parentless
+    // desktop window, so untold it resolves against the default -- the host's.
     menu.setLookAndFeel (&lookAndFeel);
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (settingsButton.get()));
 }
@@ -1983,6 +1986,19 @@ void PluginEditor::layOutToolbar (juce::Rectangle<int>& area)
         place (*loadButton);
         presetsButton.setBounds (toolbar.removeFromLeft (fieldWidth)
                                      .withSizeKeepingCentre (fieldWidth, size));
+
+        // The folder icon in the field's right-hand end, square on the field's height
+        // less a little air, and the field keeping that much clear for it.
+        {
+            constexpr int inset = 3;
+            const auto end = presetsButton.getBounds().reduced (inset);
+            const int icon = end.getHeight();
+
+            presetFolderButton->setBounds (end.withLeft (end.getRight() - icon));
+            presetFolderButton->setVisible (presetsButton.isVisible());
+            presetsButton.setTrailingSpace (icon + inset);
+            presetLibrary.setFieldTrailingSpace (icon + 2 * inset);
+        }
 
         // Only the gap: removeFromLeft above already took the field's own room,
         // and took nothing when it was too narrow to show.
@@ -2212,4 +2228,8 @@ void PluginEditor::resized()
     auto area = getLocalBounds();
     layOutToolbar (area);
     layOutPanels (area);
+
+    // Kept under the field it dropped down from.
+    if (isPresetLibraryShowing())
+        placePresetLibrary();
 }

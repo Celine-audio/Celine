@@ -49,6 +49,18 @@ namespace Celine
 
         bool isFactoryPreset() const noexcept { return isFactory; }
 
+        /** Room kept clear at the right-hand end for something laid over the field --
+            the preset folder's icon -- so the name and the modified dot stop short of
+            it rather than running underneath. */
+        void setTrailingSpace (int pixels)
+        {
+            if (trailingSpace == pixels)
+                return;
+
+            trailingSpace = pixels;
+            repaint();
+        }
+
         /** Whether the sheet has been edited since that preset was loaded. */
         void setModified (bool nowModified)
         {
@@ -74,6 +86,7 @@ namespace Celine
             // second edge where one was already doing the job.
 
             auto content = bounds.reduced (6.0f, 3.0f);
+            content.removeFromRight ((float) trailingSpace);
 
             // The dot goes right, where it does not shift the name about as it
             // comes and goes.
@@ -103,6 +116,7 @@ namespace Celine
         juce::String presetName;
         bool isFactory = false;
         bool modified = false;
+        int trailingSpace = 0;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PresetButton)
     };

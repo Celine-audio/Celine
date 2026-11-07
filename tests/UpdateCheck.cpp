@@ -69,14 +69,16 @@ TEST_CASE ("Update check: GitHub's reply", "[updates]")
 {
     using UpdateCheck::parseLatestRelease;
 
-    // The fields that matter, as releases/latest returns them.
-    const juce::String release = R"({
+    // The fields that matter, as releases/latest returns them. Read as UTF-8: a
+    // release's name carries the accent, and a juce::String built from a plain char*
+    // asserts on anything outside ASCII.
+    const auto release = juce::String::fromUTF8 (R"({
         "html_url": "https://github.com/Celine-audio/Celine/releases/tag/v1.1.0",
         "tag_name": "v1.1.0",
         "name": "Céline 1.1.0",
         "draft": false,
         "prerelease": false
-    })";
+    })");
 
     const auto parsed = parseLatestRelease (release);
     REQUIRE (parsed.has_value());

@@ -9,6 +9,7 @@
 #include "ui/SchematicCanvas.h"
 #include <CelineUI/Theme.h>
 #include "ui/ToolbarWidgets.h"
+#include "ui/PresetLibraryPanel.h"
 
 // Declared rather than included: the definition lives in a header that only the
 // standalone build compiles, and a pointer to an incomplete type is all this
@@ -229,8 +230,25 @@ private:
     bool gestureRecorded = false;
 
     //==========================================================================
-    // Presets: one remembered folder, and the menu that lists it.
-    void showPresetsMenu();
+    // Presets: one remembered folder, and the library that lists it -- dropped down
+    // from the preset field, where the preset menu used to open.
+
+    /** Opens the library under the preset field, or puts it away if it is up:
+        the field toggles it, as it toggled the menu. */
+    void showPresetLibrary();
+    void closePresetLibrary();
+    bool isPresetLibraryShowing() const { return presetLibrary.isVisible(); }
+
+    /** Under the preset field, as wide as the field or the library's own minimum,
+        and as tall as its rows or the room above the window's foot. */
+    void placePresetLibrary();
+
+    /** Tells the library the folder, the factory examples and what is loaded. */
+    void refreshPresetLibrary();
+
+    /** Clears the sheet: the library's "New (empty sheet)". */
+    void startNewSheet();
+
     void choosePresetFolder();
 
     /** Standalone only: hands the window frame back to the OS.
@@ -308,6 +326,13 @@ private:
         one that answers "both of them". */
     std::unique_ptr<Celine::IconButton> importButton;
 
+    /** The preset folder's icon, at the preset field's right-hand end, laid over it.
+        Always there and always clickable, open library or not -- it chooses the folder
+        the library lists, which is worth reaching without opening it first. The
+        editor's rather than the library's, so it is one icon in one place and does
+        not jump when the library opens over the field. */
+    std::unique_ptr<Celine::IconButton> presetFolderButton;
+
     /** Where resized() put the undo/redo housing, so paint() can draw it behind
         the two frameless buttons that sit in it. */
     juce::Rectangle<int> undoRedoHousing;
@@ -327,6 +352,21 @@ private:
 
     /** Says which preset is loaded, not just that a menu exists. */
     Celine::PresetButton presetsButton;
+
+    /** The library the preset field drops down. Owned rather than made per opening,
+        so the folders somebody opened are still open the next time. */
+    Celine::PresetLibraryPanel presetLibrary;
+
+    /** Behind the library while it is up, and over everything else in the window: a
+        click anywhere outside the library lands here and puts it away, as a click
+        outside a menu does -- and goes no further, as it would not with a menu. */
+    struct LibraryDismisser : juce::Component
+    {
+        std::function<void()> onClick;
+        void mouseDown (const juce::MouseEvent&) override { if (onClick) onClick(); }
+    };
+
+    LibraryDismisser libraryDismisser;
 
     /** Built in the constructor, since it needs the icon artwork. */
     std::unique_ptr<Celine::IconButton> settingsButton;
