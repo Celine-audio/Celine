@@ -186,7 +186,7 @@ namespace Celine
     {
         entries.clear();
 
-        entries.add ({ Kind::newSheet, {}, "New (empty sheet)" });
+        entries.add ({ Kind::newSheet, {}, "New empty sheet" });
         entries.add ({ Kind::factoryFolder, {}, "Factory presets" });
 
         for (int i = 0; i < factoryNames.size(); ++i)
