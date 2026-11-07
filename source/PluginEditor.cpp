@@ -308,6 +308,7 @@ void PluginEditor::buildPanels()
     // Both size themselves to what they are showing, so a new part or a new
     // message can move them without the window having changed.
     inspector.onPreferredSizeChanged = [this] { layOutFloatingPanels(); };
+    inspector.setShortcutsShown (inspectorShortcutsShown());
     console.onPreferredSizeChanged = [this] { layOutFloatingPanels(); };
 
     // Clicking a message selects the part it names.
@@ -385,9 +386,6 @@ void PluginEditor::buildPanels()
     inspector.filePlayer = &processorRef.getInputFilePlayer();
     inspector.onInputFileRequested = [this] { browseForInputFile(); };
     reportedInputFileLoads = processorRef.getInputFilePlayer().getStatus().loadsFinished;
-    inspector.onRotateRequested = [this] { canvas.rotate(); };
-    inspector.onFlipRequested = [this] { canvas.flip(); };
-    inspector.onDeleteRequested = [this] { canvas.deleteSelection(); };
 }
 
 void PluginEditor::buildBottomBand()
@@ -1565,6 +1563,20 @@ juce::StandalonePluginHolder* PluginEditor::standalonePluginHolder()
 namespace
 {
     const juce::String levelsInDbuKey { "levelsInDbu" };
+    const juce::String inspectorShortcutsKey { "inspectorShortcuts" };
+}
+
+bool PluginEditor::inspectorShortcutsShown()
+{
+    const juce::PropertiesFile file (PresetLibrary().getSettingsFile(), PresetLibrary::getSettingsOptions());
+    return file.getBoolValue (inspectorShortcutsKey, true);
+}
+
+void PluginEditor::setInspectorShortcutsShown (bool shown)
+{
+    juce::PropertiesFile file (PresetLibrary().getSettingsFile(), PresetLibrary::getSettingsOptions());
+    file.setValue (inspectorShortcutsKey, shown);
+    file.saveIfNeeded();
 }
 
 bool PluginEditor::levelsShownInDbu()
@@ -1687,6 +1699,25 @@ void PluginEditor::showSettingsMenu()
                    false);
     });
     menu.addItem (dbu);
+
+    //--------------------------------------------------------------------------
+    // The inspector with nothing selected is a list of shortcuts. Useful until
+    // you know them, and a card in the way of the sheet after that.
+    menu.addSeparator();
+    menu.addSectionHeader ("Inspector");
+
+    juce::PopupMenu::Item shortcuts ("Show inspector when nothing is selected");
+    shortcuts.isTicked = inspectorShortcutsShown();
+    shortcuts.setAction ([this, wasOn = shortcuts.isTicked]
+    {
+        setInspectorShortcutsShown (! wasOn);
+        inspector.setShortcutsShown (! wasOn);
+
+        setStatus (wasOn ? juce::String ("The inspector now appears only while a part is selected.")
+                         : juce::String ("The inspector shows the shortcuts when nothing is selected."),
+                   false);
+    });
+    menu.addItem (shortcuts);
 
     //--------------------------------------------------------------------------
     // Standalone only: in a host the device is the host's business. Straight to
@@ -2023,8 +2054,11 @@ void PluginEditor::layOutBand()
 
     constexpr int channelsWidth = Strip::comboWidth + 12;
     const int outputContent = Strip::cellWidth + channelsWidth + 2 * Strip::padding;
-    const int outputLeft = juce::jmin (row.getRight() - outputContent,
-                                       inspector.isVisible() ? inspector.getX() : row.getRight() - outputContent);
+    // Under where the inspector's card goes, whether or not it is showing: it is
+    // laid out either way and is one width whatever it holds, so this edge never
+    // moves. Following its visibility made the bar jump every time a selection
+    // came and went with the shortcuts turned off.
+    const int outputLeft = juce::jmin (row.getRight() - outputContent, inspector.getX());
     const auto outputArea = row.removeFromRight (juce::jlimit (0, row.getWidth(), row.getRight() - outputLeft));
     outputBar.setBounds (outputArea.withRight (area.getRight()));
     auto fixed = outputArea.withWidth (outputContent).reduced (Strip::padding, 4);
@@ -2138,7 +2172,7 @@ void PluginEditor::layOutFloatingPanels()
     canvas.setFramingInsets ({ Celine::SchematicCanvas::topRulerThickness,
                                palette.getRight() - sheet.getX(),
                                sheet.getBottom() - bandTop,
-                               sheet.getRight() - inspector.getX() });
+                               inspector.isVisible() ? sheet.getRight() - inspector.getX() : margin });
 
     layOutBand();
 }

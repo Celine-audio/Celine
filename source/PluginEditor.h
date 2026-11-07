@@ -81,6 +81,13 @@ public:
     static bool levelsShownInDbu();
     static void setLevelsShownInDbu (bool inDbu);
 
+    /** Whether the inspector stays up with the shortcut list when nothing is
+        selected. On by default; kept per machine beside the dBu switch, since it
+        is about the person at it -- whether they still need the keys spelled
+        out -- and not about any sheet. */
+    static bool inspectorShortcutsShown();
+    static void setInspectorShortcutsShown (bool shown);
+
 private:
     // Construction, in three parts: the strip along the top, the four panels
     // filling the middle, and the band of fixed controls along the bottom.

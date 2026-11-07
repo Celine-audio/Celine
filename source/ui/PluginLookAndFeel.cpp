@@ -112,67 +112,62 @@ void PluginLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& 
         return;
     }
 
-    // A pill with a travelling dot, which is what the design draws wherever a
-    // switch appears. JUCE's tick box would be the only square-cornered,
-    // unfilled control in the window.
-    const auto bounds = button.getLocalBounds().toFloat();
-    const bool on = button.getToggleState();
-
-    juce::ignoreUnused(shouldDrawButtonAsDown);
-
+    // One switch everywhere it appears -- the inspector's rows and the control
+    // strip's cells, both on the light half of the design: a pale track that
+    // turns accent when on, with a white dot that sits on the side that is
+    // made. No ON/OFF lettering: the dot's side and the colour already say it.
+    //
     // Sized to itself, not stretched to whatever the layout handed the
-    // button. An inspector row is as wide as the panel, and a switch that
-    // wide reads as a banner rather than as a control.
-    const float height = juce::jmin(bounds.getHeight(), 20.0f);
-    const float width = height * 2.8f;
+    // button: a switch as wide as an inspector row reads as a banner.
+    const auto bounds = button.getLocalBounds().toFloat();
     const bool labelled = button.getButtonText().isNotEmpty();
+    const float h = juce::jmin(bounds.getHeight(), 20.0f);
+    const float w = h * 1.8f;
 
-    // Left when there is a word to sit beside it, centred when the pill is
-    // the whole control -- which is the control strip, where the name is
-    // already on the label above.
-    const auto pill =
-        juce::Rectangle<float>(width, height)
-            .withPosition(labelled ? bounds.getX() : bounds.getCentreX() - width * 0.5f,
-                          bounds.getCentreY() - height * 0.5f);
+    // Against the right edge with its name on the left, as a settings row is
+    // read; centred when the switch is the whole control -- the strip, where
+    // the name is already on the caption above it.
+    const auto track = juce::Rectangle<float>(w, h).withPosition(
+        labelled ? bounds.getRight() - w - 1.0f : bounds.getCentreX() - w * 0.5f,
+        bounds.getCentreY() - h * 0.5f);
 
-    g.setColour(on ? Theme::accent() : Theme::surfaceBright());
-    g.fillRoundedRectangle(pill, height * 0.5f);
+    const float alpha = button.isEnabled() ? 1.0f : 0.45f;
+    const bool lit = button.getToggleState();
 
-    if (shouldDrawButtonAsHighlighted)
-    {
-        g.setColour(Theme::textOnPanel().withAlpha(0.15f));
-        g.fillRoundedRectangle(pill, height * 0.5f);
-    }
+    auto fill = lit ? Theme::accent() : Theme::pill().darker(0.18f);
 
-    // The dot is the throw, and it sits on the side that says which one is
-    // made: left for off, right for on, the way every hardware toggle reads.
-    // Dark, because on the accent it is the only thing that can be.
-    const float inset = 1.5f;
-    const float dot = height - inset * 2.0f;
-    const float travel = pill.getWidth() - dot - inset * 2.0f;
-    const float dotX = pill.getX() + inset + (on ? travel : 0.0f);
+    if (shouldDrawButtonAsHighlighted || shouldDrawButtonAsDown)
+        fill = fill.darker(shouldDrawButtonAsDown ? 0.12f : 0.06f);
 
-    g.setColour(Theme::textOnPanel());
-    g.fillEllipse(juce::Rectangle<float>(dot, dot).withPosition(dotX, pill.getY() + inset));
+    g.setColour(fill.withMultipliedAlpha(alpha));
+    g.fillRoundedRectangle(track, h * 0.5f);
 
-    // The *state*, in the half the dot is not in. This used to draw the
-    // button's own text, which is fixed at construction -- so every switch
-    // read the same word in both positions and told you nothing.
-    g.setColour(on ? Theme::textOnPanel() : Theme::text());
-    g.setFont(Fonts::light(11.0f));
-    g.drawText(on ? "ON" : "OFF",
-               on ? pill.withTrimmedRight(dot + inset * 2.0f)
-                  : pill.withTrimmedLeft(dot + inset * 2.0f),
-               juce::Justification::centred, false);
+    const float inset = 2.0f, dot = h - 2.0f * inset;
+    g.setColour(Theme::panel().withMultipliedAlpha(alpha));
+    g.fillEllipse(track.getX() + inset + (lit ? w - dot - 2.0f * inset : 0.0f),
+                  track.getY() + inset, dot, dot);
 
-    // What the switch is for goes beside it, now that the pill is busy
-    // saying what it is doing.
     if (labelled)
     {
-        g.setColour(button.findColour(juce::ToggleButton::textColourId));
-        g.setFont(Fonts::light(13.0f));
-        g.drawText(button.getButtonText(),
-                   bounds.withTrimmedLeft(pill.getWidth() + 8.0f),
+        g.setColour(button.findColour(juce::ToggleButton::textColourId).withMultipliedAlpha(alpha));
+        g.setFont(Fonts::light(14.0f));
+        g.drawText(button.getButtonText(), bounds.withTrimmedRight(w + 8.0f),
                    juce::Justification::centredLeft, true);
     }
+}
+
+void PluginLookAndFeel::positionComboBoxText(juce::ComboBox& box, juce::Label& label)
+{
+    if (! box.getProperties().contains(inspectorFieldProperty))
+    {
+        LookAndFeelBase::positionComboBoxText(box, label);
+        return;
+    }
+
+    // Left-aligned at the text fields' indent, so a model name lines up with
+    // the label typed in the field above it. The chevron keeps the right end.
+    label.setBorderSize(juce::BorderSize<int>(0));
+    label.setBounds(10, 0, juce::jmax(0, box.getWidth() - 10 - 30), box.getHeight());
+    label.setFont(Fonts::light(14.0f));
+    label.setJustificationType(juce::Justification::centredLeft);
 }

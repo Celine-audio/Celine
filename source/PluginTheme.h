@@ -131,7 +131,7 @@
 
         /** The inspector card's width, whatever it is showing -- a part's fields or the
             shortcut list -- so it never jumps sideways as the selection changes. */
-        inline constexpr int inspectorWidth = 220;
+        inline constexpr int inspectorWidth = 260;
 
         /** One palette row's pitch; the pill inside it is four pixels shorter, which is
             the gap between rows. */
@@ -162,7 +162,7 @@
             card and a pill. And the palette's entries, which are smaller again. */
         inline constexpr float paletteCornerRadius = 9.0f;
         inline constexpr float paletteEntryCornerRadius = 4.0f;
-        inline constexpr float inspectorCornerRadius = 24.0f;
+        inline constexpr float inspectorCornerRadius = 14.0f;
         inline constexpr float consoleCornerRadius = 13.0f;
 
         /** The bottom band's three floating bars: INPUT, the circuit's controls,

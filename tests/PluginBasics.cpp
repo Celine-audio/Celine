@@ -700,7 +700,7 @@ TEST_CASE ("The inspector card is the size of what it shows", "[plugin][ui]")
 
     const auto nothing = inspector.getPreferredSize();
 
-    // A note is a text field and a delete button: a short card, and the
+    // A note is a heading and one text field: a short card, and the
     // inspector says it has changed so the editor can resize it.
     SchematicModel::Element note;
     note.id = 1;
@@ -717,8 +717,10 @@ TEST_CASE ("The inspector card is the size of what it shows", "[plugin][ui]")
     REQUIRE (viewport != nullptr);
     CHECK (! viewport->getVerticalScrollBar().isVisible());
 
-    // A card too short for its fields scrolls rather than clipping.
-    inspector.setSize (forNote.x, forNote.y / 2);
+    // A card too short for its fields scrolls rather than clipping. Short by a
+    // little rather than halved: the heading keeps its height, and half a card
+    // that is mostly heading leaves the fields no room to scroll in at all.
+    inspector.setSize (forNote.x, forNote.y - 20);
     CHECK (viewport->getVerticalScrollBar().isVisible());
 
     // And with nothing selected, the shortcut list fits whole.
@@ -726,6 +728,35 @@ TEST_CASE ("The inspector card is the size of what it shows", "[plugin][ui]")
     const auto hint = inspector.getPreferredSize();
     inspector.setSize (hint.x, hint.y);
     CHECK (! viewport->getVerticalScrollBar().isVisible());
+}
+
+TEST_CASE ("With the shortcuts turned off, the inspector shows only for a selection", "[plugin][ui]")
+{
+    Celine::ElementInspector inspector;
+    inspector.setVisible (true);
+
+    int announcements = 0;
+    inspector.onPreferredSizeChanged = [&announcements] { ++announcements; };
+
+    // Turning it off with nothing selected takes the card away at once, and
+    // says so, so the editor can give the sheet its room back.
+    inspector.setShortcutsShown (false);
+    CHECK (! inspector.isVisible());
+    CHECK (announcements == 1);
+
+    SchematicModel::Element resistor;
+    resistor.id = 1;
+    resistor.type = SchematicModel::ElementType::Resistor;
+
+    inspector.setElement (&resistor);
+    CHECK (inspector.isVisible());
+
+    inspector.setElement (nullptr);
+    CHECK (! inspector.isVisible());
+
+    // And back on, the shortcut list returns without a selection.
+    inspector.setShortcutsShown (true);
+    CHECK (inspector.isVisible());
 }
 
 TEST_CASE ("The inspector is one width whatever it shows, and everything fits it", "[plugin][ui]")

@@ -488,23 +488,78 @@ namespace Celine
 
     void ElementInspector::applyColours()
     {
-        titleLabel.setColour(juce::Label::textColourId, Theme::text());
+        // The card is the light half of the house design, like the palette on
+        // the other side of the sheet, so everything on it takes the panel's
+        // dark ink. Fields are a step off the card -- the palette's pill.
+        const auto ink = Theme::textOnPanel();
+        const auto well = Theme::pill().withMultipliedAlpha(0.7f);
 
         for (auto* caption : captionLabels())
-            caption->setColour(juce::Label::textColourId, Theme::text().withAlpha(0.65f));
+            caption->setColour(juce::Label::textColourId, ink.withAlpha(0.55f));
 
-        scopeAutoButton.setColour(juce::ToggleButton::textColourId, Theme::text());
-        fileInputButton.setColour(juce::ToggleButton::textColourId, Theme::text());
-        loopButton.setColour(juce::ToggleButton::textColourId, Theme::text());
+        for (auto* editor : {&valueEditor, &valueEditorB, &labelEditor, &orderEditor, &knobEditor,
+                             &widthEditor, &heightEditor, &scopeMinEditor, &scopeMaxEditor,
+                             &scopeSecondsEditor})
+        {
+            editor->setColour(juce::TextEditor::backgroundColourId, well);
+            editor->setColour(juce::TextEditor::textColourId, ink);
+            editor->setColour(juce::TextEditor::highlightColourId, Theme::accent().withAlpha(0.3f));
+            editor->setColour(juce::TextEditor::highlightedTextColourId, ink);
+            editor->setColour(juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
+            editor->setColour(juce::TextEditor::focusedOutlineColourId, Theme::accent());
+            editor->setColour(juce::CaretComponent::caretColourId, ink);
+            editor->applyColourToAllText(ink);
+        }
+
+        // The two value fields go red, box and lettering, while they still
+        // hold nothing -- the same red the part's caption wears on the sheet.
+        markUnsetFields();
+
+        for (auto* box : {&modelBox, &taperBox})
+        {
+            box->setColour(juce::ComboBox::backgroundColourId, well);
+            box->setColour(juce::ComboBox::textColourId, ink);
+            box->setColour(juce::ComboBox::arrowColourId, ink.withAlpha(0.5f));
+            box->setColour(juce::ComboBox::outlineColourId, ink);
+        }
+
+        for (auto* button : {&cabFileButton, &inputFileButton, &playButton, &stopButton})
+        {
+            button->setColour(juce::TextButton::buttonColourId, well);
+            button->setColour(juce::TextButton::textColourOffId, ink);
+        }
 
         // Play lights while the file runs, which is the one thing about the
         // transport you want to see from across the room.
         playButton.setColour(juce::TextButton::buttonOnColourId, Theme::accent());
-        playButton.setColour(juce::TextButton::textColourOnId, Theme::textOnPanel());
-        polarisedButton.setColour(juce::ToggleButton::textColourId, Theme::text());
-        modelDescription.setColour(juce::Label::textColourId, Theme::text().withAlpha(0.6f));
-        hintLabel.setColour(juce::Label::textColourId, Theme::text().withAlpha(0.5f));
-        deleteButton.setColour(juce::TextButton::buttonColourId, Theme::discard());
+        playButton.setColour(juce::TextButton::textColourOnId, Theme::panel());
+
+        for (auto* toggle : {&polarisedButton, &cabButton, &scopeAutoButton, &fileInputButton, &loopButton})
+            toggle->setColour(juce::ToggleButton::textColourId, ink);
+
+        modelDescription.setColour(juce::Label::textColourId, Theme::captionUnset());
+        hintLabel.setColour(juce::Label::textColourId, ink.withAlpha(0.6f));
+
+        viewport.getVerticalScrollBar().setColour(juce::ScrollBar::thumbColourId, ink.withAlpha(0.25f));
+        repaint();
+    }
+
+    void ElementInspector::markUnsetFields()
+    {
+        const auto mark = [](juce::TextEditor& editor, bool unset)
+        {
+            const auto ink = unset ? Theme::captionUnset() : Theme::textOnPanel();
+            editor.setColour(juce::TextEditor::textColourId, ink);
+            editor.applyColourToAllText(ink);
+            editor.setColour(juce::TextEditor::outlineColourId,
+                             unset ? Theme::captionUnset().withAlpha(0.6f) : juce::Colours::transparentBlack);
+            editor.repaint();
+        };
+
+        const bool numeric = element != nullptr && element->hasNumericValue();
+        mark(valueEditor, numeric && element->value <= 0.0);
+        mark(valueEditorB, numeric && element->hasSecondValue() && ! element->isSecondValueRail()
+                               && element->valueB <= 0.0);
     }
 
     ElementInspector::ElementInspector()
@@ -514,15 +569,31 @@ namespace Celine
         viewport.setWantsKeyboardFocus(false);
         addAndMakeVisible(viewport);
 
-        titleLabel.setFont(Fonts::light(17.0f));
-        titleLabel.setJustificationType(juce::Justification::centred);
-        content.addAndMakeVisible(titleLabel);
-
+        // Small capitals over each field, spaced out a little, as the iPad
+        // designer draws them. Flush with the field's left edge: the field
+        // indents its own text.
         for (auto* caption : captionLabels())
         {
-            caption->setFont(Fonts::light(12.0f));
+            caption->setFont(Fonts::bold(11.0f).withExtraKerningFactor(0.08f));
+            caption->setBorderSize(juce::BorderSize<int>(0));
             content.addAndMakeVisible(caption);
         }
+
+        for (auto* editor : {&valueEditor, &valueEditorB, &labelEditor, &orderEditor, &knobEditor,
+                             &widthEditor, &heightEditor, &scopeMinEditor, &scopeMaxEditor,
+                             &scopeSecondsEditor})
+        {
+            editor->setFont(Fonts::light(14.0f));
+            editor->setIndents(10, 0);
+            editor->setJustification(juce::Justification::centredLeft);
+            editor->getProperties().set(inspectorFieldProperty, true);
+        }
+
+        for (juce::Component* c : std::initializer_list<juce::Component*>{
+                 &modelBox, &taperBox, &polarisedButton, &cabButton, &scopeAutoButton,
+                 &fileInputButton, &loopButton})
+            c->getProperties().set(inspectorFieldProperty, true);
+
 
         scopeMinCaption.setText("Volts, bottom", juce::dontSendNotification);
         scopeMaxCaption.setText("Volts, top", juce::dontSendNotification);
@@ -601,8 +672,11 @@ namespace Celine
                 // something else. Either way the sheet stops asking for a model
                 // this build hasn't got.
                 element->unresolvedModelId.clear();
-                modelDescription.setText(getModelDescription(element->type, element->modelIndex),
-                                         juce::dontSendNotification);
+                headerSubtitle = headerSubtitleFor(*element);
+                modelDescription.setText({}, juce::dontSendNotification);
+                showFieldsFor();
+                contentChanged();
+                repaint();
 
                 if (onEdited)
                     onEdited();
@@ -611,6 +685,7 @@ namespace Celine
         content.addAndMakeVisible(modelBox);
 
         modelDescription.setFont(Fonts::light(12.0f));
+        modelDescription.setBorderSize(juce::BorderSize<int>(0));
         modelDescription.setJustificationType(juce::Justification::topLeft);
         content.addAndMakeVisible(modelDescription);
 
@@ -717,15 +792,6 @@ namespace Celine
                  &fileInputButton, &inputFileButton, &loopButton, &playButton, &stopButton, &transportView})
             content.addAndMakeVisible(c);
 
-        rotateButton.onClick = [this] { if (onRotateRequested) onRotateRequested(); };
-        content.addAndMakeVisible(rotateButton);
-
-        flipButton.onClick = [this] { if (onFlipRequested) onFlipRequested(); };
-        content.addAndMakeVisible(flipButton);
-
-        deleteButton.onClick = [this] { if (onDeleteRequested) onDeleteRequested(); };
-        content.addAndMakeVisible(deleteButton);
-
         hintLabel.setFont(Fonts::light(hintFontHeight));
         hintLabel.setJustificationType(juce::Justification::topLeft);
         content.addAndMakeVisible(hintLabel);
@@ -740,9 +806,23 @@ namespace Celine
     void ElementInspector::setElement(Element* newElement)
     {
         element = newElement;
+
+        // Before the size is announced, so the editor lays the window out
+        // knowing whether the card is there.
+        setVisible(element != nullptr || shortcutsShown);
         rebuildForElement();
         contentChanged();
         repaint();
+    }
+
+    void ElementInspector::setShortcutsShown(bool shouldShow)
+    {
+        if (shortcutsShown == shouldShow)
+            return;
+
+        shortcutsShown = shouldShow;
+        setVisible(element != nullptr || shortcutsShown);
+        contentChanged();
     }
 
     void ElementInspector::contentChanged()
@@ -753,9 +833,23 @@ namespace Celine
             onPreferredSizeChanged();
     }
 
+    juce::String ElementInspector::headerSubtitleFor(const Element& part)
+    {
+        // A box's "models" are colours, and its description is an instruction,
+        // not a fact about the part. A model the build has not got is described
+        // under the model box instead, in red.
+        if (! part.hasModelChoice() || part.type == ElementType::Rectangle
+            || part.unresolvedModelId.isNotEmpty())
+            return {};
+
+        return getModelDescription(part.type, part.modelIndex);
+    }
+
     void ElementInspector::showNothingSelected()
     {
-        titleLabel.setText("Nothing Selected", juce::dontSendNotification);
+        headerTitle = "Nothing selected";
+        headerSubtitle = "Keyboard and mouse shortcuts";
+        headerHasSymbol = false;
         hintLabel.setText(  "S  select tool\n"
                             "X  delete tool\n"
                             "F  fit to screen\n\n"
@@ -826,23 +920,26 @@ namespace Celine
             modelBox.addItem(part.unresolvedModelId + " (missing)", missingModelItemId);
             modelBox.setItemEnabled(missingModelItemId, false);
             modelBox.setSelectedId(missingModelItemId, juce::dontSendNotification);
-            modelDescription.setText("Not in this build. The part is using "
-                                         + choices[0] + " instead.",
+            modelDescription.setText("Saved as \"" + part.unresolvedModelId + "\", a model this build "
+                                         "doesn't have. The part is using " + choices[0] + " instead.",
                                      juce::dontSendNotification);
         }
         else
         {
             modelBox.setSelectedId(part.modelIndex + 1, juce::dontSendNotification);
-            modelDescription.setText(getModelDescription(part.type, part.modelIndex),
-                                     juce::dontSendNotification);
+            modelDescription.setText({}, juce::dontSendNotification);
         }
     }
 
     void ElementInspector::fillFieldsFrom(const Element& part)
     {
         const auto& info = getElementInfo(part.type);
-        titleLabel.setText(info.name, juce::dontSendNotification);
+        headerTitle = info.name;
+        headerSubtitle = headerSubtitleFor(part);
+        headerHasSymbol = part.getPinCount() > 0 || part.type == ElementType::Rectangle;
+        headerType = part.type;
         hintLabel.setText({}, juce::dontSendNotification);
+        modelDescription.setText({}, juce::dontSendNotification);
 
         if (part.hasNumericValue())
         {
@@ -1001,11 +1098,17 @@ namespace Celine
         // it moves the running circuit without a rebuild -- so it belongs with
         // the other live controls in the strip along the bottom, and having it
         // in two places meant two things to keep in step for no gain.
-        const bool orientable = has && element->getPinCount() > 0;
-        rotateButton.setVisible(orientable);
-        flipButton.setVisible(orientable);
-        deleteButton.setVisible(has);
+        //
+        // Nor are rotate, flip and delete: the toolbar has all three, and so do
+        // the keyboard and the canvas.
         hintLabel.setVisible(! has);
+
+        // The captions as the design sets them: small capitals. Here rather
+        // than at each setText, because the words are chosen in several places.
+        for (auto* caption : captionLabels())
+            caption->setText(caption->getText().toUpperCase(), juce::dontSendNotification);
+
+        markUnsetFields();
     }
 
     void ElementInspector::rebuildForElement()
@@ -1093,12 +1196,12 @@ namespace Celine
             text = clock(status.position) + " / " + clock(status.length)
                  + (status.fileMode ? juce::String() : juce::String("   (live input)"));
 
-        g.setColour(Theme::comment());
+        g.setColour(Theme::textOnPanel().withAlpha(0.6f));
         g.setFont(Fonts::light(12.0f));
         g.drawText(text, bounds.removeFromTop(16.0f), juce::Justification::centredLeft, false);
 
         auto track = bounds.withSizeKeepingCentre(bounds.getWidth(), 4.0f);
-        g.setColour(Theme::track());
+        g.setColour(Theme::pill().darker(0.12f));
         g.fillRoundedRectangle(track, 2.0f);
 
         if (status.length > 0)
@@ -1113,11 +1216,18 @@ namespace Celine
     {
         auto bounds = getLocalBounds().toFloat();
 
+        // A well, like the fields: the readings are a thing on the card rather
+        // than lettering floating on it.
+        g.setColour(Theme::pill().withMultipliedAlpha(0.7f));
+        g.fillRoundedRectangle(bounds, Theme::cornerRadius);
+        bounds = bounds.reduced(4.0f, 6.0f);
+
         float amps = 0.0f, watts = 0.0f, peak = 0.0f;
         const bool got = owner.currentReader && owner.currentReader(amps, watts, peak);
 
-        g.setColour(Theme::comment());
-        g.setFont(Fonts::light(11.0f));
+        const auto dim = Theme::textOnPanel().withAlpha(0.5f);
+        g.setColour(dim);
+        g.setFont(Fonts::light(12.0f));
 
         if (! got)
         {
@@ -1132,8 +1242,8 @@ namespace Celine
         auto cell = [&](juce::Rectangle<float> box, const juce::String& caption,
                         const juce::String& value, juce::Colour colour)
         {
-            g.setColour(Theme::comment());
-            g.setFont(Fonts::light(11.0f));
+            g.setColour(dim);
+            g.setFont(Fonts::bold(10.0f).withExtraKerningFactor(0.08f));
             g.drawText(caption, box.removeFromTop(13.0f), juce::Justification::centred, false);
 
             g.setColour(colour);
@@ -1141,10 +1251,11 @@ namespace Celine
         };
 
         const auto third = bounds.getWidth() / 3.0f;
+        const auto ink = Theme::textOnPanel();
 
-        cell(bounds.removeFromLeft(third), "CURRENT", ElementInspector::formatReading(amps, "A"), Theme::captionValue());
-        cell(bounds.removeFromLeft(third), "POWER", ElementInspector::formatReading(watts, "W"), Theme::captionValue());
-        cell(bounds, "PEAK", ElementInspector::formatReading(peak, "A"), Theme::captionValue());
+        cell(bounds.removeFromLeft(third), "CURRENT", ElementInspector::formatReading(amps, "A"), ink);
+        cell(bounds.removeFromLeft(third), "POWER", ElementInspector::formatReading(watts, "W"), ink);
+        cell(bounds, "PEAK", ElementInspector::formatReading(peak, "A"), ink);
     }
 
     /** A round number at or below `rough`, from the 1-2-5 sequence.
@@ -1364,6 +1475,8 @@ namespace Celine
 
         if (element->hasSecondValue())
             valueEditorB.setText(secondValueText(*element), juce::dontSendNotification);
+
+        markUnsetFields();
     }
 
     void ElementInspector::commitScopeAxes()
@@ -1479,12 +1592,20 @@ namespace Celine
 
     namespace
     {
-        /** Between the card's edge and the fields, the same on all four sides
-            and the palette's padding (`palettePad`), so the two cards down
-            either side of the sheet are cut alike. It was 12 by 14 to the
-            viewport and 8 more inside it, 20 by 22 in all, which read as a
-            card with its contents shrunk into the middle. */
-        constexpr int inspectorPad = 10;
+        /** Between the card's edge and the fields, the same on all four sides. */
+        constexpr int inspectorPad = 14;
+
+        /** The heading: a symbol tile with the name and model beside it, and the
+            rule under it. */
+        constexpr int headerHeight = 60;
+        constexpr int headerTile = 36;
+
+        /** A field, its caption above it, and the air between one field and
+            the next. */
+        constexpr int fieldHeight = 32;
+        constexpr int captionHeight = 13;
+        constexpr int captionGap = 6;
+        constexpr int fieldGap = 14;
 
         /** A Label's own border either side of its text, which a measurement of
             the text alone leaves out. */
@@ -1493,11 +1614,48 @@ namespace Celine
 
     } // namespace
 
+    juce::Rectangle<int> ElementInspector::getHeaderBounds() const
+    {
+        return getLocalBounds().removeFromTop(headerHeight);
+    }
+
     void ElementInspector::paint(juce::Graphics& g)
     {
-        // A plain filled card, like the palette and the console: no outline.
-        g.setColour(Theme::chrome());
-        g.fillRoundedRectangle(getLocalBounds().toFloat(), Theme::inspectorCornerRadius);
+        // The light card, like the palette across the sheet: no outline.
+        const auto card = getLocalBounds().toFloat();
+        g.setColour(Theme::panel());
+        g.fillRoundedRectangle(card, Theme::inspectorCornerRadius);
+
+        const auto ink = Theme::textOnPanel();
+        auto header = getHeaderBounds().reduced(inspectorPad, 0).toFloat();
+
+        if (headerHasSymbol)
+        {
+            const auto tile = header.removeFromLeft((float) headerTile)
+                                  .withSizeKeepingCentre((float) headerTile, (float) headerTile);
+            g.setColour(Theme::pill());
+            g.fillRoundedRectangle(tile, 8.0f);
+            SymbolPainter::drawPreview(g, headerType, tile, ink);
+            header.removeFromLeft(12.0f);
+        }
+
+        const bool twoLines = headerSubtitle.isNotEmpty();
+        auto titleArea = header.withSizeKeepingCentre(header.getWidth(), twoLines ? 38.0f : 22.0f);
+
+        g.setColour(ink);
+        g.setFont(Fonts::bold(16.5f));
+        g.drawText(headerTitle, titleArea.removeFromTop(21.0f), juce::Justification::centredLeft, true);
+
+        if (twoLines)
+        {
+            g.setColour(ink.withAlpha(0.6f));
+            g.setFont(Fonts::light(12.5f));
+            g.drawFittedText(headerSubtitle, titleArea.toNearestInt(), juce::Justification::centredLeft, 1, 0.9f);
+        }
+
+        // The rule under the heading, edge to edge.
+        g.setColour(ink.withAlpha(0.08f));
+        g.fillRect(card.getX(), (float) headerHeight - 1.0f, card.getWidth(), 1.0f);
     }
 
     int ElementInspector::hintWidth() const
@@ -1557,7 +1715,7 @@ namespace Celine
         // the card actually is.
         resized();
 
-        return {width + 2 * inspectorPad, height + 2 * inspectorPad};
+        return {width + 2 * inspectorPad, headerHeight + height + 2 * inspectorPad};
     }
 
     int ElementInspector::layOutFields(int width)
@@ -1571,134 +1729,129 @@ namespace Celine
         content.setSize(width, roomToMeasureIn);
 
         auto area = content.getLocalBounds();
+        bool first = true;
 
-        titleLabel.setBounds(area.removeFromTop(22));
-        area.removeFromTop(6);
+        // The gap goes *before* each row, so the last one leaves none to trim.
+        const auto next = [&](int height)
+        {
+            if (! first)
+                area.removeFromTop(fieldGap);
 
-        auto field = [&](juce::Component& caption, juce::Component& control)
+            first = false;
+            return area.removeFromTop(height);
+        };
+
+        const auto field = [&](juce::Component& caption, juce::Component& control)
         {
             if (! control.isVisible())
                 return;
 
-            caption.setBounds(area.removeFromTop(14));
-            control.setBounds(area.removeFromTop(24));
-            area.removeFromTop(6);
+            auto cell = next(captionHeight + captionGap + fieldHeight);
+            caption.setBounds(cell.removeFromTop(captionHeight));
+            cell.removeFromTop(captionGap);
+            control.setBounds(cell);
         };
 
-        field(valueCaption, valueEditor);
-        field(valueCaptionB, valueEditorB);
+        // Two fields side by side, for numbers that come as a pair.
+        const auto pair = [&](juce::Component& captionA, juce::Component& controlA,
+                              juce::Component& captionB, juce::Component& controlB)
+        {
+            if (! controlA.isVisible() && ! controlB.isVisible())
+                return;
+
+            auto cell = next(captionHeight + captionGap + fieldHeight);
+            auto left = cell.removeFromLeft((cell.getWidth() - 12) / 2);
+            cell.removeFromLeft(12);
+
+            for (auto [caption, control, box] : {std::tuple{&captionA, &controlA, left},
+                                                  std::tuple{&captionB, &controlB, cell}})
+            {
+                if (! control->isVisible())
+                    continue;
+
+                caption->setBounds(box.removeFromTop(captionHeight));
+                box.removeFromTop(captionGap);
+                control->setBounds(box);
+            }
+        };
+
+        const auto row = [&](juce::Component& c, int height)
+        {
+            if (c.isVisible())
+                c.setBounds(next(height));
+        };
+
+        // What it is called, then which part it is, then what it is set to --
+        // the order the iPad designer asks in.
+        field(labelCaption, labelEditor);
         field(modelCaption, modelBox);
 
         if (modelDescription.isVisible())
         {
-            // As many lines as the description wraps to at this width, rather
-            // than a fixed three: the card is narrow, and a fourth line under a
-            // three-line box is simply not drawn.
+            // As many lines as the note wraps to at this width.
             const auto font = modelDescription.getFont();
             juce::AttributedString text;
             text.append(modelDescription.getText(), font);
             juce::TextLayout layout;
-            layout.createLayout(text, static_cast<float>(area.getWidth() - 2 * labelBorderX));
+            layout.createLayout(text, static_cast<float>(area.getWidth()));
 
             const int lines = juce::jmax(1, layout.getNumLines());
+            area.removeFromTop(6);
             modelDescription.setBounds(area.removeFromTop(
-                juce::roundToInt(std::ceil(static_cast<float>(lines) * font.getHeight())) + 2 * labelBorderY + 2));
-            area.removeFromTop(4);
+                juce::roundToInt(std::ceil(static_cast<float>(lines) * font.getHeight())) + 2));
         }
 
+        pair(widthCaption, widthEditor, heightCaption, heightEditor);
+        field(valueCaption, valueEditor);
+        field(valueCaptionB, valueEditorB);
         field(taperCaption, taperBox);
-        field(orderCaption, orderEditor);
         field(knobCaption, knobEditor);
-        field(widthCaption, widthEditor);
-        field(heightCaption, heightEditor);
-        field(labelCaption, labelEditor);
-
-        for (auto* toggle : {&polarisedButton, &cabButton})
-            if (toggle->isVisible())
-            {
-                toggle->setBounds(area.removeFromTop(24));
-                area.removeFromTop(4);
-            }
+        row(polarisedButton, 24);
+        field(orderCaption, orderEditor);
 
         // Directly under its switch, because the two are one control: the file
         // is what the switch switches in.
+        row(cabButton, 24);
         field(cabFileCaption, cabFileButton);
 
         // The file player, in the order you use it: live or file, which file,
         // how it repeats, then the transport and where it has got to.
-        if (fileInputButton.isVisible())
-        {
-            fileInputButton.setBounds(area.removeFromTop(24));
-            area.removeFromTop(4);
-        }
-
+        row(fileInputButton, 24);
         field(inputFileCaption, inputFileButton);
 
         if (loopButton.isVisible())
         {
-            loopButton.setBounds(area.removeFromTop(24));
-            area.removeFromTop(4);
+            row(loopButton, 24);
 
-            auto row = area.removeFromTop(26);
-            playButton.setBounds(row.removeFromLeft(row.getWidth() / 2 - 3));
-            stopButton.setBounds(row.removeFromRight(row.getWidth() - 3));
-            area.removeFromTop(6);
+            auto buttons = next(fieldHeight);
+            playButton.setBounds(buttons.removeFromLeft(buttons.getWidth() / 2 - 4));
+            stopButton.setBounds(buttons.removeFromRight(buttons.getWidth() - 8));
 
-            transportView.setBounds(area.removeFromTop(30));
-            area.removeFromTop(6);
+            row(transportView, 30);
         }
 
         // The scope's picture, given real room -- it is the whole of what the
         // part is for, and a trace two centimetres wide tells you nothing.
-        if (scopeView.isVisible())
-        {
-            scopeView.setBounds(area.removeFromTop(150));
-            area.removeFromTop(6);
-        }
+        row(scopeView, 150);
+        row(scopeAutoButton, 24);
 
-        if (scopeAutoButton.isVisible())
-        {
-            scopeAutoButton.setBounds(area.removeFromTop(24));
-            area.removeFromTop(6);
-        }
-
-        // Top above bottom, the way they sit on the graph. Reading a pair of
-        // bounds in the opposite order to the axis they describe is a small
-        // thing that goes wrong every single time you use it.
-        field(scopeMaxCaption, scopeMaxEditor);
-        field(scopeMinCaption, scopeMinEditor);
+        // Top beside bottom, top first, the way they are read off the graph.
+        pair(scopeMaxCaption, scopeMaxEditor, scopeMinCaption, scopeMinEditor);
         field(scopeSecondsCaption, scopeSecondsEditor);
 
-        if (currentView.isVisible())
-        {
-            currentView.setBounds(area.removeFromTop(34));
-            area.removeFromTop(6);
-        }
-
-        if (rotateButton.isVisible())
-        {
-            auto row = area.removeFromTop(26);
-            rotateButton.setBounds(row.removeFromLeft(row.getWidth() / 2 - 3));
-            flipButton.setBounds(row.removeFromRight(row.getWidth() - 3));
-            area.removeFromTop(4);
-        }
-
-        // On its own visibility, not rotate's: Delete shows for anything
-        // selected, rotate and flip only for something with pins.
-        if (deleteButton.isVisible())
-            deleteButton.setBounds(area.removeFromTop(26));
+        row(currentView, 52);
 
         // The hint only shows when nothing is selected, so it never competes
         // with the fields for room -- it is as tall as its lines.
         if (hintLabel.isVisible())
-            hintLabel.setBounds(area.removeFromTop(hintHeight()));
+            hintLabel.setBounds(next(hintHeight()));
 
         return area.getY();
     }
 
     void ElementInspector::resized()
     {
-        viewport.setBounds(getLocalBounds().reduced(inspectorPad));
+        viewport.setBounds(getLocalBounds().withTrimmedTop(headerHeight).reduced(inspectorPad));
 
         // Same two-pass as the console: a scrollbar takes width, and whether one
         // is needed depends on the height. Field heights here don't depend on

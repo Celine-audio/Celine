@@ -13,10 +13,10 @@
       pointer. There is no value track in the design, so there is none here -- the notch
       is the readout.
     - **the switch**. The house draws a pill too, so this one is an override rather than
-      an addition: Céline's says ON and OFF inside it, sizes itself to its own content
-      rather than stretching across an inspector row, and takes the panel's dark ink
-      because it stands on the light half of the design. `pillSwitchProperty` is the
-      house's, and marks a toggle as one of ours in either.
+      an addition: Céline's is the iPad designer's -- a pale track that turns accent, a
+      white dot on the side that is made, no lettering -- the same in the inspector and
+      in the control strip, sized to itself rather than stretched across a row.
+      `pillSwitchProperty` is the house's, and marks a toggle as one of ours in either.
 */
 
 /** Marks a Slider as the plugin's own gain rather than a knob on the drawn circuit, so
@@ -33,6 +33,10 @@ inline constexpr const char* digitalGainProperty = "celineDigitalGain";
     so the colour is never a snapshot. */
 inline constexpr const char* panelReadoutProperty = "celinePanelReadout";
 
+/** Marks a field or dropdown as one of the inspector's, which stands on the light card:
+    a dropdown reads left-aligned like the text fields above and below it. */
+inline constexpr const char* inspectorFieldProperty = "celineInspectorField";
+
 class PluginLookAndFeel : public LookAndFeelBase
 {
 public:
@@ -47,6 +51,8 @@ public:
                           float rotaryEndAngle, juce::Slider&) override;
 
     juce::Label* createSliderTextBox(juce::Slider&) override;
+
+    void positionComboBoxText(juce::ComboBox&, juce::Label&) override;
 
     void drawToggleButton(juce::Graphics&, juce::ToggleButton&,
                           bool shouldDrawButtonAsHighlighted,

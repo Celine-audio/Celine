@@ -143,6 +143,13 @@ namespace Celine
         /** Points the inspector at a part, or at nothing. */
         void setElement(SchematicModel::Element* element);
 
+        /** Whether the card stays up with the shortcut list when nothing is
+            selected. Off, it shows only while a part is selected and the sheet
+            gets the room back the rest of the time -- for someone who knows
+            the keys. The card hides itself, so every route that changes the
+            selection gets this right without having to know about it. */
+        void setShortcutsShown(bool shouldShow);
+
         /** A live reading -- a current, a power, a scope's voltages -- in
             engineering notation with exactly two digits after the point. The
             prefix already moves the point to where the number is: a third
@@ -237,15 +244,6 @@ namespace Celine
             as it does the cabinet's. */
         std::function<void()> onInputFileRequested;
 
-        /** The delete button was pressed. */
-        std::function<void()> onDeleteRequested;
-
-        /** The rotate button was pressed. */
-        std::function<void()> onRotateRequested;
-
-        /** The flip button was pressed. */
-        std::function<void()> onFlipRequested;
-
         void resized() override;
         void paint(juce::Graphics&) override;
 
@@ -285,6 +283,12 @@ namespace Celine
         void fitHintToWidth();
 
         void showNothingSelected();
+
+        /** The line under the part's name: what its model is, or nothing. */
+        static juce::String headerSubtitleFor(const SchematicModel::Element& part);
+
+        /** Turns the value fields red while they hold nothing. */
+        void markUnsetFields();
         void fillFieldsFrom(const SchematicModel::Element& part);
         void populateModelBox(const SchematicModel::Element& part);
         void showFieldsFor();
@@ -299,8 +303,8 @@ namespace Celine
         void commitSize();
 
         SchematicModel::Element* element = nullptr;
+        bool shortcutsShown = true;
 
-        juce::Label titleLabel;
         juce::Label valueCaption, labelCaption, modelCaption, taperCaption;
         juce::Label valueCaptionB;
         juce::TextEditor valueEditorB;
@@ -326,9 +330,9 @@ namespace Celine
         juce::TextEditor valueEditor, labelEditor;
         juce::ComboBox modelBox, taperBox;
 
-        /** What the chosen model actually is, in a sentence. The dropdown has
-            room for a part number and no more, which is not enough to tell a
-            BC109C from a 2N3904 or a GZ34 from a 5Y3GT. */
+        /** Under the model box only when the sheet names a model this build
+            has not got. What a model *is* -- the line that tells a BC109C from
+            a 2N3904 -- is in the heading, under the part's name. */
         juce::Label modelDescription;
         juce::ToggleButton polarisedButton{"Electrolytic"};
 
@@ -418,12 +422,23 @@ namespace Celine
             from rather than asking again. */
         InputFilePlayer::Status fileStatus;
 
-        juce::ToggleButton cabButton{"Cab"};
+        juce::ToggleButton cabButton{"Speaker cabinet"};
         juce::Label cabFileCaption;
         juce::TextButton cabFileButton;
-        juce::TextButton rotateButton{"Rotate"}, flipButton{"Flip"};
-        juce::TextButton deleteButton{"Delete"};
         juce::Label hintLabel;
+
+        /** The card's heading: what the part is, and what its model is, beside
+            its symbol. Painted rather than built from labels, because it is a
+            picture of the selection and nothing in it is edited. Rotate, flip
+            and delete are not here: the toolbar has all three. */
+        juce::String headerTitle, headerSubtitle;
+        bool headerHasSymbol = false;
+        SchematicModel::ElementType headerType{};
+
+        /** The heading's strip, the rule under it included. No close button:
+            a click on empty sheet drops the selection already, and a second way
+            to do it inside the card only competed with the fields for clicks. */
+        juce::Rectangle<int> getHeaderBounds() const;
 
         /** The fields live inside this, so a part with more of them than the
             window has room for -- a scope, with its picture and three axes --
