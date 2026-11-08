@@ -257,7 +257,7 @@ namespace Celine
             sets the face, and applyColours', which runs again whenever the theme
             moves -- and two hand-written copies of thirteen names is one place for a
             new caption to be added to only one of them. */
-        std::array<juce::Label*, 14> captionLabels();
+        std::array<juce::Label*, 15> captionLabels();
 
         void rebuildForElement();
 
@@ -329,6 +329,17 @@ namespace Celine
         juce::TextEditor widthEditor, heightEditor;
         juce::TextEditor valueEditor, labelEditor;
         juce::ComboBox modelBox, taperBox;
+
+        /** A changeover switch's action: ON-ON, ON-OFF-ON, ON-ON-ON. Which of
+            the positions it is *in* lives in the strip, with the other live
+            controls. Poles are not asked for: two switches with one label are
+            a double-pole switch. */
+        juce::Label actionCaption;
+        juce::ComboBox actionBox;
+
+        /** Changes the switch's action, keeping its lever on the throw it was
+            on where the new action has that throw. */
+        void reshapeSwitch(SchematicModel::SwitchAction action);
 
         /** Under the model box only when the sheet names a model this build
             has not got. What a model *is* -- the line that tells a BC109C from

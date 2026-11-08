@@ -9,6 +9,42 @@ namespace Celine
 {
     //==========================================================================
     /**
+        A three-position lever, for the switches with three: ON-OFF-ON and
+        ON-ON-ON. The two-position ones keep the toggle, so the strip's switches
+        look alike and only grow a stop when there is one to grow.
+
+        The same pale track and white dot as the toggle -- see
+        PluginLookAndFeel::drawToggleButton -- with the dot on the left, the
+        middle or the right, and a tick at each stop. Lit unless the lever sits
+        on the position that connects nothing. Click or drag to a stop.
+    */
+    class LeverSwitch : public juce::Component
+    {
+       public:
+        /** The stop it is on, 0 to positions - 1; the top is throw A. */
+        int getPosition() const noexcept { return position; }
+        void setPosition(int newPosition, juce::NotificationType notification);
+
+        /** The stop drawn unlit, or -1. */
+        int offPosition = -1;
+
+        std::function<void(int)> onChange;
+
+        void paint(juce::Graphics&) override;
+        void mouseDown(const juce::MouseEvent&) override;
+        void mouseDrag(const juce::MouseEvent&) override;
+
+        static constexpr int positions = 3;
+
+       private:
+        juce::Rectangle<float> trackBounds() const;
+        int stopAt(float x) const;
+
+        int position = positions - 1;
+    };
+
+    //==========================================================================
+    /**
         The row of knobs and switches the drawn circuit turned out to have.
 
         Built from the `LiveControl`s the last build produced, onto the fixed
@@ -143,6 +179,7 @@ namespace Celine
         {
             std::unique_ptr<juce::Slider> slider;
             std::unique_ptr<juce::ToggleButton> toggle;
+            std::unique_ptr<LeverSwitch> lever;
             std::unique_ptr<juce::Label> label;
             std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
             juce::RangedAudioParameter* parameter = nullptr;

@@ -864,6 +864,15 @@ namespace SchematicModel
             node.setProperty("polarised", element.polarised, nullptr);
             node.setProperty("closed", element.closed, nullptr);
 
+            // A changeover switch's action and where its lever sits. `closed`
+            // is still written above, true on throw A, so an older build opening
+            // this sheet finds the lever on the same side.
+            if (element.type == ElementType::Spdt)
+            {
+                node.setProperty("action", static_cast<int>(element.switchAction), nullptr);
+                node.setProperty("switchPosition", element.switchPosition, nullptr);
+            }
+
             // Only a pot has one, on the same principle as valueB and the
             // rectangle's size: nothing grows a property it would never read.
             if (element.type == ElementType::Potentiometer)
@@ -977,6 +986,15 @@ namespace SchematicModel
                 element.label = node.getProperty("label", "").toString();
                 element.polarised = node.getProperty("polarised", false);
                 element.closed = node.getProperty("closed", true);
+
+                // Absent on every sheet from before the changeover had a choice
+                // of actions, which were all ON-ON, with `closed` saying which
+                // throw.
+                element.switchAction = static_cast<SwitchAction>(
+                    juce::jlimit(0, numSwitchActions - 1, static_cast<int>(node.getProperty("action", 0))));
+                element.switchPosition = juce::jlimit(
+                    0, element.getSwitchPositions() - 1,
+                    static_cast<int>(node.getProperty("switchPosition", element.closed ? element.getSwitchPositions() - 1 : 0)));
 
                 // Centred, not zero, for a sheet saved before knob positions
                 // were remembered -- those pots were drawn without a position,

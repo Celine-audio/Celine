@@ -260,7 +260,7 @@ namespace Celine
                 for (const auto& shape : artwork->shapes)
                     include(shape.path.getBounds());
 
-            for (int pin = 0; pin < getElementInfo(element.type).pinCount; ++pin)
+            for (int pin = 0; pin < element.getPinCount(); ++pin)
             {
                 const auto p = element.getPinPosition(pin);
                 include({static_cast<float>(p.x - element.x),
@@ -844,7 +844,7 @@ namespace Celine
         g.setColour(colour.withAlpha(0.9f));
         const float pinRadius = juce::jmax(1.5f, gridSize * 0.18f);
 
-        for (int pin = 0; pin < getElementInfo(element.type).pinCount; ++pin)
+        for (int pin = 0; pin < element.getPinCount(); ++pin)
         {
             const auto p = toPixel(element.getPinPosition(pin));
             g.fillEllipse(juce::Rectangle<float>(pinRadius * 2.0f, pinRadius * 2.0f).withCentre(p));
@@ -932,6 +932,16 @@ namespace Celine
         return box;
     }
 
+    float SymbolPainter::previewLineWidth(juce::Rectangle<float> area)
+    {
+        // A part no bigger than the swatch's six squares, at the line weight
+        // its artwork is drawn at -- see drawPreview.
+        constexpr float pinDotAllowance = 5.0f;
+        const float grid = juce::jmax(0.5f, (juce::jmin(area.getWidth(), area.getHeight()) - pinDotAllowance)
+                                                / previewSquares);
+        return grid * 0.12f;
+    }
+
     void SymbolPainter::drawPreview(juce::Graphics& g, ElementType type, juce::Rectangle<float> area,
                                     juce::Colour colour)
     {
@@ -975,13 +985,12 @@ namespace Celine
                        - juce::Point<float>(extent.getCentreX(), extent.getCentreY())
                              * painter.gridSize;
 
-        // A floor under the line weight, which is what makes these read as
-        // symbols rather than as smudges. At the swatch's scale the canvas's own
-        // `gridSize * 0.12` comes out at half a pixel, and a half-pixel stroke is
-        // rendered as two rows of grey rather than one of ink -- so the whole
-        // palette came out pale and thin next to the mockup, which draws it at
-        // full contrast.
-        painter.minStrokeWidth = 1.5f;
+        // No floor under the line weight here: what is drawn in code -- a node's
+        // tag, a pot's arrow, the T -- has to come out at the weight the
+        // artwork is, and the artwork is outlined at its authored width with no
+        // floor at all (see SymbolArtwork::ink). A 1.5 px floor once made those
+        // the only bold swatches in the list.
+        painter.minStrokeWidth = 0.0f;
 
         // See SymbolPainter::terminalLettering -- the row says "Input" already,
         // and the lettering is drawn far enough outside the flag to run off the

@@ -37,7 +37,7 @@ namespace Celine
         {
             Ground, Input, Output, Resistor,
             Capacitor, CapacitorPolarised, Inductor, Potentiometer,
-            SwitchClosed, SwitchOpen, SpdtA, SpdtB,
+            SwitchClosed, SwitchOpen, SpdtA, SpdtB, SpdtOff, Sp3tA, Sp3tB, Sp3tC,
             VoltageSource, Diode, DiodeZener, DiodeSchottky, DiodeLed,
             TransistorNpn, TransistorPnp, Triode, OpAmp,
             JfetN, JfetP, VacuumDiode, Pentode,
@@ -52,7 +52,7 @@ namespace Celine
         const char* const assetNames[] = {
             "ground", "input", "output", "resistor",
             "capacitor", "capacitor-polarised", "inductor", "potentiometer",
-            "switch-closed", "switch-open", "spdt-a", "spdt-b",
+            "switch-closed", "switch-open", "spdt-a", "spdt-b", "spdt-off", "sp3t-a", "sp3t-b", "sp3t-c",
             "voltage-source", "diode", "diode-zener", "diode-schottky", "diode-led",
             "transistor-npn", "transistor-pnp", "triode", "opamp",
             "jfet-n", "jfet-p", "vacuum-diode", "pentode",
@@ -585,9 +585,6 @@ namespace Celine
                 case ElementType::Switch:
                     return (int) (element.closed ? Asset::SwitchClosed : Asset::SwitchOpen);
 
-                case ElementType::Spdt:
-                    return (int) (element.closed ? Asset::SpdtA : Asset::SpdtB);
-
                 case ElementType::Diode:
                     return diodeAsset(element.modelIndex);
 
@@ -602,6 +599,19 @@ namespace Celine
                 case ElementType::Mosfet:
                     return polarityAsset(ElementType::Mosfet, element.modelIndex,
                                          Asset::MosfetN, Asset::MosfetP);
+
+                // A changeover: a file per throw the lever can be on, and one
+                // for the middle of an ON-OFF-ON, which is on neither. ON-ON
+                // and ON-OFF-ON share their two throws' drawings.
+                case ElementType::Spdt:
+                {
+                    const int on = element.getThrowAt(element.switchPosition);
+
+                    if (element.getSwitchThrows() == 3)
+                        return (int) (on == 0 ? Asset::Sp3tA : on == 1 ? Asset::Sp3tB : Asset::Sp3tC);
+
+                    return (int) (on == 0 ? Asset::SpdtA : on == 1 ? Asset::SpdtB : Asset::SpdtOff);
+                }
 
                 // A note is its own text, a group box a frame whose size is
                 // dragged, and a node a tag as wide as the name written in it.

@@ -629,17 +629,38 @@ namespace SchematicModel
 
             if (element.type != ElementType::Spdt)
             {
-                control.toggles.push_back(circuit.addSwitch(net(0), net(1), element.closed));
+                // Closed in the upper position, which is what "on" has always
+                // meant for a plain switch.
+                control.contacts.push_back({circuit.addSwitch(net(0), net(1), element.closed), 2, 0b10u});
                 return;
             }
 
-            // Pin order is common, ON throw, OFF throw. addChangeoverSwitch
-            // always starts on throw A, and the bias point is solved before any
-            // knob position reaches us, so it is selected here.
-            auto changeover = circuit.addChangeoverSwitch(net(0), net(1), net(2));
-            changeover.select(circuit, ! element.closed);
+            // One contact per throw, from the common to that throw, closed in
+            // whichever positions put the lever there. Built in its current
+            // position: the bias point is solved before any knob position
+            // reaches the control. A second pole is a second switch with the
+            // same label, ganged onto this control by attachControl.
+            const int positions = element.getSwitchPositions();
 
-            control.changeovers.push_back(changeover);
+            for (int t = 0; t < element.getSwitchThrows(); ++t)
+            {
+                unsigned closedIn = 0;
+
+                for (int k = 0; k < positions; ++k)
+                    if (element.getThrowAt(k) == t)
+                        closedIn |= 1u << k;
+
+                const bool closedNow = element.getThrowAt(element.switchPosition) == t;
+                control.contacts.push_back({circuit.addSwitch(net(0), net(1 + t), closedNow), positions, closedIn});
+            }
+
+            // The strip's lever follows the widest switch on the control, and
+            // shows the middle of an ON-OFF-ON unlit.
+            if (positions > control.positions)
+                control.positions = positions;
+
+            if (element.switchAction == SwitchAction::OnOffOn && control.elementIds.size() == 1)
+                control.offPosition = 1;
         }
 
         /** Stamps one element. Terminals, annotations and scopes stamp nothing:

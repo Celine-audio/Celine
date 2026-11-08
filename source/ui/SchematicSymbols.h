@@ -122,9 +122,9 @@ namespace Celine
         }
 
         /** The thinnest a line may be drawn, whatever the zoom. One pixel on the
-            sheet, where a symbol has room and the grid is the reference; heavier
-            in a palette swatch, where the same rule lands on a half pixel and
-            renders as grey rather than ink. See drawPreview. */
+            sheet, where a symbol has room and the grid is the reference; none
+            in a palette swatch, where code-drawn lines have to match the
+            artwork's own weight. See drawPreview. */
         float minStrokeWidth = 1.0f;
 
         /** Whether an Input or Output terminal gets its IN/OUT lettering.
@@ -206,6 +206,11 @@ namespace Celine
             actually sits. For the palette. */
         static void drawPreview(juce::Graphics& g, SchematicModel::ElementType type, juce::Rectangle<float> area,
                                 juce::Colour colour);
+
+        /** The line weight drawPreview gives a part in `area` -- for a swatch
+            drawn beside the previews rather than through them, like the
+            palette's wire, so it is not the one bold icon in the list. */
+        static float previewLineWidth(juce::Rectangle<float> area);
 
         /** The grid rectangle a scope's screen occupies, relative to the part's
             centre -- the frame drawn in `scope.svg`, stated once here so the

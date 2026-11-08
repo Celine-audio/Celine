@@ -39,11 +39,19 @@ TEST_CASE ("Every part resolves to artwork that exists", "[artwork][gui]")
                     probe.polarised = flag;
                     probe.closed = flag;
 
-                    if (getSymbolAssetName (probe) == name)
-                    {
-                        artwork = getSymbolArtwork (probe);
+                    // A changeover's drawing follows its action and lever too.
+                    for (int action = 0; action < numSwitchActions && artwork == nullptr; ++action)
+                        for (int position = 0; position < 3 && artwork == nullptr; ++position)
+                        {
+                            probe.switchAction = static_cast<SwitchAction> (action);
+                            probe.switchPosition = position;
+
+                            if (getSymbolAssetName (probe) == name)
+                                artwork = getSymbolArtwork (probe);
+                        }
+
+                    if (artwork != nullptr)
                         break;
-                    }
                 }
 
                 if (artwork != nullptr)

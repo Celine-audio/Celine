@@ -186,10 +186,16 @@ namespace Celine
             {
                 // An elbow, which is what the wire tool actually draws.
                 const auto area = symbolArea.reduced(7.0f);
+                juce::Path elbow;
+                elbow.startNewSubPath(area.getX(), area.getBottom());
+                elbow.lineTo(area.getCentreX(), area.getBottom());
+                elbow.lineTo(area.getCentreX(), area.getY());
+                elbow.lineTo(area.getRight(), area.getY());
+
                 g.setColour(ink);
-                g.drawLine(area.getX(), area.getBottom(), area.getCentreX(), area.getBottom(), 1.5f);
-                g.drawLine(area.getCentreX(), area.getBottom(), area.getCentreX(), area.getY(), 1.5f);
-                g.drawLine(area.getCentreX(), area.getY(), area.getRight(), area.getY(), 1.5f);
+                g.strokePath(elbow, juce::PathStrokeType(SymbolPainter::previewLineWidth(symbolArea),
+                                                         juce::PathStrokeType::mitered,
+                                                         juce::PathStrokeType::rounded));
             }
             else
             {
@@ -478,12 +484,41 @@ namespace Celine
     // Inspector
     //==========================================================================
 
-    std::array<juce::Label*, 14> ElementInspector::captionLabels()
+    std::array<juce::Label*, 15> ElementInspector::captionLabels()
     {
         return {&valueCaption, &valueCaptionB, &labelCaption, &modelCaption, &taperCaption,
                 &orderCaption, &knobCaption, &widthCaption, &heightCaption,
                 &scopeMinCaption, &scopeMaxCaption, &scopeSecondsCaption, &cabFileCaption,
-                &inputFileCaption};
+                &inputFileCaption, &actionCaption};
+    }
+
+    void ElementInspector::reshapeSwitch(SwitchAction action)
+    {
+        if (element == nullptr || element->type != ElementType::Spdt)
+            return;
+
+        // Wherever the lever was, put it on the same throw in the new action --
+        // or in the middle, if it was off and the new one has an off -- so
+        // changing ON-ON to ON-OFF-ON does not quietly move it.
+        const int wasOn = element->getThrowAt(element->switchPosition);
+
+        element->switchAction = action;
+
+        const int top = element->getSwitchPositions() - 1;
+        int position = top;
+
+        for (int k = 0; k <= top; ++k)
+            if (element->getThrowAt(k) == wasOn)
+                position = k;
+
+        element->switchPosition = position;
+        element->closed = position == top;
+
+        headerSubtitle = headerSubtitleFor(*element);
+        repaint();
+
+        if (onEdited)
+            onEdited();
     }
 
     void ElementInspector::applyColours()
@@ -515,7 +550,7 @@ namespace Celine
         // hold nothing -- the same red the part's caption wears on the sheet.
         markUnsetFields();
 
-        for (auto* box : {&modelBox, &taperBox})
+        for (auto* box : {&modelBox, &taperBox, &actionBox})
         {
             box->setColour(juce::ComboBox::backgroundColourId, well);
             box->setColour(juce::ComboBox::textColourId, ink);
@@ -590,7 +625,7 @@ namespace Celine
         }
 
         for (juce::Component* c : std::initializer_list<juce::Component*>{
-                 &modelBox, &taperBox, &polarisedButton, &cabButton, &scopeAutoButton,
+                 &modelBox, &taperBox, &actionBox, &polarisedButton, &cabButton, &scopeAutoButton,
                  &fileInputButton, &loopButton})
             c->getProperties().set(inspectorFieldProperty, true);
 
@@ -614,6 +649,17 @@ namespace Celine
         labelCaption.setText("Label", juce::dontSendNotification);
         modelCaption.setText("Model", juce::dontSendNotification);
         taperCaption.setText("Taper", juce::dontSendNotification);
+        actionCaption.setText("Action", juce::dontSendNotification);
+
+        for (const auto& name : getSwitchActionNames())
+            actionBox.addItem(name, actionBox.getNumItems() + 1);
+
+        actionBox.onChange = [this]
+        {
+            if (element != nullptr && actionBox.getSelectedId() > 0)
+                reshapeSwitch(static_cast<SwitchAction>(actionBox.getSelectedId() - 1));
+        };
+        content.addAndMakeVisible(actionBox);
 
         // Committing on Enter and on focus loss both matter: people type a value
         // and then click straight onto the canvas.
@@ -835,6 +881,11 @@ namespace Celine
 
     juce::String ElementInspector::headerSubtitleFor(const Element& part)
     {
+        // A switch is named the way it is sold: "DPDT, ON-OFF-ON".
+        if (part.type == ElementType::Spdt)
+            return part.getSwitchKindName() + ", "
+                   + getSwitchActionNames()[static_cast<int>(part.switchAction)];
+
         // A box's "models" are colours, and its description is an instruction,
         // not a fact about the part. A model the build has not got is described
         // under the model box instead, in red.
@@ -960,6 +1011,7 @@ namespace Celine
             populateModelBox(part);
 
         taperBox.setSelectedId(static_cast<int>(part.taper) + 1, juce::dontSendNotification);
+        actionBox.setSelectedId(static_cast<int>(part.switchAction) + 1, juce::dontSendNotification);
         polarisedButton.setToggleState(part.polarised, juce::dontSendNotification);
     }
 
@@ -1085,6 +1137,10 @@ namespace Celine
         // A part with one model and nothing to say about it gets no line.
         modelDescription.setVisible(models && modelDescription.getText().isNotEmpty());
         taperCaption.setVisible(isPot);
+
+        const bool isChangeover = has && element->type == ElementType::Spdt;
+        actionCaption.setVisible(isChangeover);
+        actionBox.setVisible(isChangeover);
         taperBox.setVisible(isPot);
         labelCaption.setText(has && element->type == ElementType::Text     ? "Text"
                              : isBox                                      ? "Title"
@@ -1805,6 +1861,7 @@ namespace Celine
         field(valueCaption, valueEditor);
         field(valueCaptionB, valueEditorB);
         field(taperCaption, taperBox);
+        field(actionCaption, actionBox);
         field(knobCaption, knobEditor);
         row(polarisedButton, 24);
         field(orderCaption, orderEditor);

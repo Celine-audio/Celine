@@ -2262,12 +2262,12 @@ TEST_CASE ("Switches sharing a label become one ganged control", "[schematic]")
     const auto channel = std::find_if (result.controls.begin(), result.controls.end(),
                                        [] (const LiveControl& c) { return c.name == "CHANNEL"; });
     REQUIRE (channel != result.controls.end());
-    CHECK (channel->toggles.size() == 2);
+    CHECK (channel->contacts.size() == 2);
 
     const auto bright = std::find_if (result.controls.begin(), result.controls.end(),
                                       [] (const LiveControl& c) { return c.name == "BRIGHT"; });
     REQUIRE (bright != result.controls.end());
-    CHECK (bright->toggles.size() == 1);
+    CHECK (bright->contacts.size() == 1);
 
     juce::ignoreUnused (a, b, lone);
 }
@@ -2349,6 +2349,207 @@ TEST_CASE ("An SPDT sends the signal to one throw or the other", "[schematic]")
     juce::ignoreUnused (sw);
 }
 
+namespace
+{
+    /** One common fed from the input, each throw through its own resistor to an
+        output loaded by 10k -- so which throw is made reads as a gain. */
+    struct ThrowBench
+    {
+        SchematicModel::Schematic sheet;
+        int sw = 0;
+
+        ThrowBench (SchematicModel::SwitchAction action, std::vector<double> viaOhms)
+        {
+            using namespace SchematicModel;
+
+            sw = sheet.addElement (ElementType::Spdt, 0, 0);
+            sheet.findElement (sw)->switchAction = action;
+            sheet.addElement (ElementType::Input, -2, 2);   // pin lands on the common
+
+            std::vector<juce::Point<int>> tops;
+
+            for (size_t t = 0; t < viaOhms.size(); ++t)
+            {
+                const auto contact = sheet.findElement (sw)->getPinPosition (1 + (int) t);
+                const auto via = sheet.addElement (ElementType::Resistor, contact.x, contact.y - 2);
+                sheet.findElement (via)->value = viaOhms[t];
+                tops.push_back (sheet.findElement (via)->getPinPosition (0));
+            }
+
+            for (size_t t = 1; t < tops.size(); ++t)
+                sheet.addWire (tops[t - 1], tops[t]);
+
+            // The output's pin lands on the leftmost resistor's top, the load
+            // hangs from it, and a wire takes the load to ground.
+            sheet.addElement (ElementType::Output, tops.front().x + 2, tops.front().y);
+            const auto load = sheet.addElement (ElementType::Resistor, tops.front().x, tops.front().y - 2);
+            sheet.findElement (load)->value = 10000.0;
+            const auto ground = sheet.addElement (ElementType::Ground, tops.front().x - 4, tops.front().y - 6);
+            sheet.addWire (sheet.findElement (load)->getPinPosition (0), sheet.findElement (ground)->getPinPosition (0));
+        }
+
+        /** The gain at each control value, settled. */
+        std::vector<float> gains (std::initializer_list<float> values)
+        {
+            const auto result = SchematicModel::buildCircuits (sheet, 48000.0, 1);
+            INFO (result.error);
+            REQUIRE (result.isValid());
+            REQUIRE (result.controls.size() == 1);
+
+            for (const auto& diagnostic : result.diagnostics)
+                INFO (diagnostic.text);
+
+            CHECK (result.diagnostics.empty());
+
+            auto& circuit = *result.circuits[0];
+            std::vector<float> out;
+
+            for (const float value : values)
+            {
+                result.controls[0].apply (circuit, value);
+                float y = 0.0f;
+
+                for (int i = 0; i < 64; ++i)
+                    y = circuit.process (1.0f);
+
+                out.push_back (y);
+            }
+
+            return out;
+        }
+    };
+}
+
+TEST_CASE ("An ON-ON-ON switch makes each of its three throws in turn", "[schematic]")
+{
+    // A is the 1k, B the 10k, C the 100k, into a 10k load. The top position is A,
+    // the middle B and the bottom C, so the strip reads C, B, A left to right.
+    ThrowBench bench (SchematicModel::SwitchAction::OnOnOn, { 1000.0, 10000.0, 100000.0 });
+    const auto g = bench.gains ({ 1.0f, 0.5f, 0.0f });
+
+    CHECK (g[0] == Catch::Approx (10.0 / 11.0).margin (1.0e-3));
+    CHECK (g[1] == Catch::Approx (10.0 / 20.0).margin (1.0e-3));
+    CHECK (g[2] == Catch::Approx (10.0 / 110.0).margin (1.0e-3));
+}
+
+TEST_CASE ("An ON-OFF-ON switch connects nothing in the middle", "[schematic]")
+{
+    ThrowBench bench (SchematicModel::SwitchAction::OnOffOn, { 1000.0, 100000.0 });
+    const auto g = bench.gains ({ 1.0f, 0.5f, 0.0f });
+
+    CHECK (g[0] == Catch::Approx (10.0 / 11.0).margin (1.0e-3));
+    CHECK (std::abs (g[1]) < 1.0e-3f);
+    CHECK (g[2] == Catch::Approx (10.0 / 110.0).margin (1.0e-3));
+}
+
+TEST_CASE ("Each switch action makes one throw per position, or none", "[schematic]")
+{
+    using namespace SchematicModel;
+
+    for (const auto action : { SwitchAction::OnOn, SwitchAction::OnOffOn, SwitchAction::OnOnOn })
+    {
+        Element sw;
+        sw.type = ElementType::Spdt;
+        sw.switchAction = action;
+
+        const int throws = sw.getSwitchThrows();
+        const int positions = sw.getSwitchPositions();
+        INFO (getSwitchActionNames()[(int) action]);
+
+        // A common and its throws, each on its own grid point.
+        REQUIRE (sw.getPinCount() == 1 + throws);
+        std::set<std::pair<int, int>> seen;
+
+        for (int pin = 0; pin < sw.getPinCount(); ++pin)
+        {
+            const auto p = sw.getPinPosition (pin);
+            CHECK (seen.insert ({ p.x, p.y }).second);
+        }
+
+        // Built into a real circuit: the input on the common, every throw to
+        // ground through 10k, and the output on throw A.
+        Schematic sheet;
+        const auto id = sheet.addElement (ElementType::Spdt, 0, 0);
+        sw.copyPropertiesTo (*sheet.findElement (id));
+
+        const auto common = sheet.findElement (id)->getPinPosition (0);
+        sheet.addElement (ElementType::Input, common.x - 2, common.y);
+
+        for (int t = 0; t < throws; ++t)
+        {
+            const auto contact = sheet.findElement (id)->getPinPosition (1 + t);
+            const auto r = sheet.addElement (ElementType::Resistor, contact.x, contact.y - 2);
+            sheet.findElement (r)->value = 10000.0;
+            sheet.addElement (ElementType::Ground, contact.x, contact.y - 2);
+        }
+
+        const auto a = sheet.findElement (id)->getPinPosition (1);
+        sheet.addElement (ElementType::Output, a.x + 2, a.y);
+
+        const auto result = buildCircuits (sheet, 48000.0, 1);
+        INFO (result.error);
+        REQUIRE (result.controls.size() == 1);
+        const auto& contacts = result.controls[0].contacts;
+        REQUIRE ((int) contacts.size() == throws);
+        CHECK (result.controls[0].positions == positions);
+
+        // In every position the throw getThrowAt names is made, and nothing
+        // else -- never two at once.
+        for (int k = 0; k < positions; ++k)
+        {
+            const float value = (float) k / (float) (positions - 1);
+            int made = 0;
+
+            for (int t = 0; t < throws; ++t)
+            {
+                const bool closed = contacts[(size_t) t].isClosedAt (value);
+                made += closed ? 1 : 0;
+                CHECK (closed == (sw.getThrowAt (k) == t));
+            }
+
+            CHECK (made == (sw.getThrowAt (k) >= 0 ? 1 : 0));
+        }
+    }
+}
+
+TEST_CASE ("A switch's action and position survive a save", "[schematic]")
+{
+    using namespace SchematicModel;
+
+    Schematic sheet;
+    const auto id = sheet.addElement (ElementType::Spdt, 0, 0);
+    auto* sw = sheet.findElement (id);
+    sw->switchAction = SwitchAction::OnOffOn;
+    sw->setControlPosition (0.5f);
+
+    Schematic reloaded;
+    reloaded.restoreFromValueTree (sheet.toValueTree());
+    const auto* back = reloaded.findElement (id);
+    REQUIRE (back != nullptr);
+    CHECK (back->switchAction == SwitchAction::OnOffOn);
+    CHECK (back->switchPosition == 1);
+    CHECK (back->getControlPosition() == Catch::Approx (0.5f));
+
+    // A sheet from before switches had an action is ON-ON, on whichever throw
+    // `closed` said.
+    for (const bool closed : { true, false })
+    {
+        auto tree = sheet.toValueTree();
+        auto node = tree.getChildWithName ("ELEMENT");
+        node.removeProperty ("action", nullptr);
+        node.removeProperty ("switchPosition", nullptr);
+        node.setProperty ("closed", closed, nullptr);
+
+        Schematic old;
+        old.restoreFromValueTree (tree);
+        const auto* part = old.findElement (id);
+        REQUIRE (part != nullptr);
+        CHECK (part->switchAction == SwitchAction::OnOn);
+        CHECK (part->getPinCount() == 3);
+        CHECK (part->getThrowAt (part->switchPosition) == (closed ? 0 : 1));
+    }
+}
+
 TEST_CASE ("An SPDT gangs with a plain switch sharing its label", "[schematic]")
 {
     using namespace SchematicModel;
@@ -2380,11 +2581,11 @@ TEST_CASE ("An SPDT gangs with a plain switch sharing its label", "[schematic]")
     INFO (result.error);
     REQUIRE (result.isValid());
 
-    // One control, not two, holding both kinds of contact.
+    // One control, not two, holding both kinds of contact: the SPDT's two
+    // throws and the plain switch's one.
     REQUIRE (result.controls.size() == 1);
     CHECK (result.controls[0].name == "CHANNEL");
-    CHECK (result.controls[0].toggles.size() == 1);
-    CHECK (result.controls[0].changeovers.size() == 1);
+    CHECK (result.controls[0].contacts.size() == 3);
 }
 
 TEST_CASE ("Panel position reorders the control strip", "[schematic]")

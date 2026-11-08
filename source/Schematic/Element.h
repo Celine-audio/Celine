@@ -62,8 +62,12 @@ namespace SchematicModel
             Pinless like Text: a thing you read, not one the solver sees. */
         Rectangle,
 
-        /** Single pole, double throw. The engine has no such device -- the
-            builder makes it from two switches wired in opposition. */
+        /** A single-pole changeover switch, two or three throws, in ON-ON,
+            ON-OFF-ON or ON-ON-ON action. More poles are more switches with one
+            label, which gangs them. Named for the SPDT it was before it grew
+            the rest, because this enum is the file format. The engine has no
+            such device: the builder makes each contact a plain switch, closed
+            in the positions that make it. See SwitchAction. */
         Spdt,
 
         /** A named net. Two carrying the same label are one node however far
@@ -320,10 +324,11 @@ namespace SchematicModel
              "celine:box-red|Red|Add a red rectangle for better identification;"
              "celine:box-violet|Violet|Add a violet rectangle for better identification"},
 
-            // Common, then the two throws. Pin order is what SchematicBuilder
-            // reads: common first, then the throw that is connected when the
-            // control is ON, then the one connected when it is OFF.
-            {"SPDT switch", 3, {{0, 2}, {-1, -2}, {1, -2}}, "", "", 0.0, ""},
+            // The two-throw layout, which is what a new one starts as. The real
+            // pins follow the action chosen in the inspector -- see
+            // Element::getSwitchPinOffset -- and this row is only ever read
+            // through it.
+            {"xPyT switch", 3, {{0, 2}, {-1, -2}, {1, -2}}, "", "", 0.0, ""},
 
             // A named net. The label is the whole of it, which is why an
             // unlabelled one is a build warning. Its pin sits where Input's
@@ -495,6 +500,27 @@ namespace SchematicModel
         return type == ElementType::Switch || type == ElementType::Spdt;
     }
 
+    /** How a changeover switch moves, named the way switches are sold.
+
+        - **ON-ON**: two positions, the common on throw A or throw B.
+        - **ON-OFF-ON**: three positions, the middle one connecting nothing.
+        - **ON-ON-ON**: three positions and three throws, one each.
+
+        The integer value is the saved format. */
+    enum class SwitchAction
+    {
+        OnOn = 0,
+        OnOffOn = 1,
+        OnOnOn = 2,
+    };
+
+    inline constexpr int numSwitchActions = 3;
+
+    inline juce::StringArray getSwitchActionNames()
+    {
+        return {"ON-ON", "ON-OFF-ON", "ON-ON-ON"};
+    }
+
     /** How a potentiometer's resistance follows its knob. Linear by default: a
         log taper is a deliberate choice about how a control feels. **The
         integer value is the saved format.** */
@@ -648,8 +674,67 @@ namespace SchematicModel
             otherwise show. */
         bool polarised = false;
 
-        /** Switch only: its position at build time. */
+        /** Switch only: its position at build time. A changeover switch keeps
+            this in step with switchPosition -- true on throw A -- so a sheet
+            read by a build from before the changeover grew more throws still
+            comes out on the same side. */
         bool closed = true;
+
+        /** Changeover switch only: how it moves. Defaults to the ON-ON every
+            older sheet drew. */
+        SwitchAction switchAction = SwitchAction::OnOn;
+
+        /** Changeover switch only: where the lever sits, 0 to positions - 1.
+            The top position is throw A -- the ON of the SPDT this used to be --
+            and the bottom one the last throw, so the strip shows A on the right
+            whatever the action: ON-ON is B, A; ON-OFF-ON is B, off, A; ON-ON-ON
+            is C, B, A. */
+        int switchPosition = 1;
+
+        /** Changeover switch only: two positions for ON-ON, three otherwise. */
+        int getSwitchPositions() const noexcept
+        {
+            return switchAction == SwitchAction::OnOn ? 2 : 3;
+        }
+
+        /** Changeover switch only: three throws for ON-ON-ON, two otherwise. */
+        int getSwitchThrows() const noexcept
+        {
+            return switchAction == SwitchAction::OnOnOn ? 3 : 2;
+        }
+
+        /** Changeover switch only: which throw a position connects the common
+            to, 0 for A -- or -1 for the middle of an ON-OFF-ON. The one
+            definition of what each position does: the builder closes contacts
+            by it and the symbol draws its lever by it. */
+        int getThrowAt(int position) const noexcept
+        {
+            const int top = getSwitchPositions() - 1;
+            position = juce::jlimit(0, top, position);
+
+            if (switchAction == SwitchAction::OnOffOn)
+                return position == 2 ? 0 : position == 0 ? 1 : -1;
+
+            return top - position;
+        }
+
+        /** "SPDT" or "SP3T": how the part is sold. */
+        juce::String getSwitchKindName() const
+        {
+            return getSwitchThrows() == 3 ? "SP3T" : "SPDT";
+        }
+
+        /** Changeover switch only: pin `index`'s position about the centre --
+            the common below, then the throws above, A on the left. Matches the
+            spdt- and sp3t- drawings. */
+        PinOffset getSwitchPinOffset(int index) const noexcept
+        {
+            if (index == 0)
+                return {0, 2};
+
+            const int t = index - 1;
+            return {getSwitchThrows() == 3 ? 2 * t - 2 : 2 * t - 1, -2};
+        }
 
         /** Potentiometer only: where the knob sits, 0 to 1.
 
@@ -666,6 +751,10 @@ namespace SchematicModel
             that is not a control reads as centred. */
         float getControlPosition() const noexcept
         {
+            if (type == ElementType::Spdt)
+                return static_cast<float>(juce::jlimit(0, getSwitchPositions() - 1, switchPosition))
+                       / static_cast<float>(getSwitchPositions() - 1);
+
             if (isSwitch(type))
                 return closed ? 1.0f : 0.0f;
 
@@ -674,7 +763,14 @@ namespace SchematicModel
 
         void setControlPosition(float position) noexcept
         {
-            if (isSwitch(type))
+            if (type == ElementType::Spdt)
+            {
+                const int top = getSwitchPositions() - 1;
+                switchPosition = juce::jlimit(0, top, juce::roundToInt(juce::jlimit(0.0f, 1.0f, position)
+                                                                       * static_cast<float>(top)));
+                closed = switchPosition == top;
+            }
+            else if (isSwitch(type))
                 closed = position >= 0.5f;
             else if (type == ElementType::Potentiometer)
                 controlPosition = juce::jlimit(0.0, 1.0, static_cast<double>(position));
@@ -753,9 +849,9 @@ namespace SchematicModel
         juce::Point<int> getPinPosition(int index) const noexcept
         {
             const auto& info = getElementInfo(type);
-            jassert(index >= 0 && index < info.pinCount);
+            jassert(index >= 0 && index < getPinCount());
 
-            const auto offset = info.pins[index];
+            const auto offset = type == ElementType::Spdt ? getSwitchPinOffset(index) : info.pins[index];
             return localToSheet(offset.x, offset.y);
         }
 
@@ -777,6 +873,8 @@ namespace SchematicModel
             target.controlOrder = controlOrder;
             target.polarised = polarised;
             target.closed = closed;
+            target.switchAction = switchAction;
+            target.switchPosition = switchPosition;
             target.controlPosition = controlPosition;
             target.cabEnabled = cabEnabled;
             target.cabFile = cabFile;
@@ -788,7 +886,13 @@ namespace SchematicModel
             target.scopeSeconds = scopeSeconds;
         }
 
-        int getPinCount() const noexcept { return getElementInfo(type).pinCount; }
+        int getPinCount() const noexcept
+        {
+            if (type == ElementType::Spdt)
+                return 1 + getSwitchThrows();
+
+            return getElementInfo(type).pinCount;
+        }
 
         /** True for the parts that carry two numbers instead of one. */
         bool hasSecondValue() const noexcept

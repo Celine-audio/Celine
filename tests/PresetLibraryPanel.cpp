@@ -91,7 +91,7 @@ TEST_CASE ("The library lists New, the factory presets, then the folder as a tre
     // factory folder open, as it is on a fresh install, and the user's subfolders shut.
     // Folders before presets, presets in natural order, and neither the text file nor
     // the hidden one.
-    CHECK (labels (panel) == juce::StringArray { "New (empty sheet)",
+    CHECK (labels (panel) == juce::StringArray { "New empty sheet",
                                                  "Factory presets",
                                                  "Diode clipper with volume", "Tone control", "12AX7 gain stage",
                                                  "Amps", "Empty",
@@ -149,7 +149,7 @@ TEST_CASE ("A row does what the menu item did", "[presets][library]")
     panel.chooseRow (rowNamed (panel, "12AX7 gain stage"));
     CHECK (chosenFactory == 2);
 
-    panel.chooseRow (rowNamed (panel, "New (empty sheet)"));
+    panel.chooseRow (rowNamed (panel, "New empty sheet"));
     CHECK (newSheets == 1);
 }
 
@@ -240,10 +240,18 @@ TEST_CASE ("A thin rule divides the root groups, and nothing else", "[presets][l
     panel.setFolder (temp.folder);
 
     auto below = [&panel] (const juce::String& label) { return panel.hasDividerBelow (rowNamed (panel, label)); };
+    auto section = [&panel] (const juce::String& label) { return panel.hasSectionBreakBelow (rowNamed (panel, label)); };
+
+    // The heavy bar falls only between the three sections: after New, after the
+    // factory presets, and nowhere inside the personal library.
+    CHECK (section ("New empty sheet"));
+    CHECK (section ("12AX7 gain stage"));
+    CHECK_FALSE (section ("Amps"));
+    CHECK_FALSE (section ("Empty"));
 
     // New on its own; the factory folder with its examples; each top-level folder;
     // and the presets loose at the top of the folder as one group.
-    CHECK (below ("New (empty sheet)"));
+    CHECK (below ("New empty sheet"));
     CHECK_FALSE (below ("Factory presets"));
     CHECK_FALSE (below ("Diode clipper with volume"));
     CHECK (below ("12AX7 gain stage"));

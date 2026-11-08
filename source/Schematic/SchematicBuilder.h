@@ -44,22 +44,56 @@ namespace SchematicModel
             on the drawing that can say two parts are one control. */
         std::vector<Circuit::Potentiometer> pots;
 
-        /** Every contact this one control works, single-throw and double.
+        /** One make-break contact, and the lever positions that close it.
+
+            Every switch is built from these: a plain switch is one contact
+            closed in its upper position; a changeover is one per throw per
+            pole, each closed in the positions that put the common on it. No
+            two contacts of one pole share a position, which is what keeps a
+            changeover from ever making both throws at once. */
+        struct Contact
+        {
+            Circuit::Switch contact;
+
+            /** Its part's position count, 2 or 3. */
+            int positions = 2;
+
+            /** Bit k set: closed in position k. */
+            unsigned closedIn = 0;
+
+            /** The position a 0-to-1 control value lands on. */
+            static int positionFor(float value, int positions) noexcept
+            {
+                const int top = positions - 1;
+                return juce::jlimit(0, top, juce::roundToInt(juce::jlimit(0.0f, 1.0f, value) * static_cast<float>(top)));
+            }
+
+            bool isClosedAt(float value) const noexcept
+            {
+                return ((closedIn >> positionFor(value, positions)) & 1u) != 0;
+            }
+        };
+
+        /** Every contact this one control works, of every switch on it.
 
             Switches sharing a label are *ganged* into one control and throw
             together, which is how an amp's channel switch moves four things at
-            once. The two lists gang with each other freely, since a real
-            multi-pole switch mixes make-break and changeover contacts.
+            once. Plain switches and changeovers of any shape gang freely, since
+            a real multi-pole switch mixes make-break and changeover contacts.
 
             Keyed on the label because that is the only thing on the drawing that
             says two switches are one -- an unlabelled one is named by ordinal
-            and stays on its own.
+            and stays on its own. */
+        std::vector<Contact> contacts;
 
-            A changeover is two Switches held in opposition, and a type of its
-            own in the engine so that "never both" cannot be broken by
-            accident. */
-        std::vector<Circuit::Switch> toggles;
-        std::vector<Circuit::Changeover> changeovers;
+        /** How many positions the control has: three if any switch on it has
+            three, else two. The strip draws a toggle for two and a three-way
+            lever for three. */
+        int positions = 2;
+
+        /** The position that connects nothing -- the middle of an ON-OFF-ON --
+            or -1. The strip shows it unlit, as it does a plain switch's off. */
+        int offPosition = -1;
 
         /** Where this control sits in the strip. Lower comes first; equal
             values keep the order they were drawn in. */
@@ -77,14 +111,15 @@ namespace SchematicModel
                 return;
             }
 
-            const bool on = position >= 0.5f;
+            // Opened before any is closed, so moving a changeover never makes
+            // both throws even for the length of this loop.
+            for (const auto& contact : contacts)
+                if (! contact.isClosedAt(position))
+                    contact.contact.setClosed(circuit, false);
 
-            for (const auto& toggle : toggles)
-                toggle.setClosed(circuit, on);
-
-            // On means throw A, matching the drawn symbol's "Throw A (on)".
-            for (const auto& changeover : changeovers)
-                changeover.select(circuit, ! on);
+            for (const auto& contact : contacts)
+                if (contact.isClosedAt(position))
+                    contact.contact.setClosed(circuit, true);
         }
     };
 

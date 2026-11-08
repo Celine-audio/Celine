@@ -110,6 +110,11 @@ namespace Celine
             between the presets loose at the top of the folder. */
         bool hasDividerBelow (int row) const;
 
+        /** Whether the divider under this row is a section break: the line between
+            New, the factory presets and the personal library, drawn heavier than the
+            one between folders inside a section. */
+        bool hasSectionBreakBelow (int row) const;
+
         /** What clicking a row does. */
         void chooseRow (int row);
 
@@ -165,6 +170,13 @@ namespace Celine
         };
 
         static bool isFolderKind (Kind kind) { return kind == Kind::factoryFolder || kind == Kind::folder; }
+
+        /** The three sections the list is made of: 0 for New, 1 for the factory
+            presets, 2 for the personal library and everything about it. */
+        static int sectionOf (Kind kind)
+        {
+            return kind == Kind::newSheet ? 0 : kind == Kind::factoryFolder || kind == Kind::factoryPreset ? 1 : 2;
+        }
 
         /** The key a folder's open state is kept under: its path, or a fixed one for
             the factory folder, which has none. Kept by key rather than by row so that a

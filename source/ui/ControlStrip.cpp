@@ -54,7 +54,32 @@ namespace Celine
             widget.label->setColour(juce::Label::textColourId, Theme::textOnPanel());
             content.addAndMakeVisible(widget.label.get());
 
-            if (control.kind == SchematicModel::LiveControl::Kind::Switch)
+            if (control.kind == SchematicModel::LiveControl::Kind::Switch && control.positions == 3)
+            {
+                widget.lever = std::make_unique<LeverSwitch>();
+                widget.lever->setTitle(control.name);
+                widget.lever->offPosition = control.offPosition;
+
+                auto* parameter = widget.parameter;
+
+                widget.lever->onChange = [this, parameter, ids = widget.elementIds](int stop)
+                {
+                    const float value = static_cast<float>(stop) / static_cast<float>(LeverSwitch::positions - 1);
+
+                    if (parameter != nullptr)
+                    {
+                        parameter->beginChangeGesture();
+                        parameter->setValueNotifyingHost(value);
+                        parameter->endChangeGesture();
+                    }
+
+                    if (onControlMoved)
+                        onControlMoved(ids, value);
+                };
+
+                content.addAndMakeVisible(widget.lever.get());
+            }
+            else if (control.kind == SchematicModel::LiveControl::Kind::Switch)
             {
                 // A switch is still a float parameter -- the pool has to be fixed
                 // at construction and can't know which slots become switches --
@@ -177,6 +202,14 @@ namespace Celine
     {
         for (auto& widget : widgets)
         {
+            if (widget.lever != nullptr && widget.parameter != nullptr)
+            {
+                widget.lever->setPosition(SchematicModel::LiveControl::Contact::positionFor(
+                                              widget.parameter->getValue(), LeverSwitch::positions),
+                                          juce::dontSendNotification);
+                continue;
+            }
+
             if (widget.toggle == nullptr || widget.parameter == nullptr)
                 continue;
 
@@ -276,6 +309,79 @@ namespace Celine
                 widget.toggle->setBounds(
                     pill.withSizeKeepingCentre(juce::jmin(toggleWidth, cell.getWidth() - 4), toggleHeight));
             }
+            else if (widget.lever != nullptr)
+            {
+                const auto pill = layOutCell(cell, widget.label.get(), toggleHeight);
+                widget.lever->setBounds(
+                    pill.withSizeKeepingCentre(juce::jmin(toggleWidth + 20, cell.getWidth() - 4), toggleHeight));
+            }
         }
+    }
+
+    //==========================================================================
+    void LeverSwitch::setPosition(int newPosition, juce::NotificationType notification)
+    {
+        newPosition = juce::jlimit(0, positions - 1, newPosition);
+
+        if (newPosition == position)
+            return;
+
+        position = newPosition;
+        repaint();
+
+        if (notification != juce::dontSendNotification && onChange)
+            onChange(position);
+    }
+
+    juce::Rectangle<float> LeverSwitch::trackBounds() const
+    {
+        // The toggle's height and its proportions, stretched by one stop.
+        const auto bounds = getLocalBounds().toFloat();
+        const float h = juce::jmin(bounds.getHeight(), 20.0f);
+        return bounds.withSizeKeepingCentre(juce::jmin(bounds.getWidth(), h * 2.8f), h);
+    }
+
+    int LeverSwitch::stopAt(float x) const
+    {
+        const auto track = trackBounds();
+        const float third = track.getWidth() / static_cast<float>(positions);
+        return juce::jlimit(0, positions - 1, static_cast<int>((x - track.getX()) / third));
+    }
+
+    void LeverSwitch::paint(juce::Graphics& g)
+    {
+        const auto track = trackBounds();
+        const float h = track.getHeight();
+        const bool lit = position != offPosition;
+        const float alpha = isEnabled() ? 1.0f : 0.45f;
+
+        g.setColour((lit ? Theme::accent() : Theme::pill().darker(0.18f)).withMultipliedAlpha(alpha));
+        g.fillRoundedRectangle(track, h * 0.5f);
+
+        const float inset = 2.0f, dot = h - 2.0f * inset;
+        const float travel = track.getWidth() - dot - 2.0f * inset;
+        const auto stopX = [&](int k)
+        { return track.getX() + inset + travel * static_cast<float>(k) / static_cast<float>(positions - 1); };
+
+        // A tick at each stop the dot is not on, so three positions read as
+        // three rather than as a long toggle.
+        g.setColour(Theme::panel().withMultipliedAlpha(0.55f * alpha));
+
+        for (int k = 0; k < positions; ++k)
+            if (k != position)
+                g.fillEllipse(juce::Rectangle<float>(4.0f, 4.0f).withCentre({stopX(k) + dot * 0.5f, track.getCentreY()}));
+
+        g.setColour(Theme::panel().withMultipliedAlpha(alpha));
+        g.fillEllipse(stopX(position), track.getY() + inset, dot, dot);
+    }
+
+    void LeverSwitch::mouseDown(const juce::MouseEvent& event)
+    {
+        setPosition(stopAt(event.position.x), juce::sendNotificationSync);
+    }
+
+    void LeverSwitch::mouseDrag(const juce::MouseEvent& event)
+    {
+        setPosition(stopAt(event.position.x), juce::sendNotificationSync);
     }
 } // namespace Celine

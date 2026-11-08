@@ -426,6 +426,12 @@ namespace Celine
             && shown.getReference (row).group != shown.getReference (row + 1).group;
     }
 
+    bool PresetLibraryPanel::hasSectionBreakBelow (int row) const
+    {
+        return hasDividerBelow (row)
+            && sectionOf (shown.getReference (row).kind) != sectionOf (shown.getReference (row + 1).kind);
+    }
+
     void PresetLibraryPanel::setFieldArea (juce::Rectangle<int> area)
     {
         if (fieldArea == area)
@@ -542,12 +548,21 @@ namespace Celine
         g.setFont (Fonts::light (fontHeight));
         g.drawText (entry.label, bounds.reduced (4.0f, 0.0f), juce::Justification::centredLeft, true);
 
-        // A thin rule under the last row of a root group, across the row rather than
+        // A rule under the last row of a root group, across the row rather than
         // indented with it, so it divides the groups rather than underlining a name.
-        if (hasDividerBelow (row))
+        // Two weights: a bar the full width of the list between the three sections --
+        // New, the factory presets, the personal library -- which are different kinds
+        // of thing; and a faint hairline, kept in from both ends, between folders
+        // inside one, which are only neighbours.
+        if (hasSectionBreakBelow (row))
         {
-            g.setColour (Theme::line().withAlpha (0.12f));
-            g.fillRect (juce::Rectangle<float> (4.0f, (float) height - 1.0f, (float) width - 8.0f, 1.0f));
+            g.setColour (Theme::line().withAlpha (0.38f));
+            g.fillRect (juce::Rectangle<float> (0.0f, (float) height - 2.0f, (float) width, 2.0f));
+        }
+        else if (hasDividerBelow (row))
+        {
+            g.setColour (Theme::line().withAlpha (0.06f));
+            g.fillRect (juce::Rectangle<float> (14.0f, (float) height - 1.0f, (float) width - 28.0f, 1.0f));
         }
     }
 
