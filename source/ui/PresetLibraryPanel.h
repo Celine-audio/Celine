@@ -10,68 +10,50 @@
 namespace Celine
 {
     //==========================================================================
-    /**
-        The preset library: the house library panel -- GALLERY's tree, chevrons and rows
-        -- listing circuits rather than cabinets, and dropped down from the toolbar's
-        preset field where the preset menu used to open.
+    /** The preset library, dropped down from the toolbar's preset field.
 
-        It has no header of its own. GALLERY's carries a title, a search and two icons
-        in a band above the list; here that band would sit directly under the preset
-        field and say the same thing twice. So while the library is up, the part of it
-        lying over the preset field *is* the field -- the same place, size and fill --
-        holding the search; the folder icon at its right-hand end is the editor's, the
-        same one the closed field shows, laid over the top of this, and
-        the list hangs below it. The editor says where the field is: setFieldArea.
+        While it is open, the area over the preset field is the search box (the editor
+        says where with setFieldArea); the list hangs below. Rows: "New empty sheet", the
+        "Factory presets" folder, then the user's preset folder as a tree. Right-click
+        reveals a file; the loaded preset is marked with a dot.
 
-        It keeps everything the menu did. New (empty sheet) is the first row; the
-        shipped examples are a folder of their own, "Factory presets"; and the user's
-        preset folder follows as the tree it actually is, subfolders and all, which the
-        flat menu could not show. Choosing or changing that folder is the header's folder
-        button, revealing it is a right-click, and the preset in use carries a mark where
-        the menu ticked it.
-
-        Like GALLERY's it holds no files and copies nothing: what it lists is whatever is
-        in the folder, read fresh each time it opens. And like the menu it replaced, a
-        click on a preset loads it -- the panel says what was picked through the `on`
-        callbacks and leaves loading, and closing itself, to the editor.
-    */
+        Lists the folder fresh each time and copies nothing. Choices are reported through
+        the `on` callbacks; the editor loads and closes. */
     class PresetLibraryPanel : public juce::Component
     {
     public:
         PresetLibraryPanel();
         ~PresetLibraryPanel() override;
 
-        //======================================================================
-        /** The user's preset folder, or none. Listed again from disk. */
+        // ======================================================================
+        /** The user's preset folder, or none. Re-listed from disk. */
         void setFolder (const juce::File&);
         juce::File getFolder() const { return folder; }
 
-        /** The shipped examples, by name, in the order SchematicModel::Examples
-            numbers them -- a row reports its index back through onFactoryPresetChosen. */
+        /** The shipped examples by name, in SchematicModel::Examples order; a row reports its
+            index through onFactoryPresetChosen. */
         void setFactoryPresets (const juce::StringArray& names);
 
-        /** The preset the sheet came from: a file, a factory example's name, or
-            neither. Marked in the list, and its folder opened so it can be seen. */
+        /** The preset the sheet came from: a file, a factory example's name, or neither.
+            Marked in the list, with its folder opened. */
         void setCurrentPreset (const juce::File& file, const juce::String& factoryName);
 
         /** Reads the folder again. */
         void rescan();
 
-        /** Where the preset field is, in this panel's coordinates. That part of the
-            panel stands in for the field while the library is up; the list goes under
-            it. Set before asking getPreferredHeight. */
+        /** Where the preset field is, in this panel's coordinates; the list goes under it.
+            Set before calling getPreferredHeight. */
         void setFieldArea (juce::Rectangle<int>);
         juce::Rectangle<int> getFieldArea() const noexcept { return fieldArea; }
 
-        /** Where the list is, in this panel's coordinates: everything under the field. */
+        /** The list's area: everything under the field. */
         juce::Rectangle<int> getListArea() const;
 
-        /** As tall as the panel wants to be to show every row now shown, field
-            included -- the editor caps it to the room under the toolbar, and past that
-            it scrolls. */
+        /** Height needed to show every row, field included. The editor caps it; past that the
+            list scrolls. */
         int getPreferredHeight() const;
 
-        /** Puts the keyboard in the search field, so typing on opening searches. */
+        /** Focuses the search field. */
         void focusSearch();
 
         //======================================================================
@@ -79,22 +61,20 @@ namespace Celine
         std::function<void (int index)> onFactoryPresetChosen;
         std::function<void (const juce::File&)> onPresetChosen;
 
-        /** The "Choose a folder..." row. The folder icon in the field is the editor's,
-            not this panel's -- it is there whether the library is open or not. */
+        /** The "Choose a folder..." row was clicked. */
         std::function<void()> onChooseFolder;
 
-        /** How much of the field's right-hand end the editor's folder icon takes, so
-            the search stops short of it. */
+        /** Space at the field's right end taken by the editor's folder icon. */
         void setFieldTrailingSpace (int pixels);
 
-        /** Escape: the panel asks to be put away. */
+        /** Escape was pressed. */
         std::function<void()> onDismiss;
 
-        /** A folder opened or shut, so the panel's height may want to change. */
+        /** A folder opened or closed; the preferred height may have changed. */
         std::function<void()> onPreferredHeightChanged;
 
-        //======================================================================
-        // For the tests, which drive the list the way a click does.
+        // ======================================================================
+        // For tests.
         void setSearchText (const juce::String&);
         int getNumShownRows() const;
         juce::String getRowLabel (int row) const;
@@ -103,23 +83,20 @@ namespace Celine
         bool isRowCurrent (int row) const;
         int getRowDepth (int row) const;
 
-        /** Whether a divider is drawn under this row: the last row of a root group --
-            New, the factory folder with its examples, each top-level folder with what
-            is open under it -- before the next one. Not between subfolders, and not
-            between the presets loose at the top of the folder. */
+        /** Whether a divider is drawn under this row: the last row of a root group (New, the
+            factory folder, each top-level folder with its open contents) before the next. */
         bool hasDividerBelow (int row) const;
 
-        /** Whether the next row is a section break: the gap, with a line in it,
-            between New, the factory presets and the personal library. */
+        /** Whether the next row is a section separator. */
         bool hasSectionBreakBelow (int row) const;
 
-        /** True for the rows that are only that gap -- nothing to read or click. */
+        /** True for section separator rows. */
         bool isRowSeparator (int row) const;
 
-        /** A row's height: a preset row's, or a section gap's, which is shorter. */
+        /** A row's height (separators are shorter). */
         int getRowHeight (int row) const;
 
-        /** What clicking a row does. */
+        /** Does what clicking the row does. */
         void chooseRow (int row);
 
         //======================================================================
@@ -128,9 +105,7 @@ namespace Celine
         void resized() override;
         bool keyPressed (const juce::KeyPress&) override;
 
-        /** Only the field and the list. The list may be wider than the field, and the
-            corner beside the field belongs to whatever is under it -- which, while the
-            library is up, is the dismisser. */
+        /** Only the field and the list take clicks. */
         bool hitTest (int x, int y) override;
 
     private:
@@ -139,24 +114,20 @@ namespace Celine
         void listBoxItemClicked (int row, const juce::MouseEvent&);
         void backgroundClicked (const juce::MouseEvent&);
 
-        /** The rows, in a list of their own rather than a juce::ListBox: a ListBox
-            gives every row one height, and a section gap the height of a preset row
-            left twice the space either side of its line that the list has above its
-            first row. Rows are a preset's height; gaps are just tall enough for the
-            same space either side of the line. Hover lights a row, as a menu's item
-            is lit; a click or right-click goes to the panel. */
+        /** The rows, with per-row heights (a juce::ListBox can't vary them). Hover lights a
+            row; clicks go to the panel. */
         class RowList : public juce::Viewport
         {
         public:
             explicit RowList (PresetLibraryPanel& owner);
 
-            /** Re-reads the rows' heights after `shown` changed. */
+            /** Re-reads row heights after `shown` changed. */
             void updateContent();
 
             int getLitRow() const noexcept { return lit; }
             void setLitRow (int row);
 
-            /** The row at a point in the list's own coordinates, or -1. */
+            /** The row at `y` in the list's coordinates, or -1. */
             int getRowAt (int y) const;
 
             void resized() override;
@@ -180,10 +151,10 @@ namespace Celine
         void applyColours();
         void lookAndFeelChanged() override { applyColours(); }
 
-        /** What a row is, which decides how it is drawn and what a click on it does. */
+        /** What a row is: decides how it is drawn and what a click does. */
         enum class Kind
         {
-            newSheet,      // "New (empty sheet)"
+            newSheet,      // "New empty sheet"
             factoryFolder, // "Factory presets", a folder of the shipped examples
             factoryPreset,
             folder,        // a subfolder of the preset folder
@@ -201,27 +172,24 @@ namespace Celine
             int depth = 0;
             int factoryIndex = -1;
 
-            /** Only meaningful in `shown`, as in GALLERY: a search opens the folders a
-                match lives in without touching which ones somebody opened. */
+            /** Only used in `shown`: a search opens the folders containing matches without
+                changing which ones the user opened. */
             bool open = false;
 
-            /** Which root group the row belongs to, numbered in `shown` -- a divider
-                goes wherever it changes. */
+            /** Root group number in `shown`; a divider goes where it changes. */
             int group = 0;
         };
 
         static bool isFolderKind (Kind kind) { return kind == Kind::factoryFolder || kind == Kind::folder; }
 
-        /** The three sections the list is made of: 0 for New, 1 for the factory
-            presets, 2 for the personal library and everything about it. */
+        /** Section: 0 for New, 1 for the factory presets, 2 for the user's library. */
         static int sectionOf (Kind kind)
         {
             return kind == Kind::newSheet ? 0 : kind == Kind::factoryFolder || kind == Kind::factoryPreset ? 1 : 2;
         }
 
-        /** The key a folder's open state is kept under: its path, or a fixed one for
-            the factory folder, which has none. Kept by key rather than by row so that a
-            rescan does not shut what somebody had opened. */
+        /** Key a folder's open state is stored under: its path, or a fixed key for the factory
+            folder. Survives a rescan. */
         juce::String keyFor (const Entry&) const;
         bool isExpanded (const Entry& entry) const { return expanded.contains (keyFor (entry)); }
 
@@ -240,7 +208,7 @@ namespace Celine
         juce::Array<Entry> entries, shown;
         juce::StringArray expanded;
 
-        /** Defaults to the toolbar's preset field until the editor says otherwise. */
+        /** The toolbar's preset field until the editor sets it. */
         juce::Rectangle<int> fieldArea { 0, 0, 302, Theme::buttonSize };
         int fieldTrailingSpace = 0;
 

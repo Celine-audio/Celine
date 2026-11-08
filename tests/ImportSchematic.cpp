@@ -27,9 +27,7 @@ namespace
 
 TEST_CASE ("Importing renumbers what it brings", "[import]")
 {
-    // Both sheets number from one, so a merge that kept ids would leave two
-    // parts sharing one -- and the second unreachable, since every lookup here
-    // returns the first match.
+    // Both sheets number from one, so a merge keeping ids would duplicate them.
     auto host = makeBlock (0, 0);
     const auto guest = makeBlock (0, 0);
 
@@ -49,7 +47,7 @@ TEST_CASE ("Importing renumbers what it brings", "[import]")
     for (const auto& wire : host.getWires())
         CHECK (wireIds.insert (wire.id).second);
 
-    // And every id handed back has to actually find something.
+    // Every returned id must find something.
     for (const int id : merged.elementIds)
         CHECK (host.findElement (id) != nullptr);
 
@@ -65,8 +63,7 @@ TEST_CASE ("Importing moves the whole block by one offset", "[import]")
     const juce::Point<int> delta { 25, -7 };
     const auto merged = host.merge (guest, delta);
 
-    // Layout kept and shifted as one, not every part landing on one square --
-    // which is the difference between merge() and copyPropertiesTo().
+    // Layout kept and shifted as one.
     for (size_t i = 0; i < merged.elementIds.size(); ++i)
     {
         const auto& source = guest.getElements()[i];
@@ -94,9 +91,7 @@ TEST_CASE ("Importing moves the whole block by one offset", "[import]")
 
 TEST_CASE ("An imported block lands clear of what is already drawn", "[import]")
 {
-    // The placement rule, checked where it actually matters: two sheets drawn at
-    // the same coordinates, which is the common case since most are drawn near
-    // the origin.
+    // Two sheets drawn at the same coordinates, the common case.
     auto host = makeBlock (0, 0);
     const auto guest = makeBlock (0, 0);
 
@@ -131,10 +126,7 @@ TEST_CASE ("An imported block lands clear of what is already drawn", "[import]")
 
 TEST_CASE ("Content bounds survive a sheet that is one straight wire", "[import]")
 {
-    // Rectangle::getUnion returns the *other* operand when either side is empty,
-    // and JUCE calls a zero-width rectangle empty -- so a lone vertical wire is
-    // exactly the shape that collapses a naive union. It is also what you get
-    // when you import onto a sheet somebody has only started.
+    // A lone vertical wire: the shape that collapses a naive Rectangle::getUnion.
     Schematic sheet;
     sheet.addWire ({ 5, 2 }, { 5, 9 });
 
@@ -194,8 +186,7 @@ TEST_CASE ("A sheet imported into an empty one keeps its own coordinates", "[imp
     const auto existing = host.getContentBounds();
     REQUIRE (existing.isEmpty());
 
-    // Nothing to sit clear of, so no offset -- the rule degrades to "put it
-    // where it was drawn" rather than to some arbitrary corner.
+    // Nothing to avoid, so no offset.
     const auto merged = host.merge (guest, {});
 
     const auto* first = host.findElement (merged.elementIds.front());
@@ -224,10 +215,10 @@ TEST_CASE ("Importing leaves the host's own parts untouched", "[import]")
     }
 }
 
-//==============================================================================
-// The whole route in, through the editor: a real file on disk, validated the
-// same way every other load is, merged and selected.
-//==============================================================================
+// ==============================================================================
+// The whole route through the editor: a real file, validated like any load, merged
+// and selected.
+// ==============================================================================
 
 TEST_CASE ("Importing a file merges it and selects what arrived", "[import][gui]")
 {
@@ -235,7 +226,7 @@ TEST_CASE ("Importing a file merges it and selects what arrived", "[import][gui]
                             .getChildFile ("celine-import-" + juce::Uuid().toString());
     REQUIRE (folder.createDirectory());
 
-    // A real .celsch, written the way Save writes one.
+    // A real .celsch, written as Save writes one.
     const auto file = folder.getChildFile ("stage.celsch");
 
     {
@@ -263,7 +254,7 @@ TEST_CASE ("Importing a file merges it and selects what arrived", "[import][gui]
         const auto& sheet = plugin.getSchematic();
         CHECK (sheet.getElements().size() == before + 2);
 
-        // Landed clear of what was already drawn.
+        // Landed clear of the existing drawing.
         juce::Rectangle<int> landed;
         bool first = true;
 
@@ -277,8 +268,7 @@ TEST_CASE ("Importing a file merges it and selects what arrived", "[import][gui]
         INFO ("existing " << existing.toString() << "  landed " << landed.toString());
         CHECK (landed.getX() >= existing.getRight());
 
-        // And the whole block is selected, wires included, so the next drag
-        // moves it -- which is the entire reason to select it.
+        // The whole block is selected, wires included.
         CHECK (editor->getCanvas().getSelection().size() == 2);
         CHECK (editor->getCanvas().getSelectedWires().size() == 1);
     });
@@ -292,8 +282,7 @@ TEST_CASE ("A file that isn't ours is refused rather than half-merged", "[import
                             .getChildFile ("celine-import-" + juce::Uuid().toString());
     REQUIRE (folder.createDirectory());
 
-    // Right suffix, wrong contents -- a folder is just a folder, and anything at
-    // all can be sitting in it.
+    // Right suffix, wrong contents.
     const auto impostor = folder.getChildFile ("nope.celsch");
     impostor.replaceWithText ("<AMPMODELLING><SCHEMATIC/></AMPMODELLING>");
 
@@ -311,9 +300,7 @@ TEST_CASE ("A file that isn't ours is refused rather than half-merged", "[import
         CHECK (! editor->importSchematicFile (notXml));
         CHECK (! editor->importSchematicFile (folder.getChildFile ("not-there.celsch")));
 
-        // The drawing is untouched. A failed import that had merged half of
-        // itself would leave a sheet nobody drew, which is worse than a failed
-        // load -- there is nothing to reload.
+        // The drawing is untouched.
         CHECK (plugin.getSchematic().getElements().size() == before);
     });
 

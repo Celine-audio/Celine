@@ -5,10 +5,8 @@ using namespace Stress;
 
 TEST_CASE ("The plugin under stress is actually doing something", "[stress]")
 {
-    // The guard on every test below it. Each plugin has a path that costs almost
-    // nothing until it has been given something to work with, and a battery that never
-    // gets past that is a battery testing an early return. So before anything else:
-    // does putting audio through this plugin change the audio?
+    // Guards the tests below: the plugin must actually change the audio, or they would
+    // only test an early return.
     PluginProcessor plugin;
     const Busy busy { plugin };
     plugin.prepareToPlay (48000.0, 512);
@@ -22,8 +20,7 @@ TEST_CASE ("The plugin under stress is actually doing something", "[stress]")
     juce::AudioBuffer<float> output (2, 512);
     output.makeCopyOf (input);
 
-    // A few blocks, because a convolution needs its latency filled before its output
-    // is anything but zero.
+    // A few blocks, to fill any latency.
     for (int b = 0; b < 20; ++b)
     {
         plugin.processBlock (output, midi);
@@ -47,10 +44,8 @@ TEST_CASE ("The plugin under stress is actually doing something", "[stress]")
 
 TEST_CASE ("Any block size the host hands over is survived", "[stress]")
 {
-    // Prepared for 512 and then given everything from one sample to eight times that.
-    // Overrunning the declared size is not hypothetical: hosts do it when the buffer is
-    // being resized, and a plugin that answers by allocating or by writing past its
-    // scratch is a plugin that crashes on a setting change.
+    // Prepared for 512, then given 1 to 4096 samples: hosts overrun when resizing
+    // buffers.
     PluginProcessor plugin;
     const Busy busy { plugin };
     plugin.prepareToPlay (48000.0, 512);
@@ -69,7 +64,7 @@ TEST_CASE ("Any block size the host hands over is survived", "[stress]")
         REQUIRE (isFinite (buffer));
     }
 
-    // And one deliberately past anything prepared for.
+    // And one far past it.
     juce::AudioBuffer<float> huge (2, 8192);
     fillNoise (huge, random);
     plugin.processBlock (huge, midi);
@@ -99,7 +94,7 @@ TEST_CASE ("Every sample rate is survived, and re-preparing is safe", "[stress]"
         REQUIRE (isFinite (buffer));
     }
 
-    // prepareToPlay twice with no releaseResources between, which hosts do.
+    // prepareToPlay twice without releaseResources, as hosts do.
     plugin.prepareToPlay (48000.0, 512);
     plugin.prepareToPlay (48000.0, 512);
 
@@ -111,11 +106,8 @@ TEST_CASE ("Every sample rate is survived, and re-preparing is safe", "[stress]"
 
 TEST_CASE ("Pathological input does not poison the plugin", "[stress]")
 {
-    // What is actually in a buffer when the plugin before this one misbehaves. The test
-    // is not that the bad samples come out clean -- an EQ fed a NaN may legitimately
-    // return one -- but that the plugin *recovers*: once real audio arrives again, real
-    // audio comes out. A filter that has taken a NaN into its state never recovers, and
-    // the track stays dead until the plugin is reloaded.
+    // Bad input may produce bad output, but once real audio returns, real audio must come
+    // out.
     const auto survives = [] (float poison, const char* what)
     {
         PluginProcessor plugin;
@@ -132,7 +124,7 @@ TEST_CASE ("Pathological input does not poison the plugin", "[stress]")
             plugin.processBlock (buffer, midi);
         }
 
-        // Now feed it ordinary audio and see whether anything comes back.
+        // Now feed ordinary audio and check it recovers.
         bool recovered = false;
 
         for (int b = 0; b < 200 && ! recovered; ++b)
@@ -155,10 +147,8 @@ TEST_CASE ("Pathological input does not poison the plugin", "[stress]")
 
 TEST_CASE ("Silence in gives silence out, and costs no more than audio", "[stress]")
 {
-    // Denormals are the classic way a plugin's CPU goes up when the music stops: a
-    // reverb tail or a filter decaying towards zero enters denormal range, and every
-    // multiply becomes a microcoded trap. ScopedNoDenormals is meant to prevent it;
-    // this is the check that it is actually in force on the paths that matter.
+    // Denormals in decaying state make CPU rise when the music stops; checks
+    // ScopedNoDenormals is in force.
     PluginProcessor plugin;
     const Busy busy { plugin };
     plugin.prepareToPlay (48000.0, 512);
@@ -167,7 +157,7 @@ TEST_CASE ("Silence in gives silence out, and costs no more than audio", "[stres
     juce::Random random { 10 };
     juce::AudioBuffer<float> buffer (2, 512);
 
-    // Run some audio in so anything with state has something in it to decay.
+    // Run audio in so stateful parts have something to decay.
     for (int b = 0; b < 40; ++b)
     {
         fillNoise (buffer, random);
@@ -196,9 +186,8 @@ TEST_CASE ("Silence in gives silence out, and costs no more than audio", "[stres
 
     INFO ("loud " << loud * 1000.0 << " ms, silent " << quiet * 1000.0 << " ms");
 
-    // Silence must not cost dramatically more than audio. Generous, because filling the
-    // noise buffer is itself work that the silent pass does not do -- this is looking
-    // for the order-of-magnitude blow-up denormals cause, not a few percent.
+    // Silence must not cost dramatically more than audio (looking for an
+    // order-of-magnitude blow-up).
     CHECK (quiet < loud * 3.0 + 0.005);
 
     CHECK (isFinite (buffer));
@@ -206,7 +195,7 @@ TEST_CASE ("Silence in gives silence out, and costs no more than audio", "[stres
 
 TEST_CASE ("processBlock before prepareToPlay does not crash", "[stress]")
 {
-    // Some hosts, and every plugin scanner, do this at least once.
+    // Hosts and plugin scanners do this.
     PluginProcessor plugin;
 
     juce::MidiBuffer midi;
@@ -220,10 +209,8 @@ TEST_CASE ("processBlock before prepareToPlay does not crash", "[stress]")
 
 TEST_CASE ("Automation moving every block stays clean and allocation-free", "[stress]")
 {
-    // A host writing automation calls setValue from the audio thread, once per block or
-    // more. Every parameter is swept across its whole range while audio runs, which is
-    // both a realtime-safety check and a check that no parameter has a value that makes
-    // the DSP produce something that is not a number.
+    // Sweeps every parameter across its range per block while audio runs: realtime safety,
+    // and no value may produce NaN.
     PluginProcessor plugin;
     const Busy busy { plugin };
     plugin.prepareToPlay (48000.0, 256);
@@ -276,9 +263,7 @@ TEST_CASE ("State can be saved and restored while audio runs", "[stress]")
     plugin.getStateInformation (state);
     REQUIRE (state.getSize() > 0);
 
-    // Restoring is a message-thread action, and it happens while the audio thread is
-    // still calling processBlock. Interleaved here rather than run in a second thread,
-    // because what is being checked is that the two orders both leave the plugin usable.
+    // Restores interleaved with processBlock, in both orders.
     for (int b = 0; b < 20; ++b)
     {
         plugin.setStateInformation (state.getData(), (int) state.getSize());
@@ -329,7 +314,7 @@ TEST_CASE ("A mono host is served as well as a stereo one", "[stress]")
 {
     PluginProcessor plugin;
 
-    // Not every plugin supports every layout; ask before assuming.
+    // Check the layout is supported first.
     const juce::AudioProcessor::BusesLayout mono
     {
         { juce::AudioChannelSet::mono() },
@@ -363,8 +348,8 @@ TEST_CASE ("A mono host is served as well as a stereo one", "[stress]")
 
 TEST_CASE ("A long run stays finite and does not drift", "[stress]")
 {
-    // Ten seconds of audio, which is where anything that accumulates -- a DC offset, an
-    // integrator winding up, a feedback path just short of stable -- becomes visible.
+    // Ten seconds of audio, so anything that accumulates (DC, wind-up, near-instability)
+    // shows.
     PluginProcessor plugin;
     const Busy busy { plugin };
     plugin.prepareToPlay (48000.0, 512);
@@ -391,7 +376,7 @@ TEST_CASE ("A long run stays finite and does not drift", "[stress]")
 
     INFO ("peak " << worst << ", mean " << (sum / juce::jmax (1, counted)));
 
-    // Nothing should run away, and nothing should settle onto a DC offset.
+    // Nothing runs away or settles on a DC offset.
     CHECK (worst < 64.0f);
     CHECK (std::abs (sum / juce::jmax (1, counted)) < 0.05);
 }

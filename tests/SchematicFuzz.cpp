@@ -9,10 +9,8 @@ using namespace SchematicModel;
 
 namespace
 {
-    /** Every invariant a schematic is supposed to hold, whatever was done to it.
-
-        Checked after each edit rather than at the end, so a failure names the
-        operation that broke it instead of the hundred that came after. */
+    /** Every invariant a schematic must hold. Checked after each edit, so a failure names
+        the operation that broke it. */
     void checkInvariants (const Schematic& sheet)
     {
         std::set<int> elementIds, wireIds;
@@ -26,7 +24,7 @@ namespace
             REQUIRE (e.orientation >= 0);
             REQUIRE (e.orientation < 4);
 
-            // A part with models must be sitting on one that exists.
+            // A part with models must be on one that exists.
             if (e.hasModelChoice())
             {
                 REQUIRE (e.modelIndex >= 0);
@@ -39,12 +37,11 @@ namespace
             REQUIRE (w.id > 0);
             REQUIRE (wireIds.insert (w.id).second);
 
-            // addWire splits diagonals, so nothing here may be one: a diagonal
-            // conducts nothing, since Wire::contains cannot test it.
+            // addWire splits diagonals, so none may remain.
             REQUIRE ((w.isVertical() || w.isHorizontal()));
         }
 
-        // Net extraction has to describe exactly the sheet it was given.
+        // Net extraction must describe exactly this sheet.
         const auto nets = sheet.extractNets();
         REQUIRE (nets.netOfPin.size() == sheet.getElements().size());
 
@@ -61,7 +58,7 @@ namespace
         }
     }
 
-    /** Save, load, save again: the second document must equal the first. */
+    /** Save, load, save again: the two documents must be equal. */
     void checkRoundTrip (const Schematic& sheet)
     {
         Schematic reloaded;
@@ -75,7 +72,7 @@ namespace
 
 TEST_CASE ("A schematic survives arbitrary editing", "[schematic][fuzz]")
 {
-    // Deterministic, so a failure is reproducible from the seed printed above.
+    // Deterministic, so failures are reproducible.
     std::mt19937 rng { 0xC0FFEEu };
 
     Schematic sheet;
@@ -156,8 +153,8 @@ TEST_CASE ("A schematic survives arbitrary editing", "[schematic][fuzz]")
 
 TEST_CASE ("Any sheet either builds or says why", "[schematic][fuzz]")
 {
-    // Whatever is thrown at it, buildCircuits must come back with a circuit or
-    // a reason -- never a crash, and never a valid result holding nothing.
+    // buildCircuits must return a circuit or a reason: never a crash, never an empty
+    // success.
     std::mt19937 rng { 0x5EEDu };
 
     const auto pick = [&rng] (int lo, int hi)
@@ -194,7 +191,7 @@ TEST_CASE ("Any sheet either builds or says why", "[schematic][fuzz]")
             REQUIRE (! result.circuits.empty());
             REQUIRE (result.circuits[0] != nullptr);
 
-            // A circuit that built has to be safe to run.
+            // A circuit that built must be safe to run.
             for (int i = 0; i < 64; ++i)
                 REQUIRE (std::isfinite (result.circuits[0]->process (0.01f)));
         }

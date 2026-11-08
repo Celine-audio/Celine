@@ -16,13 +16,8 @@ void PluginLookAndFeel::applyPalette()
 {
     LookAndFeelBase::applyPalette();
 
-    // The knob face, tinted here rather than per frame: it is the same colour every
-    // time it is drawn, and a drawable copy per knob per repaint would be allocation on
-    // the paint path.
-    //
-    // Re-read from the binary rather than re-tinted in place, because this runs again on
-    // every theme change and tinting is destructive -- the second pass would be
-    // colouring whatever the first pass left, not the artwork.
+    // Knob artwork, tinted once per theme change. Re-read from the binary each time
+    // because tinting modifies the drawable.
     knob = Assets::drawable("knob.svg");
     ioKnob = Assets::drawable("knob_io.svg");
 
@@ -36,16 +31,13 @@ void PluginLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int wi
                                          float sliderPosProportional, float rotaryStartAngle,
                                          float rotaryEndAngle, juce::Slider& slider)
 {
-    // Which cap this is: the plugin's own gain wears a smooth one against
-    // the fluted cap a drawn knob gets, so the two kinds of control in the
-    // bottom band are told apart by the face and not by which end they sit
-    // at.
+    // The plugin's own gains get the smooth cap, circuit knobs the fluted one.
     const auto* cap = slider.getProperties().contains(digitalGainProperty) ? ioKnob.get()
                                                                           : knob.get();
 
     if (cap == nullptr)
     {
-        // No artwork: JUCE's own rotary beats drawing nothing.
+        // No artwork: fall back to JUCE's rotary.
         LookAndFeel_V4::drawRotarySlider(g, x, y, width, height, sliderPosProportional,
                                          rotaryStartAngle, rotaryEndAngle, slider);
         return;
@@ -53,8 +45,7 @@ void PluginLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int wi
 
     const auto area = juce::Rectangle<int>(x, y, width, height).toFloat();
 
-    // Square, because the cap is. A knob in a cell taller than it is wide
-    // would otherwise be drawn as an ellipse.
+    // Square, like the cap.
     const auto face = area.withSizeKeepingCentre(juce::jmin(area.getWidth(), area.getHeight()),
                                                  juce::jmin(area.getWidth(), area.getHeight()));
 
@@ -63,9 +54,7 @@ void PluginLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int wi
 
     juce::Graphics::ScopedSaveState state(g);
 
-    // The pointer is drawn straight up in both files, so rotating the whole
-    // cap about its centre *is* the readout. No arc: the design has none,
-    // and inventing one would be my design rather than the drawn one.
+    // The pointer is drawn pointing up, so rotating the cap shows the value.
     g.addTransform(juce::AffineTransform::rotation(angle, face.getCentreX(), face.getCentreY()));
     cap->drawWithin(g, face, juce::RectanglePlacement::centred, 1.0f);
 }
@@ -78,19 +67,14 @@ juce::Label* PluginLookAndFeel::createSliderTextBox(juce::Slider& slider)
     {
         label->setColour(juce::Label::textColourId, Theme::textOnPanel());
 
-        // And while it is being typed into. The house sets the editing ink, the
-        // caret and the selection for the chrome, where every other field lives
-        // -- light on dark, which on this panel is white on white: you could
-        // type a value but not see it. The label hands its own colours to the
-        // editor it makes, so they are set here rather than on the editor.
+        // Editing colours for the light panel; the label passes them to its editor.
         label->setColour(juce::Label::textWhenEditingColourId, Theme::textOnPanel());
         label->setColour(juce::CaretComponent::caretColourId, Theme::textOnPanel());
         label->setColour(juce::TextEditor::highlightColourId, Theme::accent().withAlpha(0.35f));
         label->setColour(juce::TextEditor::highlightedTextColourId, Theme::textOnPanel());
         label->setFont(Fonts::light(Theme::bandValueFontHeight));
 
-        // Typed where it is read. A label's editor starts left-aligned whatever
-        // the label is, so a click made the value jump to the cell's edge.
+        // Keep the text centred while editing.
         label->onEditorShow = [label]
         {
             if (auto* editor = label->getCurrentTextEditor())
@@ -112,21 +96,14 @@ void PluginLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& 
         return;
     }
 
-    // One switch everywhere it appears -- the inspector's rows and the control
-    // strip's cells, both on the light half of the design: a pale track that
-    // turns accent when on, with a white dot that sits on the side that is
-    // made. No ON/OFF lettering: the dot's side and the colour already say it.
-    //
-    // Sized to itself, not stretched to whatever the layout handed the
-    // button: a switch as wide as an inspector row reads as a banner.
+    // A pale track that turns accent when on, with a white dot on the "on" side.
+    // Sized to itself, not to the button.
     const auto bounds = button.getLocalBounds().toFloat();
     const bool labelled = button.getButtonText().isNotEmpty();
     const float h = juce::jmin(bounds.getHeight(), 20.0f);
     const float w = h * 1.8f;
 
-    // Against the right edge with its name on the left, as a settings row is
-    // read; centred when the switch is the whole control -- the strip, where
-    // the name is already on the caption above it.
+    // Right-aligned with the name on the left when labelled, centred otherwise.
     const auto track = juce::Rectangle<float>(w, h).withPosition(
         labelled ? bounds.getRight() - w - 1.0f : bounds.getCentreX() - w * 0.5f,
         bounds.getCentreY() - h * 0.5f);
@@ -164,8 +141,7 @@ void PluginLookAndFeel::positionComboBoxText(juce::ComboBox& box, juce::Label& l
         return;
     }
 
-    // Left-aligned at the text fields' indent, so a model name lines up with
-    // the label typed in the field above it. The chevron keeps the right end.
+    // Left-aligned at the text fields' indent; the chevron keeps the right end.
     label.setBorderSize(juce::BorderSize<int>(0));
     label.setBounds(10, 0, juce::jmax(0, box.getWidth() - 10 - 30), box.getHeight());
     label.setFont(Fonts::light(14.0f));

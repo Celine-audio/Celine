@@ -11,12 +11,8 @@ using Celine::SymbolPainter;
 
 namespace
 {
-    /** Hangs a scope across a two-pin part, by coincident pins.
-
-        Wires are avoided for the reason ScopeProbe.cpp records at length: an
-        L-routed wire has to get where it is going, and it can pass through
-        something else on the way. Pins landing on the same square connect with
-        no wire at all. */
+    /** Hangs a scope across a two-pin part by coincident pins (no wires; see
+        ScopeProbe.cpp). */
     int addScopeAcross (Schematic& sheet, const Element& part)
     {
         const auto positive = part.getPinPosition (0);
@@ -25,20 +21,12 @@ namespace
         const int id = sheet.addElement (ElementType::Scope, 0, 0);
         auto* scope = sheet.findElement (id);
 
-        // Every orientation, because the two parts need not be drawn the same
-        // way round: a scope's pins are four squares apart horizontally and a
-        // resistor's are four apart vertically, so the un-rotated probe lands
-        // one pin on the part and the other on empty sheet -- where it reads
-        // against whatever else happens to be there rather than failing.
+        // Tries every orientation until both scope pins land on the part's pins.
         for (int orientation = 0; orientation < 4; ++orientation)
         {
             scope->orientation = orientation;
 
-            // Back to the origin before each try, because getPinPosition returns
-            // a *position*, not an offset -- it has x and y already added in. A
-            // previous iteration's placement would otherwise be counted twice
-            // and every attempt after the first would land somewhere further
-            // away than the last.
+            // Back to the origin each try: getPinPosition includes x and y.
             scope->x = 0;
             scope->y = 0;
 
@@ -91,7 +79,7 @@ namespace
     }
 }
 
-//==============================================================================
+// ==============================================================================
 // The potentiometer's taper letter.
 
 TEST_CASE ("A potentiometer is written the way one is marked", "[pot][format]")
@@ -100,12 +88,10 @@ TEST_CASE ("A potentiometer is written the way one is marked", "[pot][format]")
     CHECK (SymbolPainter::formatPotValue (1000.0, Taper::Logarithmic) == "A1K");
     CHECK (SymbolPainter::formatPotValue (500000.0, Taper::ReverseLogarithmic) == "C500K");
 
-    // Upper case throughout, unlike the rest of the sheet's notation: "B10K" is
-    // the marking on the part, and "B10k" is a half-translation of it.
+    // Upper case throughout, as marked on the part: "B10K".
     CHECK (! SymbolPainter::formatPotValue (10000.0, Taper::Linear).contains ("k"));
 
-    // An unset pot stays the bare "0" every other unset value is, so the
-    // red-for-unset colouring keeps meaning one thing.
+    // An unset pot is a bare "0", like every unset value.
     CHECK (SymbolPainter::formatPotValue (0.0, Taper::Logarithmic) == "0");
 }
 
@@ -132,8 +118,7 @@ TEST_CASE ("A potentiometer's marking round-trips", "[pot][format]")
 
 TEST_CASE ("Typing a bare value leaves a potentiometer's taper alone", "[pot][format]")
 {
-    // Someone correcting a resistance did not ask to change the taper, and
-    // silently resetting it to linear would be a nasty way to find that out.
+    // Correcting the resistance keeps the taper.
     double parsed = 0.0;
     auto taper = Taper::Logarithmic;
     bool given = true;
@@ -143,18 +128,17 @@ TEST_CASE ("Typing a bare value leaves a potentiometer's taper alone", "[pot][fo
     CHECK (taper == Taper::Logarithmic);
     CHECK (parsed == Catch::Approx (250000.0));
 
-    // Lower case is how it will actually get typed.
+    // Lower case is how it gets typed.
     CHECK (SymbolPainter::parsePotValue ("a1k", parsed, taper, given));
     CHECK (given);
     CHECK (taper == Taper::Logarithmic);
 
-    // A letter that names no taper is not a taper. "M" here would otherwise eat
-    // the megohm prefix off a value written without a digit before it.
+    // A letter that names no taper isn't one: "M" stays the mega prefix.
     CHECK (SymbolPainter::parsePotValue ("M2", parsed, taper, given));
     CHECK (! given);
 }
 
-//==============================================================================
+// ==============================================================================
 // The current readout.
 
 TEST_CASE ("Every resistor on the sheet can have its current read", "[current]")
@@ -187,11 +171,8 @@ TEST_CASE ("Every resistor on the sheet can have its current read", "[current]")
 
 TEST_CASE ("A part's current is its voltage over its resistance", "[current]")
 {
-    // Checked against the scope rather than against a number worked out here:
-    // the two readings come down different paths -- one through getNodeVoltage
-    // in sampleScopes, the other through sampleInspectedCurrent -- and Ohm's law
-    // between them is a claim that both are reading the same part. A hardcoded
-    // expectation would only say that one of them is self-consistent.
+    // Checked against the scope rather than a computed number: the two readings take
+    // different paths, and Ohm's law between them shows both read the same part.
     PluginProcessor plugin;
     auto& sheet = plugin.getSchematic();
     Examples::load (sheet, 0);
@@ -204,9 +185,8 @@ TEST_CASE ("A part's current is its voltage over its resistance", "[current]")
     const int scope = addScopeAcross (sheet, *resistor);
     REQUIRE (scope != 0);
 
-    // Built before preparing rather than after: prepareToPlay builds and swaps
-    // straight in, where a rebuild after it would dip through silence first --
-    // and this compares two averages whose windows have to start together.
+    // Built before preparing, so prepareToPlay swaps in directly and both averaging
+    // windows start together.
     const auto result = plugin.rebuild();
     INFO (result.error);
     REQUIRE (result.isValid());
@@ -216,8 +196,7 @@ TEST_CASE ("A part's current is its voltage over its resistance", "[current]")
 
     float amps = 0.0f, watts = 0.0f, peak = 0.0f;
 
-    // Nothing is published until a whole window has been accumulated, so a
-    // reading before that is correctly refused rather than half-averaged.
+    // Nothing is published until a whole window has been accumulated.
     CHECK (! plugin.readInspectedCurrent (amps, watts, peak));
 
     pump (plugin, 120, 0.6f);
@@ -229,19 +208,14 @@ TEST_CASE ("A part's current is its voltage over its resistance", "[current]")
 
     const double volts = trace->dcAverage.load();
 
-    // Mean current is mean voltage over R even when the signal is moving, since
-    // averaging is linear and I = V/R holds sample by sample. Loose tolerance
-    // because the two averages are over windows that start at different times,
-    // not because the relationship is approximate.
+    // Mean current is mean voltage over R (averaging is linear). The tolerance covers the
+    // windows' different start times.
     INFO ("across " << volts << " V, " << ohms << " ohm, read " << amps << " A");
     CHECK (static_cast<double> (amps)
            == Catch::Approx (volts / ohms).epsilon (0.05).margin (1.0e-9));
 
-    // Mean *power* is not mean(V)^2/R -- it is mean(V*I), which for anything
-    // that moves is larger, by exactly the variance. That inequality is the
-    // real invariant and it is worth pinning: publishing I_mean^2*R as the
-    // power would understate what is heating the part, which is the one
-    // question this readout exists to answer.
+    // Mean power is mean(V*I), which exceeds mean(V)^2/R by the variance for a moving
+    // signal.
     CHECK (static_cast<double> (watts)
            >= static_cast<double> (amps) * static_cast<double> (amps) * ohms - 1.0e-12);
 
@@ -250,8 +224,7 @@ TEST_CASE ("A part's current is its voltage over its resistance", "[current]")
 
 TEST_CASE ("Nothing is measured when nothing is selected", "[current]")
 {
-    // The audio thread does the measuring, so an inspector that is closed --
-    // or open on a part with no readable current -- has to cost it nothing.
+    // With no readable part inspected, the audio thread does no measuring.
     PluginProcessor plugin;
     auto& sheet = plugin.getSchematic();
     Examples::load (sheet, 0);
@@ -268,9 +241,7 @@ TEST_CASE ("Nothing is measured when nothing is selected", "[current]")
     float amps = 0.0f, watts = 0.0f, peak = 0.0f;
     REQUIRE (plugin.readInspectedCurrent (amps, watts, peak));
 
-    // Deselecting has to stop it reading immediately, not at the end of the
-    // window: a readout that spends 40 ms still showing the part you just
-    // clicked away from is long enough to read and believe.
+    // Deselecting stops the reading immediately, not at the end of the window.
     plugin.setInspectedElement (0);
     CHECK (! plugin.readInspectedCurrent (amps, watts, peak));
 
@@ -278,7 +249,7 @@ TEST_CASE ("Nothing is measured when nothing is selected", "[current]")
     CHECK (! plugin.readInspectedCurrent (amps, watts, peak));
 }
 
-//==============================================================================
+// ==============================================================================
 // The scope's axes.
 
 TEST_CASE ("A scope's axes survive a save and load", "[scope][axes]")
@@ -312,9 +283,8 @@ TEST_CASE ("A scope's axes survive a save and load", "[scope][axes]")
 
 TEST_CASE ("A pinned scope range is drawn as given", "[scope][axes]")
 {
-    // The whole reason to pin a range is that the picture stops resizing itself
-    // to its contents -- so what is under test is that a *quiet* trace and a
-    // loud one map to different heights, where auto-scaling makes them the same.
+    // A fixed range maps quiet and loud traces to different heights (auto-scale makes
+    // them the same).
     Celine::ScopeReading reading;
     reading.live = true;
     reading.autoScale = false;
@@ -336,14 +306,11 @@ TEST_CASE ("A pinned scope range is drawn as given", "[scope][axes]")
 
     REQUIRE (scale.valid);
 
-    // Taken as given, with none of the 15% headroom the auto path adds: the
-    // point of typing a range is that the number you asked for lands on the
-    // edge of the picture.
+    // Taken as given, without the auto path's 15% headroom.
     CHECK (scale.lowest == Catch::Approx (-10.0f));
     CHECK (scale.highest == Catch::Approx (10.0f));
 
-    // And auto-scaling on the same data fits it instead, which is the contrast
-    // the setting exists for.
+    // Auto-scaling on the same data fits it instead.
     reading.autoScale = true;
     const auto fitted = Celine::drawScopeTrace (g, { 0.0f, 0.0f, 128.0f, 64.0f }, reading,
                                                      juce::Colours::white, juce::Colours::grey,
@@ -356,9 +323,8 @@ TEST_CASE ("A pinned scope range is drawn as given", "[scope][axes]")
 
 TEST_CASE ("An unusable scope range falls back to fitting the data", "[scope][axes]")
 {
-    // An inverted or empty range divides by zero in the renderer. The inspector
-    // refuses one, but a hand-edited file can carry one in, and a line of
-    // infinities is a poor way to find that out.
+    // An inverted or empty range from a hand-edited file must not reach the renderer's
+    // division.
     Celine::ScopeReading reading;
     reading.live = true;
     reading.autoScale = false;
@@ -401,8 +367,7 @@ TEST_CASE ("Each scope keeps its own timebase", "[scope][axes]")
     INFO (result.error);
     REQUIRE (result.isValid());
 
-    // Carried through the build rather than looked up again by the processor:
-    // the probe is what the audio thread has, so the timebase has to be on it.
+    // The timebase travels on the probe, which is what the audio thread has.
     REQUIRE (result.probes.size() >= 2);
 
     bool sawFast = false, sawSlow = false;
@@ -419,10 +384,7 @@ TEST_CASE ("Each scope keeps its own timebase", "[scope][axes]")
 
 TEST_CASE ("A time span round-trips through its own text", "[scope][axes][format]")
 {
-    // formatValue writes seconds with an engineering prefix -- 0.04 comes out
-    // as "40ms" -- and that is the text the inspector puts in the box. Without
-    // a matching unit in parseValue the field displayed a value it then refused
-    // to read back, so typing anything into it fell through to the old number.
+    // parseValue must read back what formatValue writes for seconds ("40ms").
     for (const double seconds : { 0.001, 0.002, 0.005, 0.04, 0.5, 1.0 })
     {
         const auto text = SymbolPainter::formatValue (seconds, "s");
@@ -433,7 +395,7 @@ TEST_CASE ("A time span round-trips through its own text", "[scope][axes][format
         CHECK (parsed == Catch::Approx (seconds));
     }
 
-    // And the forms someone would actually type.
+    // And forms someone would type.
     double parsed = 0.0;
     CHECK (SymbolPainter::parseValue ("20ms", parsed));
     CHECK (parsed == Catch::Approx (0.02));
@@ -444,7 +406,7 @@ TEST_CASE ("A time span round-trips through its own text", "[scope][axes][format
     CHECK (SymbolPainter::parseValue ("500us", parsed));
     CHECK (parsed == Catch::Approx (0.0005));
 
-    // The seconds unit must not have eaten the ohms one on the way in.
+    // The seconds unit doesn't break ohms.
     CHECK (SymbolPainter::parseValue ("10 ohms", parsed));
     CHECK (parsed == Catch::Approx (10.0));
 

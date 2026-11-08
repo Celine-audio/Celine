@@ -8,8 +8,7 @@
 
 namespace
 {
-    /** A scratch folder that takes itself away again. Real files, because a preset
-        folder is a real folder that files get dropped into. */
+    /** A scratch folder that deletes itself. Tests write real files. */
     struct TempFolder
     {
         TempFolder()
@@ -24,7 +23,7 @@ namespace
         juce::File folder;
     };
 
-    /** A real, loadable preset -- the document the processor saves. */
+    /** A real, loadable preset: the document the processor saves. */
     void writePreset (const juce::File& file)
     {
         file.getParentDirectory().createDirectory();
@@ -60,8 +59,7 @@ namespace
     {
         juce::StringArray result;
 
-        // The gaps between sections are rows with nothing to read; the list of
-        // names is what these tests are about.
+        // Skips the section-gap rows, which have nothing to read.
         for (int row = 0; row < panel.getNumShownRows(); ++row)
             if (! panel.isRowSeparator (row))
                 result.add (panel.getRowLabel (row));
@@ -90,10 +88,8 @@ TEST_CASE ("The library lists New, the factory presets, then the folder as a tre
     panel.setFactoryPresets (factory);
     panel.setFolder (temp.folder);
 
-    // The order the menu had -- New, the factory presets, the user's -- with the
-    // factory folder open, as it is on a fresh install, and the user's subfolders shut.
-    // Folders before presets, presets in natural order, and neither the text file nor
-    // the hidden one.
+    // New, the factory presets (open, as on a fresh install), then the user's folder
+    // (subfolders shut). Folders first, natural order, no text or hidden files.
     CHECK (labels (panel) == juce::StringArray { "New empty sheet",
                                                  "Factory presets",
                                                  "Diode clipper with volume", "Tone control", "12AX7 gain stage",
@@ -106,8 +102,7 @@ TEST_CASE ("The library lists New, the factory presets, then the folder as a tre
     CHECK_FALSE (panel.isRowOpen (rowNamed (panel, "Amps")));
     CHECK_FALSE (panel.isRowFolder (rowNamed (panel, "Bass 9")));
 
-    // Opening a folder shows what is in it, one step in; the folder inside it stays
-    // shut until it is opened in turn.
+    // Opening a folder shows one level; its subfolder stays shut.
     panel.chooseRow (rowNamed (panel, "Amps"));
     CHECK (panel.isRowOpen (rowNamed (panel, "Amps")));
     REQUIRE (rowNamed (panel, "Fender") > rowNamed (panel, "Amps"));
@@ -118,7 +113,7 @@ TEST_CASE ("The library lists New, the factory presets, then the folder as a tre
     panel.chooseRow (rowNamed (panel, "Marshall"));
     CHECK (panel.getRowDepth (rowNamed (panel, "JCM 800")) == 2);
 
-    // And shutting it takes its contents away again.
+    // Shutting it hides its contents again.
     panel.chooseRow (rowNamed (panel, "Amps"));
     CHECK (rowNamed (panel, "Fender") == -1);
     CHECK (rowNamed (panel, "JCM 800") == -1);
@@ -148,7 +143,7 @@ TEST_CASE ("A row does what the menu item did", "[presets][library]")
     panel.chooseRow (rowNamed (panel, "Bass 10"));
     CHECK (chosenFile == temp.folder.getChildFile ("Bass 10.celsch"));
 
-    // By the index Examples numbers them, which is what loadFactoryPreset takes.
+    // By the Examples index, which loadFactoryPreset takes.
     panel.chooseRow (rowNamed (panel, "12AX7 gain stage"));
     CHECK (chosenFactory == 2);
 
@@ -192,8 +187,8 @@ TEST_CASE ("A search reaches into shut folders and says where a match lives", "[
     panel.setFactoryPresets (factory);
     panel.setFolder (temp.folder);
 
-    // JCM 800 is two shut folders down; the search finds it and opens the way to it.
-    // New and the factory presets that do not match are gone.
+    // The search finds JCM 800 two shut folders down and opens the way to it; New and
+    // non-matching factory presets disappear.
     panel.setSearchText ("jcm");
     CHECK (labels (panel) == juce::StringArray { "Amps", "Marshall", "JCM 800" });
     CHECK (panel.isRowOpen (0));
@@ -206,7 +201,7 @@ TEST_CASE ("A search reaches into shut folders and says where a match lives", "[
     panel.setSearchText ("nothing called this");
     CHECK (panel.getNumShownRows() == 0);
 
-    // Cleared, the tree is as it was: the search opened nothing for good.
+    // Clearing the search restores the tree.
     panel.setSearchText ({});
     CHECK_FALSE (panel.isRowOpen (rowNamed (panel, "Amps")));
 }
@@ -245,15 +240,14 @@ TEST_CASE ("A thin rule divides the root groups, and nothing else", "[presets][l
     auto below = [&panel] (const juce::String& label) { return panel.hasDividerBelow (rowNamed (panel, label)); };
     auto section = [&panel] (const juce::String& label) { return panel.hasSectionBreakBelow (rowNamed (panel, label)); };
 
-    // The heavy bar falls only between the three sections: after New, after the
-    // factory presets, and nowhere inside the personal library.
+    // The heavy bar falls only after New and after the factory presets.
     CHECK (section ("New empty sheet"));
     CHECK (section ("12AX7 gain stage"));
     CHECK_FALSE (section ("Amps"));
     CHECK_FALSE (section ("Empty"));
 
-    // New on its own; the factory folder with its examples; each top-level folder;
-    // and the presets loose at the top of the folder as one group.
+    // Thin dividers: New; the factory folder; each top-level folder; the loose presets as
+    // one group.
     CHECK (below ("New empty sheet"));
     CHECK_FALSE (below ("Factory presets"));
     CHECK_FALSE (below ("Diode clipper with volume"));
@@ -261,11 +255,10 @@ TEST_CASE ("A thin rule divides the root groups, and nothing else", "[presets][l
     CHECK (below ("Amps"));
     CHECK (below ("Empty"));
     CHECK_FALSE (below ("Bass 9"));
-    CHECK_FALSE (below ("Bass 10")); // the last row has nothing under it to divide from
+    CHECK_FALSE (below ("Bass 10")); // last row: nothing below it
 
-    // An open folder's contents belong to it: the rule moves to the end of them, and
-    // a subfolder inside does not get one of its own. Inside Amps the subfolder comes
-    // first, so the order is Marshall, JCM 800, then Fender -- the group's last row.
+    // An open folder's contents belong to it: the rule moves to their end, and subfolders
+    // get none. Inside Amps the order is Marshall, JCM 800, Fender.
     panel.chooseRow (rowNamed (panel, "Amps"));
     panel.chooseRow (rowNamed (panel, "Marshall"));
 
@@ -296,13 +289,11 @@ TEST_CASE ("The list is exactly as tall as its rows", "[presets][library]")
     REQUIRE (panel.getNumShownRows() == 2);
     const auto two = panel.getPreferredHeight();
 
-    // One row more is one row's height more -- no floor of three rows under a single
-    // match, which left it sitting on an empty list.
+    // Each extra row adds exactly one row's height (no minimum).
     const auto rowHeight = two - one;
     CHECK (rowHeight > 0);
 
-    // The padding is the same above and below the rows whatever their number: the
-    // list's height is exactly its rows plus that padding.
+    // The same padding above and below the rows, whatever their number.
     const auto padding = one - panel.getFieldArea().getBottom() - rowHeight;
     panel.setSearchText ({});
     int rows = 0;
@@ -312,13 +303,13 @@ TEST_CASE ("The list is exactly as tall as its rows", "[presets][library]")
 
     CHECK (panel.getPreferredHeight() == panel.getFieldArea().getBottom() + padding + rows);
 
-    // A section gap is shorter than a row: as much space either side of its line as
-    // the list has above its first row, and no more.
+    // A section gap is shorter than a row: the list's top padding either side of its
+    // line.
     for (int row = 0; row < panel.getNumShownRows(); ++row)
         if (panel.isRowSeparator (row))
             CHECK (panel.getRowHeight (row) < rowHeight);
 
-    // Nothing found keeps one row's room, to say so.
+    // Nothing found keeps one row to say so.
     panel.setSearchText ("nothing called this");
     CHECK (panel.getPreferredHeight() == one);
 }
@@ -333,8 +324,7 @@ TEST_CASE ("The preset field drops the library down, and a preset picked in it l
         REQUIRE (editor != nullptr);
         editor->setSize (1331, 929);
 
-        // The editor's library reads the test's redirected settings file; point it at
-        // the scratch tree for this test and put it back after.
+        // Point the editor's library at the scratch tree, and restore it afterwards.
         PresetLibrary presets;
         const auto previous = presets.getDirectory();
         presets.setDirectory (temp.folder);
@@ -354,22 +344,20 @@ TEST_CASE ("The preset field drops the library down, and a preset picked in it l
         const auto fieldBefore = field->getBounds();
         CHECK_FALSE (library->isVisible());
 
-        // Clicking the field opens it. There is one bar, not two: the library's top
-        // lies exactly over the preset field and stands in for it -- search, folder and
-        // save -- and the list hangs below. Nothing in the toolbar moves.
+        // Clicking the field opens the library; its top lies exactly over the field, and
+        // nothing in the toolbar moves.
         field->onClick();
         CHECK (library->isVisible());
         CHECK (library->getFieldArea() + library->getPosition() == field->getBounds());
 
-        // Exactly as wide as the field -- the search bar -- so they read as one control.
+        // Exactly as wide as the field.
         CHECK (library->getX() == field->getX());
         CHECK (library->getWidth() == field->getWidth());
         CHECK (library->getListArea().getY() + library->getY() > field->getBottom());
         CHECK (editor->getLocalBounds().contains (library->getBounds()));
         CHECK (field->getBounds() == fieldBefore);
 
-        // The folder icon is in the field's right-hand end whether the library is open
-        // or not, and over the library while it is, so it is always there to click.
+        // The folder icon stays in the field's right end, above the library when open.
         juce::Component* folderIcon = nullptr;
 
         for (auto* child : editor->getChildren())
@@ -382,25 +370,24 @@ TEST_CASE ("The preset field drops the library down, and a preset picked in it l
         CHECK (folderIcon->getRight() > field->getBounds().getCentreX());
         CHECK (editor->getIndexOfChildComponent (folderIcon) > editor->getIndexOfChildComponent (library));
 
-        // Opening it again puts it away, as the field did with the menu.
+        // Clicking again closes it.
         field->onClick();
         CHECK_FALSE (library->isVisible());
 
-        // Escape puts it away.
+        // Escape closes it.
         field->onClick();
         REQUIRE (library->isVisible());
         library->keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));
         CHECK_FALSE (library->isVisible());
 
-        // A preset picked in it loads through the ordinary route -- the toolbar names
-        // it -- and the library is put away, as the menu was.
+        // Picking a preset loads it (the toolbar names it) and closes the library.
         field->onClick();
         library->chooseRow (rowNamed (*library, "Bass 9"));
         CHECK_FALSE (library->isVisible());
         CHECK (editor->getLoadedPresetName() == "Bass 9");
         CHECK_FALSE (editor->isFactoryPresetLoaded());
 
-        // And next time it opens, the one in use is marked.
+        // Next time it opens, the one in use is marked.
         field->onClick();
         CHECK (library->isRowCurrent (rowNamed (*library, "Bass 9")));
         field->onClick();

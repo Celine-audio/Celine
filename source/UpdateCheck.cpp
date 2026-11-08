@@ -12,17 +12,13 @@ namespace UpdateCheck
 {
     namespace
     {
-        // Keys in the shared settings file. Strings rather than an enum because they
-        // end up in a file someone may one day open in a text editor.
+        // Keys in the shared settings file.
         const juce::String enabledKey { "updateChecksEnabled" };
         const juce::String offeredKey { "updateChecksOffered" };
 
         //======================================================================
-        /** What the check found, kept in plain statics rather than in an object JUCE
-            deletes at shutdown: the plugin's JUCE can be shut down and started again
-            within one process -- a host removing the last instance and adding one
-            back -- and "once per launch" has to survive that, or the second start
-            would ask again. */
+        /** The check's result, kept in statics so "once per launch" survives JUCE being shut
+            down and restarted inside one process. */
         struct Outcome
         {
             std::atomic<bool> started { false };
@@ -37,16 +33,12 @@ namespace UpdateCheck
             return o;
         }
 
-        /** Asks GitHub for the newest release. Empty on any failure at all -- no
-            connection, a timeout, a status other than 200 -- since the check gives up
-            on every one of them the same way. */
+        /** Fetches the latest release. Empty on any failure. */
         juce::String fetchLatestRelease (const juce::Thread& thread)
         {
             int status = 0;
 
-            // GitHub's API refuses a request with no User-Agent. The one sent names the
-            // product and nothing else -- not the version, which is compared here
-            // rather than told to anyone.
+            // GitHub requires a User-Agent. It names the product only.
             const auto options = juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
                                      .withConnectionTimeoutMs (timeoutMs)
                                      .withExtraHeaders ("Accept: application/vnd.github+json\r\n"
@@ -61,13 +53,7 @@ namespace UpdateCheck
             return stream->readEntireStreamAsString();
         }
 
-        /** The thread the one request runs on.
-
-            Deleted at JUCE's shutdown rather than owned by anything: nothing needs it
-            once it has finished, and a plugin's code must not be running on a thread
-            of its own after the host has unloaded it, which a detached thread could
-            not promise. Shutting down waits for it -- at worst the request's timeout,
-            should the network go quiet at exactly that moment. */
+        /** The thread running the request. Deleted at JUCE shutdown, which waits for it. */
         class Worker final : public juce::Thread, private juce::DeletedAtShutdown
         {
         public:
@@ -117,7 +103,7 @@ namespace UpdateCheck
         {
             const auto digits = part.trim().initialSectionContainingOnly ("0123456789");
 
-            // A component with no number in it -- "1..2", "1.x" -- is not a version.
+            // A component with no digits ("1..2", "1.x") is not a version.
             if (digits.isEmpty())
                 return {};
 
@@ -137,7 +123,7 @@ namespace UpdateCheck
 
         for (int i = 0; i < juce::jmax (theirs.size(), ours.size()); ++i)
         {
-            // Missing components count as zero, so 1.2 and 1.2.0 are one version.
+            // Missing components count as zero.
             const int a = theirs[i];
             const int b = ours[i];
 
@@ -155,8 +141,7 @@ namespace UpdateCheck
         if (! parsed.isObject())
             return std::nullopt;
 
-        // releases/latest leaves these out already; checked anyway, because a reply
-        // that included one would otherwise announce a build nobody meant to ship.
+        // releases/latest already excludes these; checked anyway.
         if (static_cast<bool> (parsed.getProperty ("draft", false))
             || static_cast<bool> (parsed.getProperty ("prerelease", false)))
             return std::nullopt;
@@ -181,9 +166,7 @@ namespace UpdateCheck
     {
     }
 
-    // Opened for each read and write, as PresetLibrary does and for its reason: every
-    // instance of the plugin shares the file, and one holding it open would answer
-    // from a stale copy and write that copy back over a newer choice.
+    // Opened for each read and write, like PresetLibrary, since every instance shares it.
     bool Preferences::isEnabled() const
     {
         const juce::PropertiesFile file (settingsFile, PresetLibrary::getSettingsOptions());
@@ -215,7 +198,7 @@ namespace UpdateCheck
     {
         void startIfNeeded()
         {
-            // exchange, so two windows opening together cannot both start one.
+            // exchange, so two windows cannot both start a check.
             if (outcome().started.exchange (true))
                 return;
 

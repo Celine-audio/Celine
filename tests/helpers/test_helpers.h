@@ -1,13 +1,8 @@
 #pragma once
 #include <PluginProcessor.h>
 
-/** Runs a test with a live editor attached to the processor, and tears both
-    down afterwards.
-
-    Note that the editor built here is never on screen, which some of the
-    editor's own code checks for -- the first-run preset prompt deliberately
-    waits for a window a person can actually see, so it does not fire in here.
-*/
+/** Runs a test with an editor attached to the processor, then tears both down. The
+    editor is never on screen, so the first-run prompt doesn't fire. */
 [[maybe_unused]] static void runWithinPluginEditor (const std::function<void (PluginProcessor& plugin)>& testCode)
 {
     PluginProcessor plugin;

@@ -9,19 +9,16 @@
 #include <random>
 #include <vector>
 
-// High-gain valve preamps, laid out the way most of them are and driven the way
-// a guitar drives them, held to the one thing that has to be true of all of
-// them: Newton converges on every sample. A sample it gives up on is a click.
+// Typical high-gain valve preamps driven like a guitar: Newton must converge on every
+// sample (a failure is a click).
 //
-// The fixed cases each broke a version of the solver. The hidden search at the
-// end is what found them, and is the thing to run after changing anything in
-// EngineSolve.cpp:
+// The fixed cases each broke a version of the solver. They were found by the hidden
+// search at the end; run it after changing EngineSolve.cpp:
 //
 //     STRESS_COUNT=700 ./Tests "[.convergencestress]"
 //
-// STRESS_SEED picks the first preamp, STRESS_WHERE=1 names the samples that
-// failed. Seeds are only repeatable on one standard library, since the
-// distributions that turn them into parts are not specified exactly.
+// STRESS_SEED picks the first preamp, STRESS_WHERE=1 names failing samples. Seeds
+// only repeat on one standard library (distributions aren't specified exactly).
 
 namespace
 {
@@ -36,12 +33,10 @@ namespace
         double leak = 1e6;       // the next stage's grid leak, likewise
     };
 
-    /** The layout nearly every high-gain preamp shares: gain stages in
-        cascade, the last DC-coupled into a cathode follower, the follower
-        driving a tone stack through a coupling capacitor. `secondHalf` adds what
-        the Diezel VH4 has after its tone stack -- a volume at noon, a 680k
-        stopper, one more stage and a second follower into a 100k + 4.7k
-        divider. */
+    /** Gain stages in cascade, the last DC-coupled into a cathode follower driving a tone
+        stack through a coupling capacitor. `secondHalf` adds the Diezel VH4's post-stack
+        section: volume at noon, a 680k stopper, one more stage and a second follower into
+        a 100k + 4.7k divider. */
     struct Preamp
     {
         double rate = 48000.0;
@@ -228,16 +223,12 @@ TEST_CASE("High-gain preamps converge on every sample", "[circuit][valve]")
         double level;
     };
 
-    // Two seconds of each, at the rate each one was found at. Where a version
-    // failed is chaotic -- it moves with the bits of every sample before -- so
-    // these are the whole renders that caught them, not a window around the
-    // sample. Three were found with Newton seeded by a straight-line guess,
-    // since removed; they stay as hard cases without it.
+    // Two seconds of each, at the rate each was found at: where a solver fails is chaotic,
+    // so these are the whole renders that caught them. Three were found with a
+    // straight-line Newton seed (since removed) and stay as hard cases.
     const Case cases[] = {
-        // A squared-off edge flips four stages within a thousandth of one
-        // sample's step. Wherever a grid crossed the onset of grid current
-        // there, Newton orbited the answer, and continuation gave up: the
-        // sub-steps that converge were finer than the 1/1024 it went down to.
+        // A squared-off edge flips four stages within a thousandth of a step; Newton orbited
+        // at the onset of grid current and continuation gave up above 1/1024 sub-steps.
         { "four bypassed stages into the follower, tone stack and the VH4's second half, clipped notes at 2 V",
           { 48000.0, 420.0,
             { { 0.0, 120e3, 1800.0, 22e-6, 22e-9, 470e3 },
@@ -247,10 +238,8 @@ TEST_CASE("High-gain preamps converge on every sample", "[circuit][valve]")
             100e3, true, 4.7e3, 100e-9, true },
           Drive::clippedNotes, 2.0 },
 
-        // The Dual Rectifier's arrangement: cold clippers on 39k cathodes ahead
-        // of the follower. Restarting from the sample's start found each valve's
-        // step limiter still remembering the abandoned attempt, and it clamped
-        // the restart up to a hundred volts from where it was put.
+        // The Dual Rectifier's cold clippers on 39k cathodes. Restarting a sample found the
+        // step limiter still holding the abandoned attempt's state.
         { "four cold stages, the last two clippers on 39k cathodes, into the follower and tone stack, clipped notes at 1 V",
           { 48000.0, 420.0,
             { { 0.0, 100e3, 1800.0, 0.0, 4.7e-9, 470e3 },
@@ -300,8 +289,8 @@ TEST_CASE("High-gain preamps converge on every sample", "[circuit][valve]")
         CHECK(finite);
         CHECK(circuit.getNonConvergenceCount() == 0);
 
-        // A sample given up on leaves whatever the iteration was holding, and
-        // that has reached kilovolts. Nothing real leaves the supply.
+        // A failed sample leaves whatever the iteration held (kilovolts have been seen).
+        // Nothing real exceeds the supply.
         CHECK(peak < test.preamp.bplus);
     }
 }
@@ -309,9 +298,8 @@ TEST_CASE("High-gain preamps converge on every sample", "[circuit][valve]")
 //==============================================================================
 namespace
 {
-    /** Two of the preamps above, one clipping hard through every stage and one
-        played cleanly, between them grids that conduct on every peak and grids
-        that never do -- the two kinds of current row a Newton step has. */
+    /** Two of the preamps above: one clipping hard through every stage, one clean, so
+        both kinds of grid row (conducting and not) are exercised. */
     struct SolverCase
     {
         const char* what;
@@ -336,10 +324,8 @@ namespace
 
 TEST_CASE("The reduced Newton step lands where the full one does", "[circuit][valve]")
 {
-    // Each reduced step is Newton's on a Jacobian a millionth from exact, so it
-    // has to arrive at the same answer to well under anything audible. And it
-    // has to have actually been taken: a reduced step that always fell back to
-    // the full one would pass the comparison and test nothing.
+    // Each reduced step must reach the full Newton answer to well below audibility, and
+    // must actually be taken (not always fall back).
     for (const auto& test : solverCases())
     {
         INFO(test.what);
@@ -383,7 +369,7 @@ namespace
         return *(options.begin() + index(random));
     }
 
-    /** A preamp somewhere in the space the fixed cases come from. */
+    /** A random preamp from the space the fixed cases come from. */
     Preamp randomPreamp(unsigned seed, Drive& drive, double& level)
     {
         std::mt19937 random(seed);
@@ -440,8 +426,8 @@ namespace
 
 TEST_CASE("Random high-gain preamps converge on every sample", "[.convergencestress]")
 {
-    // A search, not a test: hidden, since a thorough one takes minutes. Every
-    // preamp that fails is printed with its seed and its parts.
+    // A hidden search (a thorough one takes minutes). Failing preamps are printed with
+    // their seed and parts.
     const int count = juce::SystemStats::getEnvironmentVariable("STRESS_COUNT", "100").getIntValue();
     const auto first = static_cast<unsigned>(juce::SystemStats::getEnvironmentVariable("STRESS_SEED", "1").getIntValue());
     const bool where = juce::SystemStats::getEnvironmentVariable("STRESS_WHERE", "").isNotEmpty();

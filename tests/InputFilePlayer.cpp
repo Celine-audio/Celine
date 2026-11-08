@@ -9,9 +9,7 @@
 
 namespace
 {
-    /** Writes `audio` as a 32-bit float .wav, so what comes back off the disk is
-        bit for bit what went on: every comparison below is exact or it is not
-        testing the player. */
+    /** Writes `audio` as a 32-bit float .wav, so it reads back bit for bit. */
     juce::File writeWav (const juce::File& file, const juce::AudioBuffer<float>& audio, double sampleRate)
     {
         file.deleteFile();
@@ -54,10 +52,8 @@ namespace
         return audio;
     }
 
-    /** The largest error against a sine at `rate`, away from the ends, where
-        the filter runs off the edge of the file and is not meant to be exact.
-        Against the ideal sine itself rather than a fitted one: fitting phase
-        and amplitude would hide exactly the errors this is looking for. */
+    /** The largest error against the ideal sine at `rate`, away from the ends (where the
+        filter runs off the file). */
     double worstErrorAgainstSine (const juce::AudioBuffer<float>& audio, double frequency, double rate)
     {
         double worst = 0.0;
@@ -92,8 +88,8 @@ namespace
         juce::File operator/ (const juce::String& name) const { return folder.getFile().getChildFile (name); }
     };
 
-    /** One render into a fresh block, every channel first set to a value the
-        file cannot hold, so a sample the player forgot to write shows up. */
+    /** One render into a fresh block pre-filled with a value the file can't hold, so
+        unwritten samples show. */
     juce::AudioBuffer<float> renderBlock (InputFilePlayer& player, int channels, int samples, bool& replaced)
     {
         juce::AudioBuffer<float> block (channels, samples);
@@ -136,9 +132,8 @@ TEST_CASE ("A file already at the session rate is not resampled at all", "[file 
 
 TEST_CASE ("Resampling a file lands on the sine it should", "[file input]")
 {
-    // Against the ideal sine at the new rate, sample for sample. Up from 44.1 kHz,
-    // which is what most files a bench is fed are, and down from 96, the other
-    // common mismatch; low, mid and near the top of the band each way.
+    // Against the ideal sine at the new rate, sample for sample: up from 44.1 kHz and
+    // down from 96 kHz, at low, mid and high frequencies.
     struct Case { double from, to, frequency, tolerance; };
 
     for (const auto& c : { Case { 44100.0, 48000.0,  1000.0, 1.0e-4 },
@@ -160,8 +155,8 @@ TEST_CASE ("Resampling a file lands on the sine it should", "[file input]")
 
 TEST_CASE ("Coming down in rate, what will not fit is filtered out rather than folded back", "[file input]")
 {
-    // 30 kHz in a 96 kHz file has nowhere to go at 48: kept, it would land at 18
-    // kHz as a tone the file never had. The filter's stopband is about -90 dB.
+    // 30 kHz from a 96 kHz file must be filtered out at 48 kHz, not alias to 18 kHz. The
+    // stopband is about -90 dB.
     const auto in = sine (30000.0, 96000.0, 24000);
     const auto out = InputFilePlayer::resample (in, 96000.0, 48000.0);
 
@@ -323,8 +318,8 @@ TEST_CASE ("A file's channels reach the circuit's the way the channel modes woul
 
         const auto block = renderBlock (player, 1, 200);
 
-        // The ramp's two sides are equal and opposite, so the average is zero --
-        // which a player that took the left alone would not give.
+        // The ramp's two channels cancel, so the mix averages to zero (taking only the left
+        // wouldn't).
         CHECK (isSilent (block));
     }
 
@@ -374,8 +369,7 @@ TEST_CASE ("A file that will not load leaves the last one playing and says why",
 
 TEST_CASE ("Choosing a file switches to it only once it has read", "[file input]")
 {
-    // Switched on up front, a file that fails -- with nothing loaded before it
-    // -- leaves the circuit listening to silence.
+    // File mode on with a failed load leaves the circuit hearing silence.
     Scratch scratch;
     const auto bad = scratch / "not-audio.wav";
     bad.replaceWithText ("This is a schematic, honest.");
@@ -395,7 +389,7 @@ TEST_CASE ("Choosing a file switches to it only once it has read", "[file input]
     REQUIRE (player.waitUntilLoaded (10000));
     CHECK (player.isFileMode());
 
-    // Going back to live while a load is still on its way is the later word.
+    // Switching back to live overrides a load still in flight.
     player.setFileMode (false);
     player.load (writeWav (scratch / "other.wav", ramp (1, 300), 48000.0), true);
     player.setFileMode (false);
@@ -441,8 +435,7 @@ TEST_CASE ("The plugin plays the file in place of its input, and bypass gives th
 
     PluginProcessor plugin;
 
-    // Bypassed before preparing, so the fade starts where it stands and the
-    // output is the dry copy from the very first sample.
+    // Bypassed before preparing, so the output is the dry copy from the first sample.
     plugin.getBypassParameter()->setValueNotifyingHost (1.0f);
     plugin.prepareToPlay (48000.0, 512);
 

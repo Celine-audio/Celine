@@ -8,8 +8,7 @@ using namespace Celine;
 
 namespace
 {
-    /** Two resistors with a wire running between them, all three far enough
-        apart to be clicked without catching the others. */
+    /** Two resistors joined by a wire, far enough apart to click each alone. */
     struct Bench
     {
         Schematic sheet;
@@ -34,8 +33,7 @@ namespace
 
         juce::Point<float> pixelOf (juce::Point<int> grid) const { return canvas.gridToPixel (grid); }
 
-        /** The middle of the wire, which is the part of it that is only ever
-            the wire -- its ends sit under the resistors' pins. */
+        /** The middle of the wire; its ends sit under the resistors' pins. */
         juce::Point<float> onWire() const { return pixelOf ({ 20, 20 }); }
 
         juce::Point<float> onElement (int id) const
@@ -65,7 +63,7 @@ TEST_CASE ("Dragging a wire that is part of a selection moves the whole selectio
 {
     Bench bench;
 
-    // Both parts and the wire, built up the way a user would.
+    // Select both parts and the wire.
     bench.click (bench.onElement (bench.a));
     bench.click (bench.onElement (bench.b), shift);
     bench.canvas.mouseDown (bench.event (bench.onWire(), shift));
@@ -78,7 +76,7 @@ TEST_CASE ("Dragging a wire that is part of a selection moves the whole selectio
                                             bench.sheet.findElement (bench.a)->y };
     const auto beforeWire = bench.sheet.findWire (bench.wire)->a;
 
-    // Now pick the group up *by the wire*. Everything should travel together.
+    // Drag the group by the wire: everything moves together.
     bench.drag (bench.onWire(), bench.pixelOf ({ 20, 25 }));
 
     CHECK (bench.canvas.getSelection().size() == 2);
@@ -101,7 +99,7 @@ TEST_CASE ("Clicking a wire in a selection without dragging narrows to it", "[ca
     REQUIRE (bench.canvas.getSelection().size() == 1);
     REQUIRE (bench.canvas.getSelectedWires().size() == 1);
 
-    // The way out of a group, and the same gesture the parts answer to.
+    // Clicking a group member without dragging narrows to it.
     bench.click (bench.onWire());
 
     CHECK (bench.canvas.getSelection().empty());
@@ -126,8 +124,7 @@ TEST_CASE ("Dragging an unselected wire still takes only that wire", "[canvas][g
 {
     Bench bench;
 
-    // The other half of the rule: grabbing something that was *not* in the
-    // selection replaces it, so a wire is still picked up on its own.
+    // Grabbing something outside the selection replaces it.
     bench.click (bench.onElement (bench.a));
     REQUIRE (bench.canvas.isSelected (bench.a));
 

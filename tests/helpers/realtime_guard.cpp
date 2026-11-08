@@ -11,8 +11,7 @@
 
 namespace
 {
-    // Per-thread, so only the thread under test is watched and the harness around it
-    // can allocate freely.
+    // Per-thread, so only the thread under test is watched.
     thread_local int watching = 0;
     thread_local RealtimeCheck::Counts counts;
 
@@ -46,12 +45,8 @@ namespace RealtimeCheck
 
     void makeOneAllocation()
     {
-        // Both the size and the pointer go through volatiles, and that is not
-        // decoration. A release build is allowed to replace a new/delete pair with a
-        // stack slot whenever it can bound the size and see the whole lifetime, and it
-        // does -- the first two attempts at this test failed against a guard that was
-        // working, which is the most misleading result a self-check can give. A size it
-        // cannot fold and a pointer it cannot prove dies here leave it nothing to elide.
+        // Size and pointer go through volatiles so the optimiser can't elide the new/delete
+        // pair.
         static volatile std::size_t count = 64;
         static void* volatile escape = nullptr;
 
@@ -72,7 +67,7 @@ namespace
             counts.bytes += size;
         }
 
-        // Zero-sized allocations still have to return a distinct pointer.
+        // Zero-sized allocations still return a distinct pointer.
         if (auto* p = std::malloc (size == 0 ? 1 : size))
             return p;
 
@@ -87,11 +82,8 @@ namespace
         std::free (p);
     }
 
-    // Over-aligned allocation is the one part of this with no portable spelling.
-    // posix_memalign does not exist on Windows, and the memory _aligned_malloc returns
-    // there must go back through _aligned_free rather than free -- handing it to the
-    // ordinary one is heap corruption rather than a diagnostic. std::aligned_alloc is
-    // no answer either: MSVC's runtime has never provided it.
+    // Over-aligned allocation has no portable spelling: Windows needs
+    // _aligned_malloc/_aligned_free, and MSVC has no std::aligned_alloc.
     void* alignedAllocate (std::size_t bytes, std::size_t alignment)
     {
        #if JUCE_WINDOWS
@@ -141,7 +133,7 @@ void operator delete[] (void* p, std::size_t) noexcept { release (p); }
 void operator delete (void* p, const std::nothrow_t&) noexcept { release (p); }
 void operator delete[] (void* p, const std::nothrow_t&) noexcept { release (p); }
 
-// Aligned forms, which std::vector of an over-aligned type and JUCE's SIMD types use.
+// Aligned forms, used by over-aligned types and JUCE's SIMD types.
 void* operator new (std::size_t size, std::align_val_t align)
 {
     if (watching > 0)

@@ -5,9 +5,7 @@ using namespace Stress;
 
 TEST_CASE ("The allocation guard is armed and actually catches one", "[realtime]")
 {
-    // Every allocation check in this suite is worthless if this is not true, so it is
-    // asserted rather than assumed: a guard that silently failed to replace the
-    // allocator would turn all of them into tests that pass for no reason.
+    // Without an armed guard, every allocation check here would pass for nothing.
     REQUIRE (RealtimeCheck::isArmed());
 
     {
@@ -25,9 +23,8 @@ TEST_CASE ("The allocation guard is armed and actually catches one", "[realtime]
 
 TEST_CASE ("processBlock never allocates", "[realtime]")
 {
-    // The rule the audio thread lives by. malloc can take a lock another thread holds,
-    // and under memory pressure it goes to the kernel; either way the block is late and
-    // the user hears it. Checked in the states a block can actually find the plugin in.
+    // The audio thread must not allocate. Checked in every state a block can find the
+    // plugin in.
     PluginProcessor plugin;
     const Busy busy { plugin };
     plugin.prepareToPlay (48000.0, 512);
@@ -80,9 +77,7 @@ TEST_CASE ("processBlock never allocates", "[realtime]")
 
     SECTION ("while the bypass is fading")
     {
-        // A 512-sample block is shorter than the 30 ms fade, so toggling every
-        // block keeps it moving -- the one state where the dry copy and the
-        // circuit are both being blended per sample.
+        // A block is shorter than the 30 ms fade, so toggling every block keeps it blending.
         auto* bypass = plugin.getBypassParameter();
         REQUIRE (bypass != nullptr);
 
@@ -103,8 +98,7 @@ TEST_CASE ("processBlock never allocates", "[realtime]")
 
     SECTION ("playing a file, looping, across its end")
     {
-        // A short file, so forty blocks wrap it several times: the loop's
-        // turnaround is the one branch here that a long file would never reach.
+        // A short file, so forty blocks wrap it several times and reach the loop branch.
         juce::TemporaryFile wav (".wav");
         {
             juce::AudioBuffer<float> take (2, 3000);

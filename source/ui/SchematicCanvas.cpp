@@ -9,13 +9,8 @@ namespace Celine
 
     namespace
     {
-        /** The part being placed, drawn faintly under the pointer.
-
-            A function rather than a constant. As a namespace-scope `const juce::Colour`
-            it was two bugs at once: a colour captured before the theme could be read,
-            which no theme change afterwards could move; and, because reading a colour
-            builds the palette, a palette built during static initialisation -- before
-            there is a message loop for it to defer its first save to. */
+        /** The part being placed, drawn faintly under the pointer. A function so it follows
+            theme changes and isn't read during static initialisation. */
         juce::Colour ghostColour() { return Theme::text().withAlpha (0.4f); }
 
         constexpr float minGridSize = 4.0f;
@@ -29,11 +24,8 @@ namespace Celine
         painter.gridSize = 16.0f;
         painter.origin = {40.0f, 40.0f};
 
-        // What a caption would cover where it is being tried: other
-        // captions and other parts, which make it unreadable, and wires, which
-        // only make it untidy. Captions are kept off each other in drawing
-        // order, so the first part on the sheet gets its own side and a
-        // neighbour moves.
+        // What a caption would cover where it is being tried: other captions and parts (bad)
+        // and wires (untidy). Captions are placed in drawing order, so later ones move.
         painter.captionClutter = [this](const Element& element, juce::Rectangle<float> box)
         {
             float clutter = 0.0f;
@@ -66,9 +58,7 @@ namespace Celine
         tool = newTool;
         setMouseCursor(tool == Tool::Select ? juce::MouseCursor::NormalCursor : juce::MouseCursor::CrosshairCursor);
 
-        // The next thing you do is on the sheet, so the sheet takes the
-        // keyboard. Without this the shortcuts only work after a click on the
-        // canvas, which for the part being placed is one action too late.
+        // The sheet takes the keyboard, so shortcuts work without a click on the canvas.
         if (isShowing())
             grabKeyboardFocus();
 
@@ -80,8 +70,7 @@ namespace Celine
 
     void SchematicCanvas::setPendingType(ElementType type)
     {
-        // Picking from the palette is asking for a *fresh* part, so whatever was
-        // being cloned stops being cloned.
+        // Picking from the palette asks for a fresh part: stop cloning.
         pendingClone.reset();
         pendingType = type;
         setTool(Tool::Place);
@@ -97,8 +86,7 @@ namespace Celine
         pendingClone = *source;
         pendingType = source->type;
 
-        // The copy comes up facing the way the original does, which is almost
-        // always what you want -- and Cmd-R still turns it before you place it.
+        // The copy faces the way the original does.
         pendingOrientation = source->orientation;
         pendingMirrored = source->mirrored;
 
@@ -127,8 +115,7 @@ namespace Celine
 
         setSelection(elementId);
 
-        // Scroll it into view if it is off-screen. Only then: yanking the view
-        // about when the part is already visible loses your place for nothing.
+        // Scroll it into view only if it is off-screen.
         if (const auto* element = schematic.findElement(elementId))
         {
             const auto centre = painter.toPixel({element->x, element->y});
@@ -143,9 +130,7 @@ namespace Celine
 
     void SchematicCanvas::refresh()
     {
-        // Drop anything that has gone. Rebuilt from the survivors rather than
-        // erased in place, so a sheet replaced wholesale under us leaves no ids
-        // pointing at parts that no longer exist.
+        // Drop ids of parts that no longer exist.
         std::vector<int> survivors;
 
         for (const int id : selectedIds)
@@ -190,9 +175,8 @@ namespace Celine
 
         selectedIds = std::move(ids);
 
-        // Selecting a part drops any wire selection: two lists, one idea.
-        // Callers that want both -- the box, which catches each -- set the wires
-        // immediately after, so this cannot undo them.
+        // Selecting parts drops the wire selection. Callers wanting both set the wires
+        // afterwards.
         if (! selectedIds.empty())
             selectedWireIds.clear();
 
@@ -219,9 +203,7 @@ namespace Celine
         if (elementIds == selectedIds && wireIds == selectedWireIds)
             return;
 
-        // Assigned directly: the single-list setter clears the wires whenever
-        // given any parts, which is right on a click and wrong here, where the
-        // parts and the wires are one block.
+        // Assigned directly: the single-list setter would clear the wires.
         selectedIds = std::move(elementIds);
         selectedWireIds = std::move(wireIds);
         repaint();
@@ -262,9 +244,7 @@ namespace Celine
     {
         const auto grid = painter.toGridExact(pixel);
 
-        // Seven pixels of the line, or its width if that is fatter. In pixels
-        // rather than grid squares: a hit target is something you aim a pointer
-        // at, and the pointer does not zoom.
+        // Hit distance in pixels: seven, or the line width if fatter.
         const float wireWidth = juce::jmax(1.0f, painter.gridSize * 0.13f);
         const float tolerance = juce::jmax(7.0f, wireWidth) / juce::jmax(1.0f, painter.gridSize);
         float best = tolerance;
@@ -276,8 +256,7 @@ namespace Celine
             juce::Point<float> nearest;
             const auto distance = line.getDistanceFromPoint(grid, nearest);
 
-            // <=, so of two wires crossing at the same distance the later one
-            // wins -- the one drawn on top, which is the one you were aiming at.
+            // <=, so the later wire (drawn on top) wins a tie.
             if (distance <= best)
             {
                 best = distance;
@@ -313,9 +292,7 @@ namespace Celine
     {
         const auto box = getSelectionBox();
 
-        // Compared in pixels rather than in grid squares: the box is a pixel
-        // gesture, and rounding it to the grid first would make a box drawn
-        // just inside a part's bounds catch it anyway when zoomed out.
+        // In pixels, not grid squares, so rounding doesn't catch parts just outside the box.
         const bool crossing = isCrossingBox();
 
         std::vector<int> caught = additive ? selectedIds : std::vector<int>{};
@@ -326,8 +303,7 @@ namespace Celine
             const juce::Rectangle<float> pixels(painter.toPixel(bounds.getX(), bounds.getY()),
                                                 painter.toPixel(bounds.getRight(), bounds.getBottom()));
 
-            // Left to right encloses, right to left crosses -- the convention
-            // in every CAD package.
+            // Left to right encloses, right to left crosses.
             const bool hit = crossing ? box.intersects(pixels) : box.contains(pixels);
 
             if (hit && std::find(caught.begin(), caught.end(), element.id) == caught.end())
@@ -340,13 +316,8 @@ namespace Celine
         {
             const juce::Line<float> line(painter.toPixel(wire.a), painter.toPixel(wire.b));
 
-            // Same rule as the parts: enclosing needs the whole wire inside,
-            // crossing takes anything the box touches.
-            //
-            // Crossing tests the *line*, not its bounding rectangle: every wire
-            // is axis-aligned, so that rectangle has zero width or height, and
-            // Rectangle::intersects ends with "&& other.w > 0 && other.h > 0"
-            // -- false for every wire on the sheet.
+            // Same rule as the parts. Crossing tests the line itself: a wire's bounding rectangle
+            // has zero width or height, which Rectangle::intersects always rejects.
             const bool hit = crossing
                                  ? box.intersects(line)
                                  : box.contains(juce::Rectangle<float>(line.getStart(), line.getEnd()));
@@ -384,8 +355,7 @@ namespace Celine
         if (first)
             return;
 
-        // Leave a margin, and room for captions and terminal labels, which are
-        // drawn outside the pin geometry the bounds are computed from.
+        // Margin for captions and terminal labels drawn outside the pin bounds.
         bounds = bounds.expanded(5);
 
         const auto area = getFramingArea().toFloat();
@@ -403,10 +373,7 @@ namespace Celine
     {
         const auto area = framingInsets.subtractedFrom(getLocalBounds());
 
-        // Only when the panels leave a sliver does it frame in the whole canvas
-        // instead, under them. A fixed floor rather than a share of the canvas:
-        // a third of it was more than the gap the panels leave on the narrowest
-        // window, so fit-to-screen put the drawing under them there.
+        // If the panels leave less than this, frame the whole canvas instead.
         constexpr int narrowest = 120;
 
         if (area.getWidth() < narrowest || area.getHeight() < narrowest)
@@ -417,8 +384,7 @@ namespace Celine
 
     void SchematicCanvas::resized()
     {
-        // Full-length strips, each covering one edge. The corner belongs to the
-        // left one, drawn after the top one so it wins there.
+        // Full-length strips; the corner belongs to the left one, drawn last.
         topRuler.setBounds(0, 0, getWidth(), topRulerThickness);
         leftRuler.setBounds(0, 0, leftRulerThickness, getHeight());
         leftRuler.toFront(false);
@@ -429,8 +395,7 @@ namespace Celine
 
     void SchematicCanvas::paintGrid(juce::Graphics& g) const
     {
-        // Grid dots. Skipped when zoomed out far enough that they would read as
-        // a solid fill rather than as a grid.
+        // Grid dots, skipped when zoomed out too far.
         if (painter.gridSize >= 8.0f)
         {
             g.setColour(Theme::grid());
@@ -449,8 +414,7 @@ namespace Celine
 
     void SchematicCanvas::paintDrawing(juce::Graphics& g) const
     {
-        // Group boxes first, under everything: the circuit a box rings has to
-        // stay readable through it.
+        // Group boxes first, under everything.
         for (const auto& element : schematic.getElements())
             if (element.type == ElementType::Rectangle)
                 painter.draw(g, element, isSelected(element.id) ? Theme::selected() : Theme::element());
@@ -463,8 +427,7 @@ namespace Celine
             const bool selected = std::find(selectedWireIds.begin(), selectedWireIds.end(), wire.id)
                                != selectedWireIds.end();
 
-            // Round caps, so two wires meeting at a corner join in a
-            // rounded elbow rather than a notched square.
+            // Round caps, so corners join in a rounded elbow.
             juce::Path segment;
             segment.startNewSubPath(painter.toPixel(wire.a));
             segment.lineTo(painter.toPixel(wire.b));
@@ -475,12 +438,8 @@ namespace Celine
                                                        juce::PathStrokeType::rounded));
         }
 
-        // Junction dots where the connection isn't obvious from the drawing.
-        //
-        // The colour is set explicitly because the loop above leaves the last
-        // wire's behind. And it is the wire colour rather than the selection's:
-        // a dot belongs to the *connection*, and there is no honest answer for a
-        // junction where one of three wires is selected.
+        // Junction dots where the connection isn't obvious. Always in the wire colour: a dot
+        // belongs to the connection, not to one selected wire.
         g.setColour(Theme::wire());
 
         const float junctionRadius = juce::jmax(2.0f, painter.gridSize * 0.22f);
@@ -518,8 +477,7 @@ namespace Celine
             const auto bounds = painter.elementBounds(*selected).getSmallestIntegerContainer();
             const bool isBox = selected->type == ElementType::Rectangle;
 
-            // Outside a group box rather than on it: its bounds *are* its
-            // outline.
+            // Outside a group box rather than on its outline.
             const auto grid = painter.gridSize;
             const juce::Rectangle<float> pixels =
                 juce::Rectangle<float>(painter.toPixel(bounds.getTopLeft()),
@@ -529,14 +487,10 @@ namespace Celine
             g.setColour(Theme::selected().withAlpha(0.35f));
             g.drawRoundedRectangle(pixels, grid * 0.4f, 1.5f);
 
-            // Only on a box selected by itself: with several selected the drag
-            // moves them all, so the handle would offer a gesture that is not
-            // available.
+            // Only on a box selected alone: with several selected, a drag moves them all.
             if (isBox && selectedIds.size() == 1)
             {
-                // A bracket hugging the box's own rounded corner, the radius
-                // worked out as SchematicSymbols draws it, so the grip reads
-                // as that corner picked out rather than a square bolted on.
+                // A bracket following the box's rounded corner (same radius as SchematicSymbols).
                 const auto frame = juce::Rectangle<float>(painter.toPixel(bounds.getTopLeft()),
                                                           painter.toPixel(bounds.getBottomRight()));
                 const float radius = juce::jmin(grid * 0.7f, frame.getWidth() * 0.2f, frame.getHeight() * 0.2f);
@@ -556,8 +510,7 @@ namespace Celine
             }
         }
 
-        // The ends of a wire selected on its own. A diamond rather than a
-        // square, which already means a junction and a box's corner.
+        // The ends of a wire selected on its own, as diamonds.
         if (const int handleWire = wireWithHandles(); handleWire >= 0)
         {
             if (const auto* wire = schematic.findWire(handleWire))
@@ -591,7 +544,7 @@ namespace Celine
             g.setColour(Theme::wire().withAlpha(0.7f));
 
             const juce::Point<int> corner{wireEnd.x, wireStart.y};
-            // One path, so the elbow is joined like a drawn wire's.
+            // One path, so the elbow joins like a drawn wire's.
             juce::Path path;
             path.startNewSubPath(painter.toPixel(wireStart));
             path.lineTo(painter.toPixel(corner));
@@ -600,9 +553,7 @@ namespace Celine
                                                     juce::PathStrokeType::rounded));
         }
 
-        // Drawn last, over the drawing, and solid or dashed by which way it was
-        // dragged -- otherwise which rule is in force is invisible until you let
-        // go.
+        // Drawn last; solid when enclosing, dashed when crossing.
         if (boxSelecting)
         {
             const auto box = getSelectionBox();
@@ -655,14 +606,12 @@ namespace Celine
         paintSelection(g);
         paintInFlight(g);
 
-        // The rulers are children, not part of this paint: their cursor markers
-        // repaint without the sheet repainting.
+        // The rulers are child components, so their cursor markers repaint without the sheet.
     }
 
     void SchematicCanvas::mouseDoubleClick(const juce::MouseEvent& event)
     {
-        // Only the Select tool: with the wire tool both clicks already mean
-        // something.
+        // Only the Select tool: with the wire tool both clicks already mean something.
         if (tool != Tool::Select)
             return;
 
@@ -677,9 +626,7 @@ namespace Celine
 
     void SchematicCanvas::beginInlineEdit(Element& element)
     {
-        // Only what the part is *set to*: parts chosen from a list have no such
-        // number, so for those the inspector remains the way in. A Text note's
-        // words are the same idea.
+        // Only parts with a typed value, and Text notes; list-chosen parts use the inspector.
         const bool isText = element.type == ElementType::Text;
 
         if (! isText && ! element.hasNumericValue())
@@ -698,16 +645,13 @@ namespace Celine
         inlineEditor->selectAll();
         inlineEditor->setJustification(juce::Justification::centred);
         inlineEditor->setFont(Fonts::light(juce::jlimit(12.0f, 20.0f, painter.gridSize * 0.9f)));
-        // No outline, like every other field in the window. This one floats over the
-        // sheet rather than sitting in a panel, so it is the brighter fill that has to
-        // separate it from the drawing -- surfaceBright is what selection wears
-        // everywhere else, and an open editor is a selection you are typing into.
+        // No outline; the bright fill separates it from the drawing.
         inlineEditor->setColour(juce::TextEditor::backgroundColourId, Theme::surfaceBright());
 
         inlineEditor->onReturnKey = [this] { commitInlineEdit(); };
         inlineEditor->onEscapeKey = [this] { closeInlineEdit(); };
 
-        // Focus loss commits, as the inspector's fields do.
+        // Focus loss commits, as in the inspector.
         inlineEditor->onFocusLost = [this] { commitInlineEdit(); };
 
         const auto centre = painter.toPixel({element.x, element.y});
@@ -720,9 +664,7 @@ namespace Celine
 
         addAndMakeVisible(*inlineEditor);
 
-        // JUCE asserts that a component is showing before it can take focus, and
-        // a canvas built where nobody is looking is not. The grab would fail
-        // there anyway.
+        // Only a showing component can take focus.
         if (isShowing())
             inlineEditor->grabKeyboardFocus();
     }
@@ -735,10 +677,8 @@ namespace Celine
         const auto typed = inlineEditor->getText();
         const int id = inlineEditId;
 
-        // Closed *first*. Committing fires onSchematicChanged, which the editor
-        // answers by rebuilding the inspector -- and an editor still alive and
-        // still focused at that point would lose focus and commit again from
-        // inside its own commit.
+        // Close first: committing rebuilds the inspector, and a still-focused editor would
+        // commit again from inside its own commit.
         closeInlineEdit();
 
         auto* element = schematic.findElement(id);
@@ -758,9 +698,7 @@ namespace Celine
 
         double parsed = 0.0;
 
-        // Refused rather than zeroed. Zero is the table's "nobody has filled this
-        // in" value and it draws red and stops a build, so quietly writing it
-        // because somebody typed nonsense would turn a typo into a broken sheet.
+        // Refuse invalid input rather than writing zero, which would break the build.
         if (! SymbolPainter::parseValue(typed, parsed) || parsed <= 0.0)
             return;
 
@@ -776,8 +714,8 @@ namespace Celine
         if (inlineEditor == nullptr)
             return;
 
-        // The callbacks are cleared before the editor goes, or removing it fires
-        // onFocusLost into a half-destroyed object.
+        // Clear the callbacks first, or removal fires onFocusLost into a half-destroyed
+        // object.
         inlineEditor->onFocusLost = nullptr;
         inlineEditor->onReturnKey = nullptr;
         inlineEditor->onEscapeKey = nullptr;
@@ -792,8 +730,7 @@ namespace Celine
 
     void SchematicCanvas::drawScopeTraces(juce::Graphics& g) const
     {
-        // Below about six pixels a square the trace is a smudge, and the whole
-        // picture would still be walked and copied to draw it.
+        // Below about six pixels a square the trace is unreadable.
         if (! scopeReader || painter.gridSize < 6.0f)
             return;
 
@@ -809,7 +746,7 @@ namespace Celine
             if (! scopeReader(element.id, reading))
                 continue;
 
-            // Upright however the part is turned: this is a thing you read.
+            // Upright however the part is turned.
             const auto centre = painter.toPixel({element.x, element.y});
             const juce::Rectangle<float> area(centre.x + screen.getX() * painter.gridSize,
                                               centre.y + screen.getY() * painter.gridSize,
@@ -819,9 +756,7 @@ namespace Celine
             drawScopeTrace(g, area.reduced(painter.gridSize * 0.18f), reading,
                            Theme::captionValue(), Theme::comment(), Theme::background());
 
-            // Under the screen, where the probes hang: the part's own caption
-            // goes above it, so this space is the readout's. Only when there
-            // is room to read it.
+            // Readout under the screen, only when there is room.
             if (painter.gridSize < 11.0f || ! reading.live)
                 continue;
 
@@ -838,8 +773,7 @@ namespace Celine
     SchematicCanvas::Ruler::Ruler(const SchematicCanvas& o, bool horizontal)
         : owner(o), isHorizontal(horizontal)
     {
-        // Opaque so repainting it never drags the canvas underneath along, and
-        // click-through so the sheet still receives the mouse at its edges.
+        // Opaque so repainting never repaints the canvas; ignores the mouse.
         setOpaque(true);
         setInterceptsMouseClicks(false, false);
         setWantsKeyboardFocus(false);
@@ -850,39 +784,27 @@ namespace Celine
         const auto thickness =
             static_cast<float>(isHorizontal ? topRulerThickness : leftRulerThickness);
 
-        // Where this strip's numbering may begin: after *the other* ruler, which
-        // owns the corner they share. Crossed on purpose -- the top ruler is
-        // stopped by the left one's width and vice versa -- and it matters
-        // because the two are no longer the same size.
+        // Numbering starts after the other ruler, which owns the shared corner.
         const auto crossThickness =
             static_cast<float>(isHorizontal ? leftRulerThickness : topRulerThickness);
 
         const auto& view = owner.painter;
 
-        // Frame, not sheet: the rulers belong to the window frame in the design,
-        // the same aubergine as the toolbar and the inspector, so the sheet reads
-        // as something set into them rather than as running under them. Which is
-        // why they take the toolbar's own role rather than the popup ground that
-        // happens to ship at the same value.
+        // Rulers are frame, in the toolbar colour.
         g.fillAll(Theme::headerBackground());
 
-        // A definite edge, two pixels of it, which is what separates the frame
-        // from the sheet where the two colours nearly meet.
+        // Two-pixel edge between frame and sheet.
         g.setColour(Theme::line());
 
-        // The two edges meet at the sheet's top-left and run outwards from it,
-        // leaving the block where the rulers overlap as plain chrome. Drawing
-        // either line *through* that block instead puts a stray stub across the
-        // corner, pointing at nothing -- there is no sheet under it to bound.
+        // The edges run outwards from the sheet's top-left corner, not through the
+        // overlapping block.
         if (isHorizontal)
             g.fillRect(0.0f, thickness - 2.0f, static_cast<float>(getWidth()), 2.0f);
         else
             g.fillRect(thickness - 2.0f, crossThickness - 2.0f, 2.0f,
                        static_cast<float>(getHeight()) - crossThickness + 2.0f);
 
-        // One label every `step` grid squares, chosen so they never collide: at
-        // 40 px per square every square can be numbered, at 5 px per square only
-        // every tenth can.
+        // One label every `step` squares, chosen so labels never collide.
         int step = 1;
 
         for (const int candidate : {1, 2, 5, 10, 20, 50, 100})
@@ -893,9 +815,7 @@ namespace Celine
                 break;
         }
 
-        // The strip covers the whole edge, but the canvas it labels starts after
-        // the other ruler -- so ask the canvas, in the canvas's own coordinates,
-        // which happen to be this strip's too since both sit at the origin.
+        // The visible area starts after the other ruler; canvas and strip share coordinates.
         const auto first = view.toGrid({0.0f, 0.0f});
         const auto last = view.toGrid({static_cast<float>(owner.getWidth()),
                                           static_cast<float>(owner.getHeight())});
@@ -903,9 +823,6 @@ namespace Celine
         g.setFont(Fonts::light(11.0f));
 
         const auto tickColour = Theme::line();
-        // The numbers up the ruler are axis captions, which is what graphText() is for
-        // in every other plugin in the house. They were textDim(), the idle ink of a
-        // control -- near enough to read, and a role that moves for a different reason.
         const auto labelColour = Theme::graphText();
 
         const int from = isHorizontal ? first.x : first.y;
@@ -940,13 +857,9 @@ namespace Celine
                            juce::Justification::centredRight, false);
         }
 
-        // The cursor. Drawn at the pointer's actual pixel rather than snapped to
-        // the grid, so it tracks the mouse instead of hopping a square at a time.
+        // Cursor marker at the pointer's actual pixel, not snapped.
         if (cursor >= crossThickness)
         {
-            // Violet, the drawing's own accent -- not the selection orange it used
-            // to borrow. Orange means "this part is selected" everywhere else on
-            // the sheet, and a mark that follows the pointer is not a selection.
             g.setColour(Theme::cursorMark());
 
             if (isHorizontal)
@@ -960,8 +873,7 @@ namespace Celine
     {
         const bool inside = getLocalBounds().toFloat().contains(position);
 
-        // Only the two strips repaint, so this is free of whatever the sheet
-        // happens to contain.
+        // Only the two strips repaint.
         auto move = [](Ruler& ruler, float to)
         {
             if (std::abs(ruler.cursor - to) < 0.5f)
@@ -982,19 +894,17 @@ namespace Celine
         const auto grid = painter.toGridExact(pixel);
         const auto& elements = schematic.getElements();
 
-        // Backwards, so the part drawn last -- the one on top -- is the one you
-        // get when two overlap.
+        // Backwards, so the part on top wins.
         for (auto e = elements.rbegin(); e != elements.rend(); ++e)
         {
             if (e->type == ElementType::Rectangle)
-                continue;   // boxes are drawn behind everything, so they lose here
+                continue;   // boxes lose to everything
 
             if (painter.elementBounds(*e).contains(grid))
                 return e->id;
         }
 
-        // Group boxes last, by their edge only: a box is drawn behind the
-        // circuit, so it has to lose to it under the cursor too.
+        // Group boxes last, by their edge only.
         for (auto e = elements.rbegin(); e != elements.rend(); ++e)
         {
             if (e->type != ElementType::Rectangle)
@@ -1011,15 +921,13 @@ namespace Celine
 
     void SchematicCanvas::mouseDown(const juce::MouseEvent& event)
     {
-        // A real click can only land on a canvas that is showing. What this
-        // declines is the synthetic mouseDown the tests inject offscreen.
+        // Ignores the tests' offscreen synthetic clicks.
         if (isShowing())
             grabKeyboardFocus();
 
         const auto grid = gridAt(event.position);
 
-        // Middle-click picks a part up: the Place tool is armed with a copy of
-        // it, so every click after that puts another one down.
+        // Middle-click arms the Place tool with a copy of the part.
         if (event.mods.isMiddleButtonDown())
         {
             if (const int hit = elementAt(event.position); hit >= 0)
@@ -1028,7 +936,7 @@ namespace Celine
             return;
         }
 
-        // Right-drag pans, and is the only thing that does.
+        // Right-drag pans.
         if (event.mods.isPopupMenu())
         {
             panning = true;
@@ -1055,8 +963,7 @@ namespace Celine
         const int id = schematic.addElement(pendingType, grid.x, grid.y);
         auto* placed = schematic.findElement(id);
 
-        // A clone brings its value, model, label and settings with it; a fresh
-        // part keeps the table's defaults.
+        // A clone brings its value, model, label and settings; a fresh part has the defaults.
         if (pendingClone.has_value())
             pendingClone->copyPropertiesTo(*placed);
 
@@ -1071,10 +978,7 @@ namespace Celine
 
     bool SchematicCanvas::grabResizeHandle(const juce::MouseEvent& event, juce::Point<int> grid)
     {
-        // Both handles win over anything under them: they sit on an outline or a
-        // pin, either of which would otherwise take every click aimed at them.
-        // Only while the thing they belong to is the whole selection, which is
-        // also the condition they are drawn under.
+        // Handles win over anything under them, while their owner is the whole selection.
         if (selectedIds.size() == 1)
         {
             if (auto* selected = getSelectedElement();
@@ -1094,9 +998,7 @@ namespace Celine
                 {
                     resizingWireEnd = end;
 
-                    // Cleared here rather than in beginDrag, which this gesture
-                    // does not go through: left over from the last drag it would
-                    // report a click on a handle as a move.
+                    // Reset here: this gesture skips beginDrag.
                     dragMovedSomething = false;
                     return true;
                 }
@@ -1116,17 +1018,15 @@ namespace Celine
 
         if (hit >= 0)
         {
-            // Shift-click adds or removes and starts no drag: building a
-            // selection up part by part should not move anything.
+            // Shift-click toggles and starts no drag.
             if (additive)
             {
                 toggleInSelection(hit);
                 return;
             }
 
-            // Clicking something already selected keeps the whole selection so
-            // it can be dragged as a group. Narrowing back to the one part
-            // happens on mouse *up*, if the drag never moved.
+            // Clicking a selected part keeps the selection for a group drag; it narrows on mouse
+            // up if nothing moved.
             if (! isSelected(hit))
                 setSelection(hit);
 
@@ -1134,8 +1034,7 @@ namespace Celine
             return;
         }
 
-        // A wire, tried before the selection box, or a wire could only ever be
-        // caught by dragging a box round it.
+        // Wires are tried before the selection box.
         if (const int wire = wireAt(event.position); wire >= 0)
         {
             if (additive)
@@ -1147,14 +1046,12 @@ namespace Celine
             return;
         }
 
-        // Empty sheet: start a selection box. The existing selection is left
-        // alone until the button comes up, so a shift-drag adds to it and a
-        // plain drag replaces it -- decided in applyBoxSelection, in one place.
+        // Empty sheet: start a selection box. The selection changes on mouse up (see
+        // applyBoxSelection).
         boxSelecting = true;
         boxAnchor = boxCurrent = event.position;
 
-        // Both lists: a plain click never opens a box, so mouse-up skips
-        // applyBoxSelection and this is the only place a click clears anything.
+        // A plain click: mouse-up skips applyBoxSelection, so clear here.
         if (! additive)
         {
             setSelection(-1);
@@ -1164,9 +1061,7 @@ namespace Celine
 
     void SchematicCanvas::mouseDrag(const juce::MouseEvent& event)
     {
-        // mouseMove stops firing once a button is down, so the markers would
-        // freeze exactly while you are dragging a part to a coordinate -- which
-        // is when you are most likely to be reading them.
+        // mouseMove doesn't fire while dragging, so update the markers here too.
         updateRulerCursor(event.position);
 
         const auto grid = gridAt(event.position);
@@ -1198,8 +1093,7 @@ namespace Celine
             if (selectedWireIds.size() == 1
                 && schematic.resizeWireEnd(selectedWireIds.front(), resizingWireEnd, grid))
             {
-                // Not merged yet: joining mid-drag would swap the wire under
-                // the pointer for a longer one. That happens once, on mouseUp.
+                // Merged on mouseUp, not mid-drag.
                 dragMovedSomething = true;
                 notifyChanged();
                 repaint();
@@ -1217,8 +1111,7 @@ namespace Celine
 
         if (draggingElement)
         {
-            // A delta, not an offset from one part's centre: everything
-            // selected has to move by the same amount and keep its spacing.
+            // A delta, so every selected part moves by the same amount.
             const auto delta = grid - dragLastGrid;
 
             if (delta.isOrigin())
@@ -1239,8 +1132,7 @@ namespace Celine
             for (const int id : selectedWireIds)
                 schematic.moveWire(id, delta);
 
-            // Moving a part can change what it touches, so this is a topology
-            // edit like any other.
+            // Moving a part can change its connections.
             notifyChanged();
         }
     }
@@ -1255,15 +1147,13 @@ namespace Celine
             {
                 schematic.addWire(wireStart, wireEnd);
 
-                // A wire drawn on from where another ended is the continuation
-                // it looks like, so the two become one.
+                // A wire drawn on from another's end joins it.
                 mergeWiresAfterEdit(-1);
                 notifyChanged();
             }
         }
 
-        // The end of a resize, and the end of a wire drag that moved whole
-        // wires: either can leave a wire touching a collinear neighbour.
+        // After a resize or a whole-wire drag, merge collinear neighbours.
         if (dragMovedSomething
             && (resizingWireEnd >= 0 || (draggingElement && ! selectedWireIds.empty())))
         {
@@ -1279,18 +1169,15 @@ namespace Celine
         {
             boxSelecting = false;
 
-            // A click rather than a drag: the box never opened, and the
-            // selection was already cleared on the way down.
+            // A click, not a drag: the selection was already cleared on mouse down.
             if (getSelectionBox().getWidth() >= 2.0f || getSelectionBox().getHeight() >= 2.0f)
                 applyBoxSelection(event.mods.isShiftDown());
 
             repaint();
         }
 
-        // Clicking a member of a group without dragging narrows to that one
-        // thing -- the way out of a group. A wire counts, and the count that
-        // decides is both lists together, since a wire is picked up by the
-        // gesture the parts use.
+        // Clicking a group member without dragging narrows to it. Parts and wires count
+        // together.
         if (draggingElement && ! dragMovedSomething && ! event.mods.isShiftDown()
             && selectedIds.size() + selectedWireIds.size() > 1)
         {
@@ -1304,9 +1191,7 @@ namespace Celine
         draggingElement = false;
         resizingElement = false;
 
-        // Fired unconditionally: whoever is recording undo states needs the
-        // boundary even when the gesture changed nothing, or the next drag gets
-        // folded into the last one's undo step.
+        // Always fired, so undo has a gesture boundary even when nothing changed.
         if (onGestureEnd)
             onGestureEnd();
     }
@@ -1331,9 +1216,7 @@ namespace Celine
 
     int SchematicCanvas::wireHandleAt(const Wire& wire, juce::Point<float> pixel) const noexcept
     {
-        // The diamond that is drawn and not a pixel more: in pixels against the
-        // handle, not grid squares against the snapped point. Manhattan
-        // distance, which is the diamond exactly.
+        // Manhattan distance in pixels, matching the drawn diamond.
         const float reach = wireHandleReach();
 
         const auto near = [this, pixel, reach](juce::Point<int> end)
@@ -1342,9 +1225,7 @@ namespace Celine
             return std::abs(pixel.x - centre.x) + std::abs(pixel.y - centre.y) <= reach;
         };
 
-        // `a` first: on a wire two squares or shorter the grab bands overlap,
-        // and without a fixed answer the end you caught would depend on which
-        // way the wire happened to be stored.
+        // `a` first, so overlapping grab bands on short wires resolve consistently.
         if (near(wire.a))
             return 0;
 
@@ -1356,8 +1237,7 @@ namespace Celine
         if (schematic.mergeCollinearWires(preferredId) == 0)
             return;
 
-        // An absorbed wire no longer exists, and a selection holding its id
-        // would draw nothing and delete nothing.
+        // Drop wires absorbed by a merge.
         std::vector<int> surviving;
 
         for (const int id : selectedWireIds)
@@ -1372,7 +1252,7 @@ namespace Celine
     {
         const auto corner = element.getRectangleBounds().getBottomRight();
 
-        // A square either side, matching the edge's own grab band.
+        // One square either side, like the edge's grab band.
         return std::abs(grid.x - corner.x) <= 1 && std::abs(grid.y - corner.y) <= 1;
     }
 
@@ -1388,21 +1268,18 @@ namespace Celine
         element.width = width;
         element.height = height;
 
-        // The element's position is its *centre*, so pinning the opposite
-        // corner means moving the centre by half the size change. withCentre and
-        // getCentreX are exact inverses at odd sizes too, so this cannot creep.
+        // The position is the centre: move it by half the size change to pin the opposite
+        // corner.
         element.x = before.getX() + width / 2;
         element.y = before.getY() + height / 2;
 
-        // Announced like any other edit, which is also what keeps the
-        // inspector's Width and Height counting along with the drag.
+        // Also keeps the inspector's Width and Height updated during the drag.
         notifyChanged();
     }
 
     void SchematicCanvas::mouseExit(const juce::MouseEvent&)
     {
-        // A marker left behind at the last position it saw reads as the cursor
-        // still being there.
+        // Hide the markers.
         updateRulerCursor({-1.0f, -1.0f});
     }
 
@@ -1410,8 +1287,7 @@ namespace Celine
     {
         const auto grid = gridAt(event.position);
 
-        // The markers cost two thin strips to move. The ghost still redraws only
-        // when the part would land somewhere new -- that is a full repaint.
+        // The markers are cheap; the ghost repaints only when its snapped position changes.
         updateRulerCursor(event.position);
 
         if (grid != hoverGrid)
@@ -1425,21 +1301,15 @@ namespace Celine
 
     void SchematicCanvas::mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel)
     {
-        // A press hard enough to start a pan can nudge the wheel, so a pan would
-        // zoom as it went. While panning, panning wins.
+        // While panning, ignore the wheel.
         if (panning || event.mods.isPopupMenu())
             return;
 
-        // A sideways brush of a Magic Mouse or trackpad, and the tail of a
-        // scroll's momentum, arrive with no vertical travel. Read as "not
-        // forward", each one zoomed out a step, so the sheet backed off as the
-        // mouse moved.
+        // Ignore sideways scrolls and momentum tails with no vertical travel.
         if (wheel.deltaY == 0.0f)
             return;
 
-        // Zoom about the cursor. The *unrounded* position: toGrid() snaps, and
-        // anchoring on a snapped point drifts the sheet up to half a square a
-        // wheel step.
+        // Zoom about the unrounded cursor position, so the sheet doesn't drift.
         const auto gridUnderCursor = painter.toGridExact(event.position);
         const float factor = wheel.deltaY > 0 ? 1.12f : (1.0f / 1.12f);
 
@@ -1453,18 +1323,10 @@ namespace Celine
 
     namespace
     {
-        /** Whether a key press means `character`, on any keyboard layout.
-
-            Matched on the character the *layout* produced, folded to lower case,
-            with the key code as a fallback -- so R is whichever key types an "r"
-            in front of you rather than a position on an American keyboard, and
-            Caps Lock does not break it.
-
-            With a command modifier held the text character is not the letter:
-            X11 and Windows deliver the ASCII control code (Ctrl-Z arrives as
-            0x1A), which is non-zero, so matching on it silently compares 0x1A
-            against 'z'. The key code is the layout's letter on every platform,
-            so it is preferred there. */
+        /** Whether a key press means `character`, on any keyboard layout. Matches the
+            lower-cased typed character, falling back to the key code. With a command modifier
+            the key code is used, since X11 and Windows deliver a control code as the
+            character. */
         bool keyIs(const juce::KeyPress& key, juce::juce_wchar character)
         {
             const auto byCode = [&]
@@ -1486,12 +1348,10 @@ namespace Celine
 
     bool SchematicCanvas::commandKeyPressed(const juce::KeyPress& key)
     {
-        // isCommandDown() is the whole of "respect the system's binding": JUCE
-        // maps it to Command on macOS and Control elsewhere.
+        // isCommandDown() is Command on macOS, Control elsewhere.
         if (keyIs(key, 'z'))
         {
-            // Shift-Cmd-Z is redo everywhere; Ctrl-Y is the other redo Windows
-            // users reach for, handled below.
+            // Shift-Cmd-Z redoes; Ctrl-Y is handled below.
             if (auto& callback = key.getModifiers().isShiftDown() ? onRedoRequested : onUndoRequested)
                 callback();
 
@@ -1521,8 +1381,7 @@ namespace Celine
             return true;
         }
 
-        // Command turns a letter into an action on what is already there, which
-        // leaves the bare letters free to name parts.
+        // Command + letter acts on the sheet; bare letters name parts.
         if (key.getModifiers().isCommandDown())
             return commandKeyPressed(key);
 
@@ -1530,13 +1389,11 @@ namespace Celine
         if (keyIs(key, 'w')) { setTool(Tool::Wire); return true; }
         if (keyIs(key, 'x')) { setTool(Tool::Delete); return true; }
 
-        // F frames the drawing. A verb among nouns, allowed because it moves the
-        // *view* rather than the sheet; Cmd-F still flips the selection.
+        // F frames the drawing; Cmd-F flips.
         if (keyIs(key, 'f')) { zoomToFit(); return true; }
 
-        // Parts by initial, arming one for placing exactly as the palette does.
-        // B is for box, R being the resistor; D is the diode, which is why the
-        // Delete tool is X. I and O are the input and output terminals.
+        // Bare letters arm a part, as the palette does. B is the box, D the diode, I and O the
+        // terminals.
         struct PartKey { juce::juce_wchar key; ElementType type; };
 
         for (const auto& part : {PartKey{'r', ElementType::Resistor},
@@ -1560,8 +1417,7 @@ namespace Celine
         {
             setTool(Tool::Select);
 
-            // Both lists: setSelection(-1) alone keeps the wires, which is what
-            // the box flow wants of it.
+            // Clear both lists: setSelection(-1) alone keeps the wires.
             setSelection(-1);
             setSelectedWires({});
             return true;
@@ -1572,8 +1428,7 @@ namespace Celine
 
     void SchematicCanvas::rotate()
     {
-        // While a part is armed for placing, R turns the thing about to go down
-        // rather than whatever happens to be selected behind it.
+        // While placing, act on the part being placed.
         if (tool == Tool::Place)
         {
             pendingOrientation = (pendingOrientation + 1) & 3;
@@ -1584,10 +1439,7 @@ namespace Celine
         if (selectedIds.empty())
             return;
 
-        // Each part turns about its own centre rather than the group turning
-        // about a common one. Turning the group would move parts off the pins
-        // they are wired to, which on a schematic is a different -- and far
-        // more destructive -- operation than rotating the symbols.
+        // Each part turns about its own centre, so it stays on its wires' grid positions.
         for (const int id : selectedIds)
             if (auto* element = schematic.findElement(id))
                 element->orientation = (element->orientation + 1) & 3;
@@ -1607,8 +1459,7 @@ namespace Celine
         if (selectedIds.empty())
             return;
 
-        // Mirroring moves the pins, so it can change what the part touches --
-        // a topology edit like moving it.
+        // Mirroring moves the pins, so it can change connections.
         for (const int id : selectedIds)
             if (auto* element = schematic.findElement(id))
                 element->mirrored = ! element->mirrored;
@@ -1618,9 +1469,8 @@ namespace Celine
 
     void SchematicCanvas::flipVertical()
     {
-        // A mirror in the other axis, which is a mirror plus a half turn. Doing
-        // it that way rather than adding a second mirror flag keeps the part's
-        // state to the two numbers the file format already carries.
+        // A vertical mirror is a mirror plus a half turn, keeping the state to the two saved
+        // fields.
         if (tool == Tool::Place)
         {
             pendingMirrored = ! pendingMirrored;
@@ -1649,8 +1499,7 @@ namespace Celine
         if (selectedIds.empty() && selectedWireIds.empty())
             return;
 
-        // Offset so the copies are visibly separate and immediately draggable,
-        // rather than hidden exactly behind what they were copied from.
+        // Offset so the copies are visible and draggable.
         constexpr int offset = 2;
 
         std::vector<int> copies;
@@ -1662,8 +1511,7 @@ namespace Celine
             if (source == nullptr)
                 continue;
 
-            // Read the source's fields before adding, since adding can reallocate
-            // the element vector and invalidate the pointer.
+            // Copy before adding: adding can reallocate and invalidate the pointer.
             const auto original = *source;
 
             const int copy = schematic.addElement(original.type,
@@ -1678,10 +1526,8 @@ namespace Celine
             }
         }
 
-        // The wires come along at the same offset, so a stage copied with its
-        // wiring arrives wired. They used to be left behind, and a box-selected
-        // stage came out as loose parts. A wire is always straight -- addWire
-        // only splits a diagonal -- so each copy is the one wire added last.
+        // Selected wires are copied at the same offset. addWire only splits diagonals, so each
+        // copy is the last wire added.
         std::vector<int> wireCopies;
 
         for (const int id : selectedWireIds)
@@ -1699,9 +1545,7 @@ namespace Celine
                 wireCopies.push_back(schematic.getWires().back().id);
         }
 
-        // The copies become the selection: the thing you just made is the thing
-        // you want to move, and leaving the originals selected would make the
-        // next drag pull the wrong set.
+        // The copies become the selection.
         setSelection(std::move(copies), std::move(wireCopies));
         notifyChanged();
     }
@@ -1711,8 +1555,7 @@ namespace Celine
         if (selectedIds.empty() && selectedWireIds.empty())
             return;
 
-        // Copied first: removeElement walks the same vector the ids index into,
-        // and clearing the selection as we go would cut the loop short.
+        // Copied first: removing parts would change the selection mid-loop.
         const auto doomed = selectedIds;
         const auto doomedWires = selectedWireIds;
         setSelection(-1);
@@ -1746,11 +1589,7 @@ namespace Celine
             return true;
         }
 
-        // Nothing placed here, so try the wires. Deleting a wire by clicking
-        // anywhere along it -- not just its ends -- is what makes tidying up a
-        // drawing bearable.
-        // Snapped, unlike the part test above: a wire runs along grid lines, so
-        // the nearest intersection is exactly what "on it" means for one.
+        // No part here: delete wires passing through the snapped point.
         if (schematic.removeWiresAt(painter.toGrid(pixel)) > 0)
         {
             notifyChanged();

@@ -1,13 +1,9 @@
 // Céline's own colour accessors, included inside namespace Celine::Theme by
-// ui/Theme.h. The roles behind them are declared in PluginThemeRoles.h.
-//
-// No include guard and no includes of its own: this is a fragment, included at one
-// point inside a namespace, and anything it needs is already there.
+// CelineUI/Theme.h. Roles are declared in PluginThemeRoles.h. A fragment: no include
+// guard, no includes.
 
-        //======================================================================
-        // What each colour *means* on the drawing. Named by job rather than by colour,
-        // so the schematic's conventions survive a change of palette -- which is
-        // exactly what a theme is.
+        // ======================================================================
+        // The drawing.
 
         /** A wire. */
         inline juce::Colour wire() { return colour (Role::wire); }
@@ -15,36 +11,29 @@
         /** A part that is not selected. */
         inline juce::Colour element() { return colour (Role::element); }
 
-        /** A part that is. */
+        /** A selected part. */
         inline juce::Colour selected() { return colour (Role::selected); }
 
-        /** The ruler's cursor marker. Its own role rather than the selection colour it
-            once borrowed: that colour means "this part is selected" everywhere else on
-            the sheet, and a mark following the pointer is not a selection. */
+        /** The ruler's cursor marker. */
         inline juce::Colour cursorMark() { return colour (Role::cursorMark); }
 
         /** The circuit has been edited and not rebuilt. */
         inline juce::Colour pending() { return colour (Role::pending); }
 
-        //======================================================================
-        // Captions, which say three different things and have to be told apart at a
-        // glance while reading a sheet full of them.
+        // ======================================================================
+        // Part captions.
 
         /** A part's name or model. */
         inline juce::Colour captionName() { return colour (Role::captionName); }
 
-        /** A value someone actually entered. */
+        /** A value that has been entered. */
         inline juce::Colour captionValue() { return colour (Role::captionValue); }
 
-        /** A value still sitting at zero. It refuses to build, so it shouts -- being
-            the loudest thing in the palette is the point of it, not an accident. */
+        /** A value still at zero (the build refuses it). */
         inline juce::Colour captionUnset() { return colour (Role::captionUnset); }
 
-        //======================================================================
-        // The two selection-box rules, which have to be told apart at a glance. Kept as
-        // roles rather than as aliases because *which* two colours they are matters
-        // less than their being obviously different from each other -- and a theme that
-        // could not keep them apart would break the only thing they say.
+        // ======================================================================
+        // Selection box rules.
 
         /** Left-to-right: takes only what fits entirely inside. */
         inline juce::Colour boxEnclose() { return colour (Role::boxEnclose); }
@@ -54,44 +43,29 @@
 
         //======================================================================
 
-        //======================================================================
-        // The light panel. The house design is two-tone and says so, but the shared list
-        // carries only the dark half -- most plugins have no light surface at all. This
-        // window has two, so its ground, its ink and its rows are declared here.
+        // ======================================================================
+        // The light panels.
 
         /** The near-white ground: the control strip, and the panel beside the sheet. */
         inline juce::Colour panel() { return colour (Role::panel); }
 
-        /** Ink on it, where the window's usual light-on-dark would be invisible. */
+        /** Text on the light panel. */
         inline juce::Colour textOnPanel() { return colour (Role::textOnPanel); }
 
-        /** A row standing on it -- a palette entry, a listed part. A step off the panel
-            rather than a colour of its own, so a list reads as a stack of things you can
-            press instead of as text floating on a sheet. */
+        /** A row on the light panel: a palette entry, a listed part. */
         inline juce::Colour pill() { return colour (Role::pill); }
 
-        /** The mildest of the three diagnostic severities, under error() and warning()
-            in the shared palette. Named `notice` rather than `info` because `info()` is
-            already the palette's own role table -- see ThemePalette.h. */
+        /** Diagnostic severity: notice (below warning and error). */
         inline juce::Colour notice() { return colour (Role::notice); }
 
-        /** The middle of the three diagnostic severities: worse than a notice, and not
-            the refusal that error() is. Its own role rather than the house's red for the
-            same reason the captions are three colours and not one -- a sheet full of
-            messages is unreadable if they all shout equally. */
+        /** Diagnostic severity: warning. */
         inline juce::Colour warning() { return colour (Role::warning); }
 
-        /** The button that throws a part away. A muted red rather than the palette's
-            danger(): that one is for something going wrong, and deleting a part you
-            selected is not that -- it is simply the one button worth hesitating over. */
+        /** Delete button. */
         inline juce::Colour discard() { return colour (Role::discard); }
 
-        //======================================================================
-        // The six colours a group box can be drawn in. Not decoration: a box is how a
-        // big sheet is divided into "this is the tone stack" and "this is the power
-        // supply", so its colour is the only thing telling one section from another --
-        // which is why they are in the theme rather than fixed. Named for the colour
-        // they are, unusually, because that is also what the menu offers.
+        // ======================================================================
+        // Group box colours, offered by name in the box's colour menu.
 
         inline juce::Colour boxGrey()   { return colour (Role::boxGrey); }
         inline juce::Colour boxBlue()   { return colour (Role::boxBlue); }
@@ -100,9 +74,8 @@
         inline juce::Colour boxRed()    { return colour (Role::boxRed); }
         inline juce::Colour boxViolet() { return colour (Role::boxViolet); }
 
-        /** By the position of the model in Element.h's list for a Box, so a colour
-            added there needs one added here. Out of range answers grey rather than
-            asserting: a wrong hue is a better failure than a box that does not draw. */
+        /** Indexed by the Box model's position in Element.h, so a colour added there needs
+            one here. Out of range gives grey. */
         inline juce::Colour groupBox (int modelIndex)
         {
             switch (modelIndex)
@@ -117,54 +90,40 @@
         }
 
 
-        //======================================================================
-        // Geometry this plugin is consistent about, stated once rather than sprinkled
-        // through four files as literals. Not themeable, for the same reason the shared
-        // block above it is not: a layout is not a colour, and a theme that could move
-        // these would be a theme that could break the window.
+        // ======================================================================
+        // Layout constants.
 
-        /** The preset field, which the design draws at one fixed width rather than
-            letting it take up the slack. */
+        /** Fixed width of the preset field. */
         inline constexpr int presetWidth = 302;
         inline constexpr int rebuildWidth = 91;
 
 
-        /** The inspector card's width, whatever it is showing -- a part's fields or the
-            shortcut list -- so it never jumps sideways as the selection changes. */
+        /** Fixed width of the inspector card. */
         inline constexpr int inspectorWidth = 260;
 
-        /** One palette row's pitch; the pill inside it is four pixels shorter, which is
-            the gap between rows. */
+        /** Palette row pitch; the pill inside is 4 px shorter. */
         inline constexpr int paletteRowHeight = 35;
 
-        /** The palette's lettering, at most: the palette draws every name at the size at
-            which the longest one fits paletteColumnWidth. With the shipped names that is
-            this size exactly -- the column is sized for it. */
+        /** Largest palette font size; it shrinks if the longest name does not fit
+            paletteColumnWidth. */
         inline constexpr float paletteFontHeight = 11.5f;
 
-        /** One of the palette's two columns: the symbol's square, the longest name at
-            paletteFontHeight (MOSFE Transistor, 76.7 px) and the air after it. Were a
-            longer name added, the lettering would shrink to fit rather than the grid
-            losing its two to a row. */
+        /** Width of one of the palette's two columns: symbol, longest name, padding. */
         inline constexpr int paletteColumnWidth = 118;
 
-        /** The bottom band's lettering: the captions over its controls, and the values
-            under its knobs. */
+        /** Font size of the bottom band's captions and knob values. */
         inline constexpr float bandCaptionFontHeight = 12.6f;
         inline constexpr float bandValueFontHeight = 11.55f;
 
-        /** Between a floating panel and whatever it floats beside: the ruler, the edge of
-            the sheet, the bottom band, another panel. One number, so the three panels sit
-            on one rhythm. Tighter than the design's 27, to give the sheet more room. */
+        /** Margin between a floating panel and the ruler, sheet edge, bottom band or another
+            panel. */
         inline constexpr int floatingMargin = 16;
 
-        /** The floating panels' corners, which differ because the panels do: a shelf, a
-            card and a pill. And the palette's entries, which are smaller again. */
+        /** Corner radii of the floating panels and palette entries. */
         inline constexpr float paletteCornerRadius = 9.0f;
         inline constexpr float paletteEntryCornerRadius = 4.0f;
         inline constexpr float inspectorCornerRadius = 14.0f;
         inline constexpr float consoleCornerRadius = 13.0f;
 
-        /** The bottom band's three floating bars: INPUT, the circuit's controls,
-            and OUTPUT with the channel picker. */
+        /** Corner radius of the bottom band's three bars. */
         inline constexpr float bandCornerRadius = 13.0f;

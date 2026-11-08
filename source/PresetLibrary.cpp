@@ -5,14 +5,11 @@
 
 namespace
 {
-    // Keys in the settings file. Strings rather than an enum because they end up
-    // in a file someone may one day open in a text editor.
+    // Keys in the settings file.
     const juce::String directoryKey { "presetDirectory" };
     const juce::String offeredKey { "presetDirectoryOffered" };
 
-    /** Orders presets the way someone reading the menu would: case-insensitively
-        and with runs of digits compared as numbers, so "Bass 10" comes after
-        "Bass 9" rather than between "Bass 1" and "Bass 2". */
+    /** Natural order, case-insensitive: "Bass 9" before "Bass 10". */
     struct PresetNameComparator
     {
         static int compareElements (const juce::File& a, const juce::File& b)
@@ -25,9 +22,7 @@ namespace
 //==============================================================================
 namespace
 {
-    /** Set by redirectSettingsForTesting, and otherwise never touched. A file
-        rather than a flag, so there is exactly one thing to check and no way to
-        be "in test mode" without somewhere to write. */
+    /** Set by redirectSettingsForTesting. */
     juce::File& getSettingsOverride()
     {
         static juce::File override;
@@ -40,18 +35,14 @@ namespace
         options.applicationName = PresetLibrary::getProductName();
         options.filenameSuffix = "settings";
 
-        // The company folder, not this plugin's own: it is where the rest of the house
-        // keeps the choices that belong to the person rather than to a session, and one
-        // folder per plugin is four places to look when something is wrong.
+        // The company folder, shared by all the house plugins.
         options.folderName = juce::String (juce::CharPointer_UTF8 (ProductInfo::companyName));
         options.osxLibrarySubFolder = "Application Support";
 
         return options;
     }
 
-    /** Where this used to be kept, under the plugin's own name. Read once, if the new
-        one is not there yet, so upgrading does not silently forget a folder somebody
-        chose -- which would look exactly like the bug this move was part of fixing. */
+    /** The old location, under the plugin's own name. Read once to migrate. */
     juce::File legacySettingsFile()
     {
         juce::PropertiesFile::Options options = makeSettingsOptions();
@@ -97,15 +88,8 @@ PresetLibrary::PresetLibrary (const juce::File& file)
 }
 
 //==============================================================================
-/*
-    Opened for each read and write rather than held open for this object's lifetime.
-
-    Every instance of the plugin shares this file, and one that held it open would be
-    answering from the copy it read when it was created -- so a folder chosen in the
-    window you have open now would be invisible to the instance loaded five minutes
-    ago, and that instance would write its stale copy back over yours when it closed.
-    The cost is a small file parsed per call, on the message thread, when a menu opens.
-*/
+/* Opened for each read and write, never held open: every instance shares the file,
+   and a held copy would go stale. */
 juce::File PresetLibrary::getDirectory() const
 {
     const juce::PropertiesFile file (settingsFile, makeSettingsOptions());
@@ -125,10 +109,7 @@ void PresetLibrary::setDirectory (const juce::File& folder)
     juce::PropertiesFile file (settingsFile, makeSettingsOptions());
     file.setValue (directoryKey, folder.getFullPathName());
 
-    // Written through immediately rather than on the timer. Another instance of
-    // the plugin reads this file when its editor opens, and "I chose a folder
-    // and the other window still doesn't know" is a confusing way to find out
-    // there is a save delay.
+    // Saved immediately, so other instances see the change.
     file.saveIfNeeded();
 }
 
@@ -152,8 +133,7 @@ juce::Array<juce::File> PresetLibrary::getPresets() const
     if (! hasDirectory())
         return {};
 
-    // One wildcard, not a ";"-separated list: File::findChildFiles matches the
-    // semicolon literally, unlike FileChooser, which splits on it.
+    // One wildcard: findChildFiles does not split on ";".
     auto found = getDirectory().findChildFiles (juce::File::findFiles, false,
                                                 juce::String ("*")
                                                     + PluginProcessor::circuitFileExtension);

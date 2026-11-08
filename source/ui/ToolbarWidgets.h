@@ -10,33 +10,18 @@
 namespace Celine
 {
     //==========================================================================
-    /**
-        The preset control in the toolbar.
-
-        A button that says what is loaded rather than what it does. "Presets"
-        told you a menu was behind it and nothing else -- which patch you were
-        hearing, whether you had edited it since, whether you had loaded one at
-        all, none of that was anywhere on screen.
-
-        So it reads as a dropdown: a small caption, the name of the loaded
-        preset, and a chevron. The dot appears once the drawing no longer matches
-        the file it came from.
-    */
+    /** The toolbar's preset field: a caption, the loaded preset's name and a chevron.
+        A dot shows when the sheet differs from the loaded file. */
     class PresetButton : public juce::Button
     {
        public:
         PresetButton() : juce::Button ("Presets")
         {
-            // The canvas needs the keyboard for its part and tool shortcuts, and
-            // a toolbar button that takes focus on click silently kills them.
+            // Never take focus, or the canvas loses its keyboard shortcuts.
             setWantsKeyboardFocus (false);
         }
 
-        /** The preset now loaded, or {} for none.
-
-            `factory` picks the caption: a shipped example and a file in the
-            user's folder are both presets, but only one of them can be
-            overwritten by Save, so the button says which you are looking at. */
+        /** The loaded preset, or {} for none. `factory` picks the caption. */
         void setPresetName (const juce::String& name, bool factory = false)
         {
             if (presetName == name && isFactory == factory)
@@ -49,9 +34,7 @@ namespace Celine
 
         bool isFactoryPreset() const noexcept { return isFactory; }
 
-        /** Room kept clear at the right-hand end for something laid over the field --
-            the preset folder's icon -- so the name and the modified dot stop short of
-            it rather than running underneath. */
+        /** Space kept free at the right end for the folder icon drawn over the field. */
         void setTrailingSpace (int pixels)
         {
             if (trailingSpace == pixels)
@@ -61,7 +44,7 @@ namespace Celine
             repaint();
         }
 
-        /** Whether the sheet has been edited since that preset was loaded. */
+        /** Whether the sheet has been edited since the preset was loaded. */
         void setModified (bool nowModified)
         {
             if (modified == nowModified)
@@ -81,15 +64,9 @@ namespace Celine
             g.setColour (down || highlighted ? Theme::surfaceBright() : Theme::button());
             g.fillRoundedRectangle (bounds, Theme::cornerRadius);
 
-            // Fill only. This is a button that opens a menu, and it is filled with the
-            // same colour as the buttons either side of it -- a rule around it drew a
-            // second edge where one was already doing the job.
-
             auto content = bounds.reduced (6.0f, 3.0f);
             content.removeFromRight ((float) trailingSpace);
 
-            // The dot goes right, where it does not shift the name about as it
-            // comes and goes.
             if (loaded && modified)
             {
                 auto dot = content.removeFromRight (12.0f);
@@ -97,9 +74,7 @@ namespace Celine
                 g.fillEllipse (juce::Rectangle<float> (6.0f, 6.0f).withCentre (dot.getCentre()));
             }
 
-            // Two lines, left aligned, both in the label weight -- the design
-            // stacks the caption above the name rather than putting them side by
-            // side, which is what lets the field be mostly empty and still read.
+            // Caption above the name, left aligned.
             const auto caption = content.removeFromTop (content.getHeight() * 0.5f);
 
             g.setFont (Fonts::light (11.0f));
@@ -124,35 +99,19 @@ namespace Celine
     //==========================================================================
 
     //==========================================================================
-    /**
-        The bypass control: a power button that only speaks up when it has
-        something to say.
-
-        Running is the ordinary state, so it draws exactly like every other
-        button in the row -- a toolbar where one button is permanently lit
-        teaches you to stop seeing it. Bypassed is the state worth noticing,
-        because the plugin is passing audio through untouched and that is
-        usually not what you meant, so that is the one that goes red.
-
-        Note the parameter is called *bypass*: getToggleState() is true when the
-        plugin is doing nothing. Reading it the other way round is the kind of
-        bug you stare straight through, so it is unpacked into a named bool.
-    */
+    /** The bypass button: drawn like the other buttons while running, red when bypassed.
+        getToggleState() is true when bypassed. */
     class PowerButton : public IconButton
     {
        public:
         PowerButton (const juce::String& name, std::unique_ptr<juce::Drawable> drawable)
             : IconButton (name, std::move (drawable))
         {
-            // The APVTS attachment drives the toggle state, and a click has to
-            // move it or the attachment never sees anything.
+            // Lets the parameter attachment see clicks.
             setClickingTogglesState (true);
         }
 
-        /** Bypass is just an active button in a different colour, so it is drawn by
-            the base class rather than here. It had its own inset, its own radius and
-            its own border, so engaging bypass visibly reshaped the button -- a control
-            that changes shape when you press it reads as a rendering fault. */
+        /** Bypassed is drawn by the base class as an active button in another colour. */
         void buttonStateChanged() override
         {
             setActive (getToggleState());

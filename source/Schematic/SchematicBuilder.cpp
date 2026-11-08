@@ -16,9 +16,7 @@ namespace SchematicModel
                 case 6: return Circuit::DiodeModel::zener(9.1);
                 case 7: return Circuit::DiodeModel::zener(5.1);
 
-                // Listed separately because it is a part people look for by
-                // name, not because it differs: ON Semi publish it and the
-                // 1N4148 on one datasheet line. Same model, deliberately.
+                // The 1N914 is the same part as the 1N4148.
                 case 8: return Circuit::DiodeModel::d1n4148();
                 case 9: return Circuit::DiodeModel::bat41();
                 case 10: return Circuit::DiodeModel::bat46();
@@ -141,25 +139,15 @@ namespace SchematicModel
             return Circuit::Potentiometer::Taper::Linear;
         }
 
-        /** Index into getModelChoices(OpAmp) for the ideal one. It is the only
-            model that isn't a macro model, so it takes a different code path. */
+        /** Index of the ideal op-amp model, which takes its own code path. */
         constexpr int idealOpAmpIndex = 4;
 
-        /** Transformer models. Ideal is 0, so a sheet saved before the choice
-            existed still builds the transformer it built. */
+        /** Index of the Real transformer model (0 is Ideal). */
         constexpr int realTransformerIndex = 1;
 
-        /** The strays that make a transformer a real one.
-
-            Sized from one stated assumption -- the secondary works into 8 ohms
-            -- which fixes the reflected primary impedance at ratio^2 * 8 and
-            makes everything else a proportion of it, which is how real
-            transformer data is organised.
-
-            A 22:1 gives 21 H of magnetising inductance, 71 mH of leakage and
-            100 ohms of primary DCR, against real ones measuring 15-30 H,
-            20-100 mH and 60-120 ohms. A shape, then, not a specific
-            transformer, and not fitted the way the valve models are. */
+        /** The strays that make a transformer real, all derived from the turns ratio assuming
+            an 8 ohm secondary: primary impedance is ratio^2 * 8 and the rest are proportions
+            of it. A typical shape, not a specific transformer. */
         struct TransformerStrays
         {
             double magnetising;          // henries, across the primary
@@ -185,23 +173,10 @@ namespace SchematicModel
             return strays;
         }
 
-        /** The same strays for a *centre-tapped* transformer, which is the other
-            way up and cannot use the function above.
-
-            straysFor() puts the high impedance on the primary. A tapped one
-            inverts that, and not by choice: the tap has to sit on the winding
-            carrying the valve plates, and this element puts the tap on the
-            secondary -- so a push-pull output stage wires its plates there and
-            the speaker to the primary. A full-wave rectifier is the same shape.
-
-            Sized the wrong way up, a 15:1 output transformer comes out as a
-            ratio of 0.065 and 17 dB of the output disappears into a 0.18 mH
-            magnetising inductance across the speaker winding.
-
-            The strays stay on the primary, where the stamping puts them, but are
-            *referred* to it -- which cancels the ratio out of the magnetising
-            inductance altogether, so it falls out as a constant. Only the copper
-            still scales, each winding keeping its own. */
+        /** Strays for a centre-tapped transformer, where the tapped (plate) winding is the
+            secondary and the speaker is on the primary, so the impedances are the other way
+            up from straysFor(). The strays sit on the primary, referred to it; only the copper
+            scales with the ratio. */
         TransformerStrays straysForCenterTapped(double ratio)  // secondary : primary
         {
             constexpr double referenceLoad = 8.0;   // ohms, now assumed on the *primary*
@@ -214,13 +189,12 @@ namespace SchematicModel
             strays.leakage = strays.magnetising / leakageRatio;
             strays.primaryResistance = referenceLoad / copperRatio;
 
-            // Halved because the stamping puts this resistor on each half of the
-            // tapped winding separately, and the two together are the winding.
+            // Halved: one resistor per half of the tapped winding.
             strays.secondaryResistance = 0.5 * ratio * ratio * referenceLoad / copperRatio;
             return strays;
         }
 
-        /** A readable name for a control that hasn't been given a label. */
+        /** Name for an unlabelled control. */
         juce::String defaultControlName(const Element& element, int ordinal)
         {
             if (element.label.isNotEmpty())
@@ -229,12 +203,9 @@ namespace SchematicModel
             return (element.type == ElementType::Potentiometer ? "Knob " : "Switch ") + juce::String(ordinal);
         }
 
-        /** Checks the drawing makes sense before anything is stamped, so a
-            mistake produces a sentence rather than a singular matrix.
-
-            Fills `result` with one message per problem -- per *part*, where
-            there is a part -- and returns the one that should stop the build,
-            or nothing if it can go ahead. */
+        /** Checks the drawing before anything is stamped, so mistakes become messages rather
+            than a singular matrix. Adds one message per problem (per part where there is one)
+            and returns the error that stops the build, or empty. */
         juce::String validate(const Schematic& schematic, BuildResult& result)
         {
             using Severity = Diagnostic::Severity;
@@ -254,50 +225,22 @@ namespace SchematicModel
             if (outputs == 0)
                 return "Output terminal is missing from the schematic.";
 
-            // Refused rather than combined, and the wording has to say so: a
-            // non-empty return from here stops the build, so the old message --
-            // "their nodes have been combined" -- promised an outcome that never
-            // happened. Nothing was combined, because nothing was built.
-            //
-            // Combining would in fact be well defined. Every input terminal names
-            // its net "in", and Circuit maps nodes by name, so two of them become
-            // one node. That is exactly the problem: two *unwired* regions of the
-            // drawing would silently become one, with nothing on the sheet saying
-            // so. One terminal each way is the rule worth keeping.
+            // Refused rather than merged: every input names its net "in", so two would silently
+            // join unconnected parts of the drawing.
             if (inputs > 1)
                 return "More than one input terminal. Only one is allowed.";
 
             if (outputs > 1)
                 return "More than one output terminal. Only one is allowed.";
 
-            // An output sharing a net with ground is silence by construction,
-            // and surfaces unhelpfully: the net takes ground's name, so
-            // setOutputNode("out") invents an empty node whose all-zero row
-            // makes the matrix singular. Better to say what was drawn.
-            //
-            // Compared by net *index*, not by name -- the check has no business
-            // depending on which name a shared net ended up with. An input wired
-            // to its output fails the same way and means the same slip.
-            //
-            // Three ways to draw a terminal that cannot work, and the third is
-            // the one worth the extra check. Output-on-ground and input-on-
-            // output both end in a singular matrix, which is at least loud. An
-            // *input* on ground does not: the net keeps ground's name, so
-            // setInputNode("in") invents a node nothing is attached to, and
-            // because the input node is a known voltage rather than an unknown
-            // it takes no row at all. Nothing is singular, so the build passes,
-            // the bias point solves, and every sample comes out at zero.
-            // Measured on a resistor divider drawn that way: build valid, no
-            // diagnostics, usable factorisation, and a peak output of exactly
-            // 0.0 for a full-scale input. Silence that reports itself as
-            // success is the worst of the three to debug from the sheet.
+            // Terminals on the wrong net. An output on ground, or input and output on one net,
+            // gives a singular matrix. An input on ground is worse: it builds fine and outputs
+            // silence. Compared by net index, not name.
             {
                 const auto nets = schematic.extractNets();
                 const auto& elements = schematic.getElements();
 
-                // Every ground's net, since a sheet can hold several and they
-                // only merge (by name) once the circuit is built. Input and
-                // output are single: more than one of either failed above.
+                // Every ground's net (a sheet can have several). Input and output are single by now.
                 std::vector<int> groundNets;
                 int inputNet = -1, outputNet = -1;
 
@@ -318,9 +261,7 @@ namespace SchematicModel
                     return net >= 0 && std::find(groundNets.begin(), groundNets.end(), net) != groundNets.end();
                 };
 
-                // Order preserved from when there were two: a sheet with both
-                // terminals on ground satisfies all three tests, and the output
-                // message is the one that build already reported.
+                // Output is checked first, so a sheet with both on ground reports the output.
                 if (onGround(outputNet))
                     return "The output terminal is wired to ground.";
 
@@ -331,12 +272,8 @@ namespace SchematicModel
                     return "The input and output terminals are wired together.";
             }
 
-            // Parts still sitting at zero. Every value starts there rather than
-            // at a plausible default, so this catches the thing a default hides:
-            // a part you placed and never got round to filling in. It has to be
-            // an error rather than a warning -- a zero-ohm resistor is a short
-            // and a zero-farad capacitor isn't a component, so the matrix that
-            // came out the other side would be singular or meaningless.
+            // Parts still at zero: values start at zero so an unfilled part is caught. An error,
+            // since zero ohms is a short and zero farads isn't a part.
             int unset = 0;
 
             for (const auto& element : schematic.getElements())
@@ -353,19 +290,14 @@ namespace SchematicModel
                 }
                 else if (element.isSecondValueRail() && element.valueB > 0.0)
                 {
-                    // The inspector cannot enter one -- it takes what is typed
-                    // as a size below ground -- but a file can carry anything,
-                    // and a "negative" rail above ground is not a circuit.
+                    // Can't be entered in the inspector, but a file may contain it.
                     result.add(Severity::Error, "Negative supply is above ground.", {}, &element);
                     ++unset;
                 }
                 else if (element.type == ElementType::Node && element.label.trim().isEmpty())
                 {
-                    // A warning, not an error: the label is the whole of what a
-                    // node is *for*, but one without a label is still a plain
-                    // junction on its own net, which builds and behaves. It just
-                    // joins nothing, which is worth saying out loud because the
-                    // symbol looks identical either way.
+                    // A warning: an unlabelled node still works as a junction, it just joins nothing
+                    // else.
                     result.add(Severity::Warning,
                                "This node has no label.", {}, &element);
                 }
@@ -375,13 +307,8 @@ namespace SchematicModel
                 return juce::String(unset) + (unset == 1 ? " part has" : " parts have")
                      + " no value yet.";
 
-            // A supply an amplifier's model cannot run on. Below it the two clamp
-            // diodes overlap, both conduct at rest, and the output sits at one
-            // level whatever goes in -- which builds, solves and plays, so without
-            // this it reads as a broken circuit rather than a starved part. The
-            // limit is the model's, not the datasheet's: starving a part is a
-            // sound worth having, right down to where the model stops meaning
-            // anything.
+            // An amplifier supply below what the model can run on: the output would sit at one
+            // level whatever the input, which looks like a broken circuit.
             int starved = 0;
 
             for (const auto& element : schematic.getElements())
@@ -401,9 +328,7 @@ namespace SchematicModel
                                     ? models[element.modelIndex]
                                     : juce::String("part");
 
-                // What it needs is a span between its rails, which for a single
-                // supply is just the supply. Only a rail counts as the bottom
-                // one: the LM386's second value is not a rail and is not set.
+                // Only a real second rail counts as the bottom (not the LM386's second value).
                 const double bottom = element.isSecondValueRail() ? element.valueB : 0.0;
                 const double needed = element.value - bottom - range;
 
@@ -422,9 +347,7 @@ namespace SchematicModel
             return {};
         }
 
-        /** A dangling pin is legal -- a test point, a deliberately unconnected
-            leg -- but it is usually a wire that stopped a square short, so name
-            the part and let the drawing go ahead. */
+        /** Reports pins connected to nothing. A warning: usually a wire that stopped short. */
         void reportDanglingPins(const Schematic& schematic, const NetList& nets, BuildResult& result)
         {
             const auto& elements = schematic.getElements();
@@ -438,9 +361,7 @@ namespace SchematicModel
                         if (nets.netOfPin[e][static_cast<size_t>(pin)] != net)
                             continue;
 
-                        // A power amp's gain pins are open in its commonest
-                        // wiring -- that is what gain 20 is -- so an open one
-                        // is a choice, not a wire that stopped short.
+                        // A power amp's gain pins are often left open (gain 20).
                         if (elements[e].type == ElementType::PowerAmp && pin >= 3)
                             continue;
 
@@ -456,18 +377,8 @@ namespace SchematicModel
             }
         }
 
-        /** Transformers here are ideal, and an ideal transformer passes DC --
-            which a real one cannot, because at DC its primary is a short.
-
-            The fix is an inductor across the primary for the magnetising
-            inductance, which is a short at DC and so keeps the standing voltage
-            off the secondary. That is a composition the drawing has to make
-            rather than something the component can do for itself, so it is easy
-            to leave out and confusing when you do: the bias point comes through
-            the transformer and nothing looks obviously wrong.
-
-            Detected by looking for an inductor sitting on the same two nets as
-            the primary. */
+        /** Warns about Ideal transformers with nothing across the primary: an ideal
+            transformer passes DC. Detected as no inductor on the same two nets as the primary. */
         void warnAboutUnmagnetisedTransformers(const Schematic& schematic, const NetList& nets,
                                                BuildResult& result)
         {
@@ -482,8 +393,7 @@ namespace SchematicModel
                     && elements[e].type != ElementType::CenterTapTransformer)
                     continue;
 
-                // A Real one wires its own magnetising inductance, so there is
-                // nothing to warn about.
+                // The Real model includes its own magnetising inductance.
                 if (elements[e].modelIndex == realTransformerIndex)
                     continue;
 
@@ -509,8 +419,7 @@ namespace SchematicModel
             }
         }
 
-        /** The net name on each of one element's pins -- all Circuit needs,
-            since it maps nodes by name. */
+        /** The net names of one element's pins (Circuit maps nodes by name). */
         struct PinNets
         {
             const NetList& nets;
@@ -523,12 +432,8 @@ namespace SchematicModel
             }
         };
 
-        /** The control this part belongs to: the one it gangs onto if it shares
-            a label with an earlier part of the same kind, otherwise a new one.
-
-            Ganging keys on the label because that is the only thing on the
-            drawing that says two parts are one control. `ordinal` is consumed
-            only when a control is actually created. */
+        /** The control this part belongs to: an existing one with the same label and kind
+            (ganged), or a new one. `ordinal` is used only for a new control. */
         LiveControl& attachControl(std::vector<LiveControl>& controls, LiveControl::Kind kind,
                                    const Element& element, int& ordinal)
         {
@@ -559,8 +464,7 @@ namespace SchematicModel
         {
             const bool tapped = element.type == ElementType::CenterTapTransformer;
 
-            // Turns, not a ratio: addTransformer only cares about the proportion
-            // between windings, so the two boxes go straight in.
+            // Turn counts go straight in; only their proportion matters.
             const double primaryTurns = element.value;
             const double secondaryTurns = element.valueB;
 
@@ -576,10 +480,8 @@ namespace SchematicModel
                 return;
             }
 
-            // Copper and leakage in series with the primary, magnetising
-            // inductance across it -- which is also what stops it passing DC --
-            // and copper on each secondary. Internal nodes are named after the
-            // element id, which is already unique on the sheet.
+            // Copper and leakage in series with the primary, magnetising inductance across it,
+            // copper on each secondary. Internal nodes are named after the element id.
             const auto strays = tapped
                 ? straysForCenterTapped(primaryTurns > 0.0 ? secondaryTurns / primaryTurns : 1.0)
                 : straysFor(element.getTurnsRatio());
@@ -595,8 +497,7 @@ namespace SchematicModel
 
             if (tapped)
             {
-                // Each half is its own winding and gets its own copper. The tap
-                // is a node, not a winding.
+                // Each half of the tapped winding gets its own copper; the tap is just a node.
                 const auto secondaryInnerB = tag + "s2";
 
                 circuit.addCenterTapTransformer(afterLeakage, net(1), secondaryInner,
@@ -629,17 +530,14 @@ namespace SchematicModel
 
             if (element.type != ElementType::Spdt)
             {
-                // Closed in the upper position, which is what "on" has always
-                // meant for a plain switch.
+                // Closed in the upper ("on") position.
                 control.contacts.push_back({circuit.addSwitch(net(0), net(1), element.closed), 2, 0b10u});
                 return;
             }
 
-            // One contact per throw, from the common to that throw, closed in
-            // whichever positions put the lever there. Built in its current
-            // position: the bias point is solved before any knob position
-            // reaches the control. A second pole is a second switch with the
-            // same label, ganged onto this control by attachControl.
+            // One contact per throw, from the common, closed in the positions that put the lever
+            // there. Built in its current position, since the bias point is solved before any
+            // control is applied. Further poles are separate switches with the same label.
             const int positions = element.getSwitchPositions();
 
             for (int t = 0; t < element.getSwitchThrows(); ++t)
@@ -654,8 +552,7 @@ namespace SchematicModel
                 control.contacts.push_back({circuit.addSwitch(net(0), net(1 + t), closedNow), positions, closedIn});
             }
 
-            // The strip's lever follows the widest switch on the control, and
-            // shows the middle of an ON-OFF-ON unlit.
+            // The strip uses the control's widest switch, and shows an ON-OFF-ON's middle unlit.
             if (positions > control.positions)
                 control.positions = positions;
 
@@ -663,9 +560,7 @@ namespace SchematicModel
                 control.offPosition = 1;
         }
 
-        /** Stamps one element. Terminals, annotations and scopes stamp nothing:
-            a terminal has already named its net, an annotation has no pins, and
-            a scope must not change the node it watches. */
+        /** Stamps one element. Terminals, annotations and scopes stamp nothing. */
         void addElement(Circuit& circuit, const Element& element, const PinNets& net, double sampleRate,
                         std::vector<LiveControl>& controls, int& potOrdinal, int& switchOrdinal)
         {
@@ -685,8 +580,7 @@ namespace SchematicModel
                     break;
 
                 case ElementType::Capacitor:
-                    // Pin 0 is an electrolytic's marked positive terminal, which
-                    // is what lets prepare() report one wired in backwards.
+                    // Pin 0 is the positive terminal, so prepare() can report a reversed electrolytic.
                     if (element.polarised)
                         circuit.addPolarisedCapacitor(net(0), net(1), element.value);
                     else
@@ -719,8 +613,7 @@ namespace SchematicModel
                     break;
 
                 case ElementType::PowerAmp:
-                    // One model so far; the supply is the part's value. The
-                    // name must be unique on the sheet, as the op-amp's.
+                    // The supply is the part's value. The name must be unique.
                     circuit.addPowerAmp("A" + juce::String(element.id), net(0), net(1), net(2), net(3), net(4),
                                         Circuit::PowerAmpModel::lm386().withSupply(element.value));
                     break;
@@ -734,8 +627,7 @@ namespace SchematicModel
                     break;
 
                 case ElementType::Pentode:
-                    // No suppressor node: the Koren model has no term for it,
-                    // g3 being taken to sit at the cathode.
+                    // No suppressor node: the Koren model has none (g3 at the cathode).
                     circuit.addPentode(net(0), net(1), net(2), net(3), pentodeModelFor(element.modelIndex));
                     break;
 
@@ -746,16 +638,11 @@ namespace SchematicModel
                     }
                     else
                     {
-                        // The name must be unique on the sheet; the element id is.
+                        // The element id makes the name unique.
                         auto model = opAmpModelFor(element.modelIndex).withRails(element.value, element.valueB);
 
-                        // A part too fast to slew at the rate this circuit runs
-                        // at gets the linear input stage it had before -- not as
-                        // an approximation, but because its tail current can
-                        // carry the output across its whole swing inside one
-                        // sample, so the limit never binds. It saves the pair's
-                        // two Newton ports, which were 60% of the CPU on a
-                        // two-op-amp pedal. See OpAmpModel::slewsAt().
+                        // A part too fast to slew at this sample rate gets the linear input stage, which is
+                        // exact here and saves two Newton ports (see OpAmpModel::slewsAt()).
                         if (! model.slewsAt(sampleRate))
                             model.slewRate = 0.0;
 
@@ -780,8 +667,7 @@ namespace SchematicModel
             }
         }
 
-        /** Where every probe's pins landed. Collected from the drawing rather
-            than from a circuit, so it happens once however many channels run. */
+        /** Where every probe's pins landed, from the drawing. */
         void collectProbes(const Schematic& schematic, const NetList& nets, BuildResult& result)
         {
             const auto& elements = schematic.getElements();
@@ -798,9 +684,8 @@ namespace SchematicModel
             }
         }
 
-        /** Resolves the probes' node names to indices, once the netlist is
-            complete -- setInputNode and setOutputNode can both mint a node, so
-            this cannot run before them. */
+        /** Resolves probe node names to indices. Must run after setInputNode/setOutputNode,
+            which can create nodes. */
         void resolveProbes(const Circuit& circuit, BuildResult& result)
         {
             for (auto& probe : result.probes)
@@ -816,7 +701,7 @@ namespace SchematicModel
             }
         }
 
-        /** What the bias point has to say. Returns true if it stopped the build. */
+        /** Reports bias point problems. Returns true if the build must stop. */
         bool reportBiasPoint(const Circuit& circuit, BuildResult& result)
         {
             if (! circuit.foundOperatingPoint())
@@ -829,13 +714,8 @@ namespace SchematicModel
                            juce::String(circuit.getReversedCapacitorCount())
                                + " polarised capacitor(s) are wired backwards.");
 
-            // The DC system and the per-sample system are different matrices, so
-            // a circuit can settle on a sensible bias point and still have a
-            // per-sample matrix the solver cannot factorise -- at which point
-            // process() returns silence for every sample with nothing to show
-            // for it. Guarded on there being something to solve: a circuit whose
-            // every node is ground or the input has no factorisation by
-            // definition, and is obvious on the sheet.
+            // The per-sample matrix can be singular even when the bias point solved; process()
+            // would then output silence. Skipped when there is nothing to solve.
             if (circuit.getSystemSize() > 0 && ! circuit.hasUsableFactorisation())
             {
                 result.error = "The solver couldn't factorise the circuit. Check the wiring and try again.";
@@ -854,7 +734,7 @@ namespace SchematicModel
     {
         BuildResult result;
 
-        // Process-wide, so it is set once here rather than per circuit.
+        // Process-wide, so set once here.
         CircuitComponents::FastMath::setEnabled(options.fastMath);
 
         const auto nets = schematic.extractNets();
@@ -862,8 +742,7 @@ namespace SchematicModel
 
         if (result.error.isNotEmpty())
         {
-            // The headline goes in the list too, so the console shows one
-            // ordered account rather than a banner plus a separate list.
+            // The headline goes first in the list too, so the console shows one list.
             result.diagnostics.insert(result.diagnostics.begin(),
                                       Diagnostic{Diagnostic::Severity::Error, result.error, {}, -1, {}, false});
             return result;
@@ -889,10 +768,7 @@ namespace SchematicModel
             circuit->setOutputNode("out");
             circuit->prepare(sampleRate);
 
-            // Everything below describes the drawing rather than the channel, and
-            // the audio thread only ever samples probes against circuits[0], so
-            // the indices are resolved against exactly the circuit that reads
-            // them.
+            // Probes are resolved against circuits[0], the one the audio thread samples.
             if (channel == 0)
             {
                 resolveProbes(*circuit, result);
@@ -900,8 +776,7 @@ namespace SchematicModel
                 if (reportBiasPoint(*circuit, result))
                     return result;
 
-                // Stable, so controls left at order 0 keep the order they were
-                // drawn in and only the ones you numbered move.
+                // Stable: controls at order 0 keep drawing order.
                 std::stable_sort(controls.begin(), controls.end(),
                                  [](const LiveControl& a, const LiveControl& b)
                                  { return a.order < b.order; });
@@ -909,9 +784,7 @@ namespace SchematicModel
                 result.controls = std::move(controls);
             }
 
-            // A biased stage rests some volts above ground; subtracting that is
-            // the DC blocking capacitor every real pedal has on its output,
-            // without the extra node.
+            // Subtract the bias point's DC from the output, like an output coupling cap.
             circuit->setOutputOffsetToOperatingPoint();
             result.circuits.push_back(std::move(circuit));
         }

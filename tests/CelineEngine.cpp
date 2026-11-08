@@ -16,14 +16,13 @@ namespace
 {
     constexpr double sampleRate = 48000.0;
 
-    /** Runs a sine through a circuit and returns the peak output amplitude after
-        letting the transient settle. */
+    /** Runs a sine through a circuit and returns the settled peak output amplitude. */
     float measureResponse(Circuit& circuit, double frequency, float amplitude, double seconds = 0.05)
     {
         const auto numSamples = static_cast<int>(sampleRate * seconds);
         const double phaseStep = 2.0 * std::numbers::pi * frequency / sampleRate;
 
-        // Discard the first half so we're measuring the steady state.
+        // Skip the first half: measure the steady state.
         float peak = 0.0f;
         for (int i = 0; i < numSamples; ++i)
         {
@@ -37,12 +36,8 @@ namespace
         return peak;
     }
 
-    /** The clipper topology with its parts left open.
-
-        The tests below build their own rather than calling
-        Circuits::makeDiodeClipper(), because that function is meant to be edited
-        freely -- change the diode there and no test should start failing. These
-        cover the engine; the factory covers taste. */
+    /** The clipper topology with its parts open. Tests build their own rather than using
+        Circuits::makeDiodeClipper(), which is free to change. */
     Circuit makeClipperWithDiode(const Circuit::DiodeModel& model, int forwardSeriesCount, int reverseSeriesCount)
     {
         Circuit circuit;
@@ -87,9 +82,8 @@ TEST_CASE("RC lowpass rolls off at its cutoff", "[circuit][linear]")
     // -3 dB at the cutoff, within a couple of percent.
     CHECK(atCutoff == Catch::Approx(0.7071f).margin(0.02));
 
-    // Two octaves up, |H| = 1/sqrt(1 + 4^2). The margin is wide enough to absorb
-    // the frequency warping the trapezoidal rule introduces this far up the band
-    // -- stay well clear of Nyquist here or that warping dominates the result.
+    // Two octaves up, |H| = 1/sqrt(1 + 4^2). The margin absorbs trapezoidal frequency
+    // warping.
     const float twoOctavesUp = measureResponse(lowpass.circuit, cutoff * 4.0, 1.0f);
     CHECK(twoOctavesUp == Catch::Approx(0.2425f).margin(0.02));
 }
@@ -124,9 +118,7 @@ TEST_CASE("A resistive divider solves exactly", "[circuit][linear]")
 
 TEST_CASE("An LR highpass rolls off at its cutoff", "[circuit][linear][inductor]")
 {
-    // 1k in series with a 100 mH inductor to ground. The inductor is a short at
-    // DC and an open at high frequency, so the shunt node is a highpass with
-    // fc = R / (2*pi*L) = 1591 Hz.
+    // 1k in series with 100 mH to ground: a highpass at fc = R / (2*pi*L) = 1591 Hz.
     Circuit circuit;
     circuit.addResistor("in", "out", 1000.0);
     circuit.addInductor("out", "gnd", 100.0e-3);
@@ -148,16 +140,12 @@ TEST_CASE("An LR highpass rolls off at its cutoff", "[circuit][linear][inductor]
 TEST_CASE("A single diode satisfies the Shockley equation", "[circuit][diode]")
 {
     // in --[1k]-- out --|>|-- gnd
-    // At the solution the resistor current has to equal the diode current, which
-    // is a check on the Newton solve rather than on any particular waveform.
+    // At the solution the resistor current equals the diode current: a check on the
+    // Newton solve.
     constexpr double seriesR = 1000.0;
 
-    // The 1N4148's DC part only. Its 0.7 pF against this 1k is a 0.7 ns time
-    // constant, which the trapezoidal rule does not damp: the capacitor's
-    // companion current flips sign every sample and decays by about 1e-4 per
-    // step, so thousands of samples after a step it is still a sizeable part
-    // of a few-nanoamp current. That is the integrator's business (see
-    // LIMITATIONS.md), not Newton's, which is what this checks.
+    // DC part only: the 0.7 pF against 1k is a 0.7 ns time constant that the trapezoidal
+    // rule leaves ringing (see LIMITATIONS.md).
     auto model = Circuit::DiodeModel::silicon();
     model.junctionCapacitance = 0.0;
     model.transitTime = 0.0;
@@ -174,24 +162,18 @@ TEST_CASE("A single diode satisfies the Shockley equation", "[circuit][diode]")
 
     for (const float vIn : {0.1f, 0.5f, 1.0f, 5.0f, 50.0f})
     {
-        // In double, from the node: process() returns a float, and at 0.1 V in
-        // the resistor drops 29 uV, which a float's rounding of the output
-        // resolves only to a few parts in ten thousand.
+        // In double, from the node: the float output can't resolve the 29 uV drop at 0.1 V.
         circuit.process(vIn);
         const double vOut = circuit.getNodeVoltage("out");
 
-        // The junction sits behind the diode's series resistance, so it sees
-        // the output less that resistance's drop.
+        // The junction sees the output less the series resistance's drop.
         const double resistorCurrent = (vIn - vOut) / seriesR;
         const double junction = vOut - resistorCurrent * model.seriesResistance;
         const double diodeCurrent = model.saturationCurrent * (std::exp(junction / model.scaleVoltage()) - 1.0)
                                   + CircuitComponents::gmin * junction;
 
-        // Relative agreement, since the currents span nanoamps to milliamps.
-        // Newton stops once the node voltages settle to within its tolerance, so
-        // KCL holds to about that tolerance rather than exactly -- the residual is
-        // dominated by the lowest-current case, where the junction's conductance
-        // is smallest and a given voltage error buys the least current.
+        // Relative agreement, since currents span nanoamps to milliamps. KCL holds to
+        // Newton's tolerance, worst at the lowest current.
         CHECK(diodeCurrent == Catch::Approx(resistorCurrent).epsilon(1.0e-4));
     }
 }
@@ -256,7 +238,7 @@ TEST_CASE("Diode type changes the clipping threshold", "[circuit][diode]")
     CHECK(silicon < twoSilicon);
     CHECK(twoSilicon < led);
 
-    // And the absolute values land where the datasheets say they should.
+    // And the absolute values match the datasheets.
     CHECK(silicon > 0.5f);
     CHECK(silicon < 0.9f);
     CHECK(led > 1.5f);
@@ -264,7 +246,7 @@ TEST_CASE("Diode type changes the clipping threshold", "[circuit][diode]")
 
 TEST_CASE("Asymmetric clipping is asymmetric", "[circuit][diode]")
 {
-    // Two diodes one way, one the other -- the classic asymmetric arrangement.
+    // Two diodes one way, one the other: asymmetric clipping.
     auto clipper = makeClipperWithDiode(Circuit::DiodeModel::silicon(), 2, 1);
     clipper.prepare(sampleRate);
 
@@ -282,8 +264,7 @@ TEST_CASE("The nonlinear solve stays converged and finite under abuse", "[circui
 
     int worstIterationCount = 0;
 
-    // Alternating full-scale steps: the worst case for a warm-started Newton,
-    // since every sample starts from the opposite rail's solution.
+    // Alternating full-scale steps: each sample starts from the opposite solution.
     for (int i = 0; i < 20000; ++i)
     {
         const float in = (i % 2 == 0) ? 200.0f : -200.0f;
@@ -316,10 +297,8 @@ TEST_CASE("Newton warm-starts to a low iteration count on musical signal", "[cir
     const double averageIterations = static_cast<double>(totalIterations) / numSamples;
     INFO("average Newton iterations: " << averageIterations);
 
-    // The DK loop tests convergence at the top, so the count includes the final
-    // pass that confirms it -- roughly three-and-a-half actual Newton steps plus
-    // one. That last pass is what leaves the port currents evaluated at the port
-    // voltages the solve exits with, which the node-voltage recovery depends on.
+    // The count includes the final confirming pass (about 3.5 Newton steps plus one),
+    // which leaves port currents consistent for node-voltage recovery.
     CHECK(averageIterations < 5.0);
     CHECK(clipper.getNonConvergenceCount() == 0);
 }
@@ -334,7 +313,7 @@ TEST_CASE("A voltage source holds its voltage and reports its current", "[circui
     const auto supply = circuit.addVoltageSource("vcc", "gnd", 9.0);
     circuit.addResistor("vcc", "mid", 1000.0);
     circuit.addResistor("mid", "gnd", 1000.0);
-    circuit.setInputNode("in"); // unused by this circuit, but the engine wants one
+    circuit.setInputNode("in"); // unused, but the engine needs one
     circuit.setOutputNode("mid");
     circuit.prepare(sampleRate);
 
@@ -350,8 +329,7 @@ TEST_CASE("A voltage source holds its voltage and reports its current", "[circui
 
 TEST_CASE("A voltage source can float between two nodes", "[circuit][source]")
 {
-    // Nothing here is ground-referenced except through the load, so this only
-    // solves if the source really does get its own branch-current unknown.
+    // Only solves if the source has its own branch-current unknown.
     Circuit circuit;
     circuit.addResistor("in", "a", 1000.0);
     circuit.addVoltageSource("a", "b", 2.0);
@@ -399,20 +377,18 @@ TEST_CASE("A transistor stage finds a sane bias point", "[circuit][transistor]")
 
     INFO("Vb = " << vBase << "  Ve = " << vEmitter << "  Vc = " << vCollector);
 
-    // The divider sets the base near 9 * 22k/122k, pulled down slightly by base
-    // current flowing through the 100k/22k Thevenin resistance.
+    // The divider sets the base near 9 * 22k/122k, a little lower from base current
+    // through the Thevenin resistance.
     CHECK(vBase == Catch::Approx(1.58).margin(0.08));
 
     // One base-emitter drop below that -- silicon, so around 0.65 V.
     CHECK(vBase - vEmitter == Catch::Approx(0.66).margin(0.04));
 
-    // And the collector lands partway up the supply, which is the whole point of
-    // biasing: room to swing in both directions.
+    // The collector lands partway up the supply, with room to swing.
     CHECK(vCollector > 3.0);
     CHECK(vCollector < 6.0);
 
-    // Emitter current through Re should match the collector current through Rc,
-    // to within the base current the transistor keeps for itself.
+    // Emitter current matches collector current, within the base current.
     const double emitterCurrent = vEmitter / 1000.0;
     const double collectorCurrent = (9.0 - vCollector) / 4700.0;
     CHECK(collectorCurrent == Catch::Approx(emitterCurrent).epsilon(0.02));
@@ -423,14 +399,14 @@ TEST_CASE("A transistor stage amplifies", "[circuit][transistor]")
     auto booster = Circuits::makeTransistorBooster();
     booster.prepare(sampleRate);
 
-    // Small enough to stay well inside the linear region.
+    // Small enough to stay linear.
     const float out = measureResponse(booster, 1000.0, 0.01f, 0.2);
     const double gain = out / 0.01;
 
     INFO("gain = " << gain);
 
-    // Av = Rc / (Re + re'), where re' is about 26 mV over the emitter current.
-    // With Rc = 4.7k, Re = 1k and Ie near 0.9 mA that's about 4.6.
+    // Av = Rc / (Re + re'), re' about 26 mV / Ie. With Rc 4.7k, Re 1k, Ie near 0.9 mA:
+    // about 4.6.
     CHECK(gain == Catch::Approx(4.6).margin(0.5));
     CHECK(booster.getNonConvergenceCount() == 0);
 }
@@ -440,29 +416,25 @@ TEST_CASE("A transistor stage clips when overdriven", "[circuit][transistor]")
     auto booster = Circuits::makeTransistorBooster();
     booster.prepare(sampleRate);
 
-    // Way past what a 9 V rail can swing.
+    // Far past what a 9 V rail can swing.
     const float loud = measureResponse(booster, 1000.0, 2.0f, 0.5);
     const float louder = measureResponse(booster, 1000.0, 20.0f, 0.5);
 
     INFO("loud = " << loud << "  louder = " << louder);
 
-    // The rail is the hard limit: the collector can't go above the supply or
-    // below the emitter, whatever you feed it.
+    // The collector stays between the emitter and the supply.
     CHECK(loud < 9.0f);
     CHECK(louder < 9.0f);
 
-    // Ten times the input buys well under twice the output. It isn't a flat
-    // ceiling because the input coupling capacitor charges up as the
-    // base-emitter junction clamps the drive, dragging the bias point with it --
-    // that's blocking distortion, and it's what an overdriven stage really does.
+    // Ten times the input gives well under twice the output. Not a flat ceiling: the
+    // input capacitor charges as the junction clamps (blocking distortion).
     CHECK(louder < loud * 2.0f);
     CHECK(booster.getNonConvergenceCount() == 0);
 }
 
 TEST_CASE("A PNP stage mirrors an NPN one", "[circuit][transistor]")
 {
-    // Same topology, every polarity flipped: negative supply, PNP device. The
-    // bias point should be the NPN one reflected about ground.
+    // Same topology, every polarity flipped: the bias point mirrored about ground.
     auto build = [](Circuit::BjtModel model, double supplyVolts)
     {
         Circuit circuit;
@@ -486,8 +458,8 @@ TEST_CASE("A PNP stage mirrors an NPN one", "[circuit][transistor]")
 
     INFO("NPN Vc = " << npn.getNodeVoltage("collector") << "  PNP Vc = " << pnp.getNodeVoltage("collector"));
 
-    // Not identical -- the 2N3906 isn't an exact mirror of the 2N3904 -- but the
-    // PNP has to sit on the negative side of the rail, biased the same way up.
+    // Not an exact mirror (2N3906 vs 2N3904), but on the negative side, biased the same
+    // way.
     CHECK(pnp.getNodeVoltage("collector") < 0.0);
     CHECK(pnp.getNodeVoltage("collector") > -9.0);
     CHECK(pnp.getNodeVoltage("emitter") - pnp.getNodeVoltage("base") == Catch::Approx(0.66).margin(0.06));
@@ -499,7 +471,7 @@ TEST_CASE("A germanium transistor turns on earlier than silicon", "[circuit][tra
     {
         Circuit circuit;
         circuit.addVoltageSource("vcc", "gnd", 9.0);
-        circuit.addResistor("vcc", "base", 470000.0); // feeds roughly 20 uA of base current
+        circuit.addResistor("vcc", "base", 470000.0); // roughly 20 uA of base current
         circuit.addResistor("vcc", "collector", 4700.0);
         circuit.addTransistor("base", "collector", "gnd", model);
         circuit.setInputNode("in");
@@ -569,17 +541,15 @@ TEST_CASE("The tone stack still responds to its controls", "[circuit][tonestack]
 
 TEST_CASE("process() does not allocate", "[circuit][realtime]")
 {
-    // The whole point of sizing everything in prepare() is that the audio thread
-    // never touches the allocator -- including when a knob move dirties the
-    // matrix, and including the Newton path.
+    // Nothing allocates on the audio thread, including after a knob move and on the
+    // Newton path.
     auto clipper = makeClipperWithDiode(Circuit::DiodeModel::silicon(), 1, 1);
     clipper.prepare(sampleRate);
 
     auto toneStack = Circuits::makeClassicToneStack();
     toneStack.circuit.prepare(sampleRate);
 
-    // Voltage sources and transistors both add code to the per-sample path, so
-    // this has to cover them too.
+    // Sources and transistors add per-sample code too.
     auto booster = Circuits::makeTransistorBooster();
     booster.prepare(sampleRate);
 
@@ -588,8 +558,8 @@ TEST_CASE("process() does not allocate", "[circuit][realtime]")
     for (size_t i = 0; i < block.size(); ++i)
         block[i] = static_cast<float>(5.0 * std::sin(phaseStep * static_cast<double>(i)));
 
-    // The counter is thread-local and covers the aligned forms too -- see
-    // helpers/realtime_guard.h.
+    // The counter is thread-local and covers the aligned forms (see
+    // helpers/realtime_guard.h).
     RealtimeGuard guard;
 
     for (int pass = 0; pass < 8; ++pass)
@@ -649,18 +619,16 @@ TEST_CASE("A 12AX7 stage biases and amplifies like the textbook", "[circuit][val
 
     INFO("Vplate = " << vPlate << "  Vcathode = " << vCathode);
 
-    // Cathode bias: plate current through Rk lifts the cathode, which is the
-    // same as holding the grid that far below it. A volt or two is right for a
-    // 12AX7 with a 1k5 cathode resistor.
+    // Cathode bias: plate current through Rk lifts the cathode a volt or two for a 12AX7
+    // on 1k5.
     CHECK(vCathode > 0.8);
     CHECK(vCathode < 2.5);
 
-    // And the plate has to sit where that current puts it: B+ minus Ik*Ra.
+    // The plate sits at B+ minus Ik*Ra.
     const double cathodeCurrent = vCathode / 1500.0;
     CHECK(vPlate == Catch::Approx(300.0 - cathodeCurrent * 100000.0).epsilon(0.02));
 
-    // Gain is mu*Ra/(Ra+rp). A 12AX7 near 1 mA has rp around 62k, so with a
-    // 100k plate load that lands near 60.
+    // Gain is mu*Ra/(Ra+rp); rp about 62k near 1 mA, so about 60 with a 100k load.
     const double gain = measureResponse(stage, 1000.0, 0.01f, 0.5) / 0.01;
     INFO("gain = " << gain);
     CHECK(gain > 45.0);
@@ -674,8 +642,7 @@ TEST_CASE("A triode compresses and clips asymmetrically", "[circuit][valve]")
     auto& stage = triode.circuit;
     stage.prepare(sampleRate);
 
-    // Positive and negative peaks separately -- the asymmetry is the point, and
-    // a magnitude-only measurement would hide it.
+    // Positive and negative peaks separately, to see the asymmetry.
     auto drive = [&stage](float amplitude)
     {
         const double phaseStep = 2.0 * std::numbers::pi * 1000.0 / sampleRate;
@@ -703,19 +670,15 @@ TEST_CASE("A triode compresses and clips asymmetrically", "[circuit][valve]")
     // Small signal: symmetric, and at the stage's full gain.
     CHECK(quietHigh / -quietLow == Catch::Approx(1.0).margin(0.05));
 
-    // Fifty times the input buys about twenty-five times the output: the stage's
-    // gain has halved, from around 60 to around 30.
+    // Fifty times the input gives about twenty-five times the output: gain halves.
     const double quietGain = std::max(quietHigh, -quietLow) / 0.1;
     const double loudGain = std::max(loudHigh, -loudLow) / 5.0;
 
     INFO("small-signal gain " << quietGain << " -> large-signal gain " << loudGain);
     CHECK(loudGain < 0.6 * quietGain);
 
-    // And the two halves no longer match. The plate can swing a long way down
-    // as the valve saturates, but far less up: driving the grid positive makes
-    // it draw current, which charges the input coupling capacitor and drags the
-    // bias towards cutoff. That's blocking distortion, and it's why the
-    // positive peak actually shrinks as the drive goes up.
+    // The halves no longer match: grid current charges the input capacitor towards
+    // cutoff (blocking distortion), so the positive peak shrinks.
     CHECK(loudHigh < -loudLow * 0.6);
 
     // Nothing may leave the supply rails.
@@ -725,14 +688,9 @@ TEST_CASE("A triode compresses and clips asymmetrically", "[circuit][valve]")
 
 TEST_CASE("A gain stage driving a loaded cathode follower converges on every sample", "[circuit][valve]")
 {
-    // The high-gain preamp's commonest pairing: a 12AX7 stage DC-coupled into
-    // a cathode follower, the follower driving a low-impedance load -- a tone
-    // stack, here 4.7k behind the coupling capacitor. Driven hard, the
-    // follower's grid conducts and its plate current turns over within a
-    // fraction of a volt. Plain Newton from the last sample's answer cycled or
-    // ran away on hundreds of samples a second of this, each one a click: the
-    // follower's grid came out at 190 V. Continuation in solveWithDk() walks
-    // the hard samples there instead.
+    // A 12AX7 stage DC-coupled into a cathode follower driving a 4.7k load through a
+    // coupling capacitor. Driven hard, the follower's grid conducts; continuation in
+    // solveWithDk() is needed to converge.
     Circuit c;
     c.addVoltageSource("bplus", "gnd", 370.0);
     c.addTriode("plate", "in", "cathode", Circuit::TriodeModel::ecc83());
@@ -752,9 +710,8 @@ TEST_CASE("A gain stage driving a loaded cathode follower converges on every sam
     const auto follower = c.getNodeIndex("follower");
     double worstGridToCathode = -1.0e9;
 
-    // Notes as they reach the last stage of a high-gain preamp: already
-    // clipped nearly square by the stages before, so their edges are a
-    // sample or two long, and decaying as the string does.
+    // Notes as they reach a high-gain preamp's last stage: nearly square, with edges a
+    // sample or two long, decaying.
     for (const double frequency : {82.41, 110.0, 146.83, 196.0, 329.63, 659.26})
     {
         for (int i = 0; i < static_cast<int>(sampleRate); ++i)
@@ -769,8 +726,7 @@ TEST_CASE("A gain stage driving a loaded cathode follower converges on every sam
 
     CHECK(c.getNonConvergenceCount() == 0);
 
-    // The follower's grid really did conduct, so the hard case is the one
-    // being run, and stayed where a valve's grid can be.
+    // The follower's grid did conduct, and stayed where a grid can be.
     INFO("follower grid above its cathode, at most " << worstGridToCathode << " V");
     CHECK(worstGridToCathode > 0.5);
     CHECK(worstGridToCathode < 3.0);
@@ -794,12 +750,10 @@ TEST_CASE("A pentode stage's currents add up", "[circuit][valve]")
     const double screenCurrent = (400.0 - vScreen) / 1000.0;
     const double cathodeCurrent = vCathode / 680.0;
 
-    // Everything that goes in at the plate and screen comes out at the cathode.
-    // This is the check that catches a sign error anywhere in the 3x3 Jacobian.
+    // Plate plus screen current equals cathode current: catches Jacobian sign errors.
     CHECK(cathodeCurrent == Catch::Approx(plateCurrent + screenCurrent).epsilon(0.01));
 
-    // Screen current is a small fraction of plate current -- the screen
-    // accelerates electrons, it isn't supposed to collect many of them.
+    // Screen current is a small fraction of plate current.
     CHECK(screenCurrent > 0.02 * plateCurrent);
     CHECK(screenCurrent < 0.25 * plateCurrent);
 
@@ -808,10 +762,8 @@ TEST_CASE("A pentode stage's currents add up", "[circuit][valve]")
 
 TEST_CASE("A pentode strapped as a triode still solves", "[circuit][valve]")
 {
-    // Screen tied to plate: the "triode mode" switch some amps have. It makes
-    // two of the device's ports share the same node pair, which leaves the DK
-    // port impedance matrix singular -- the Newton Jacobian I + K*di/dv stays
-    // invertible, but it's worth pinning down that it does.
+    // Screen tied to plate (triode mode): two ports share a node pair, so the DK port
+    // matrix is singular. The Newton Jacobian must still invert.
     Circuit circuit;
     circuit.addVoltageSource("b+", "gnd", 300.0);
     circuit.addResistor("b+", "plate", 10000.0);
@@ -857,14 +809,12 @@ TEST_CASE("A valve rectifier sags under load", "[circuit][valve][rectifier]")
 
     INFO("B+ light = " << light << "  medium = " << medium << "  heavy = " << heavy);
 
-    // The whole point: the harder the amp pulls, the lower the rail goes. A
-    // silicon rectifier would hold far closer to the peak throughout.
+    // The harder the load, the lower the rail. A silicon rectifier would sag far less.
     CHECK(light > medium);
     CHECK(medium > heavy);
     CHECK(light - heavy > 50.0);
 
-    // And it still rectifies -- the rail is up near the winding's peak, not
-    // hovering near its zero average.
+    // It still rectifies: the rail is near the winding's peak.
     CHECK(light > 350.0);
     CHECK(light < 460.0);
 }
@@ -875,10 +825,8 @@ TEST_CASE("A valve rectifier sags under load", "[circuit][valve][rectifier]")
 
 TEST_CASE("A switch shorts and opens convincingly", "[circuit][switch]")
 {
-    // A divider with a switch across the lower leg. Closed it should short that
-    // leg out; open it should be as if it weren't there at all. Both are checked
-    // against the exact answer, because "close enough to a short" is the only
-    // thing a resistor-based switch can be, and it needs to be very close.
+    // A switch across the lower leg of a divider: closed shorts it, open is absent. Both
+    // checked against the exact answer.
     Circuit circuit;
     circuit.addResistor("in", "out", 10000.0);
     circuit.addResistor("out", "gnd", 10000.0);
@@ -894,16 +842,14 @@ TEST_CASE("A switch shorts and opens convincingly", "[circuit][switch]")
     bypass.setClosed(circuit, true);
     CHECK(circuit.process(1.0f) == Catch::Approx(0.0f).margin(1.0e-5));
 
-    // And back again -- the matrix has to be re-stamped and re-factorised each
-    // time, which is what the dirty flag is for.
+    // And back again: re-stamped and re-factorised via the dirty flag.
     bypass.setClosed(circuit, false);
     CHECK(circuit.process(1.0f) == Catch::Approx(0.5f).epsilon(1.0e-4));
 }
 
 TEST_CASE("A series switch makes and breaks a connection", "[circuit][switch]")
 {
-    // The classic cathode-bypass arrangement: a capacitor that's only in circuit
-    // when the switch is closed.
+    // A cathode-bypass capacitor switched in and out.
     Circuit circuit;
     circuit.addResistor("in", "out", 10000.0);
     circuit.addResistor("out", "gnd", 10000.0);
@@ -920,16 +866,13 @@ TEST_CASE("A series switch makes and breaks a connection", "[circuit][switch]")
     engage.setClosed(circuit, true);
     CHECK(measureResponse(circuit, 5000.0, 1.0f) < 0.2f);
 
-    // Far below the corner the capacitor is effectively open again, so the
-    // divider comes back. 1 uF into 10k corners at 16 Hz, so this has to be
-    // measured well under that -- at 20 Hz it's still shunting hard.
+    // Far below the 16 Hz corner the capacitor is open again.
     CHECK(measureResponse(circuit, 2.0, 1.0f, 3.0) == Catch::Approx(0.5f).margin(0.02));
 }
 
 TEST_CASE("A changeover switch connects one throw at a time", "[circuit][switch]")
 {
-    // Common node fed from the input; the two throws are different resistances
-    // to ground, so the divider ratio says which one is live.
+    // Common fed from the input; two throws to different resistances to ground.
     Circuit circuit;
     circuit.addResistor("in", "common", 10000.0);
     const auto selector = circuit.addChangeoverSwitch("common", "a", "b");
@@ -943,8 +886,7 @@ TEST_CASE("A changeover switch connects one throw at a time", "[circuit][switch]
     selector.select(circuit, false);
     CHECK(circuit.process(1.0f) == Catch::Approx(0.5f).epsilon(1.0e-3));
 
-    // Throw B: 10k/90k. If A were still connected the answer would be nearer
-    // 0.47, so this also pins down that the two really are exclusive.
+    // Throw B: 10k/90k. A still connected would give about 0.47.
     selector.select(circuit, true);
     CHECK(circuit.process(1.0f) == Catch::Approx(0.9f).epsilon(1.0e-3));
 
@@ -954,9 +896,8 @@ TEST_CASE("A changeover switch connects one throw at a time", "[circuit][switch]
 
 TEST_CASE("A switch works alongside nonlinear devices", "[circuit][switch]")
 {
-    // Switching the clipping diodes in and out of a stage, which is what a dirt
-    // pedal's mode switch does. The switch is linear but the circuit isn't, so
-    // this covers the DK precomputation being redone on the toggle.
+    // Switching clipping diodes in and out: a linear switch in a nonlinear circuit, so the
+    // DK precomputation is redone on toggle.
     Circuit circuit;
     circuit.addResistor("in", "out", 1300.0);
     circuit.addResistor("out", "gnd", 100000.0);
@@ -1023,16 +964,14 @@ TEST_CASE("The three-stage preamp biases all its valves", "[circuit][preamp]")
     INFO("V1 " << v1Plate << "/" << v1Cathode << "  V2 " << v2Plate << "/" << v2Cathode
                 << "  V3 cathode " << v3Cathode);
 
-    // Each stage's plate has to sit where its own cathode current puts it:
-    // B+ minus Ik * Ra, with Ik read off the cathode resistor.
+    // Each plate sits at B+ minus Ik * Ra, Ik from its cathode resistor.
     CHECK(v1Plate == Catch::Approx(325.0 - (v1Cathode / 820.0) * 100000.0).epsilon(0.02));
     CHECK(v2Plate == Catch::Approx(325.0 - (v2Cathode / 820.0) * 100000.0).epsilon(0.02));
 
-    // The cathode follower is direct-coupled, so its cathode has to land within
-    // a volt of V2's plate -- that's what "no gain, just drive" means.
+    // The direct-coupled follower's cathode is within a volt of V2's plate.
     CHECK(v3Cathode == Catch::Approx(v2Plate).margin(2.0));
 
-    // And it has to be a long way up the rail, not near ground.
+    // And well up the rail.
     CHECK(v3Cathode > 100.0);
     CHECK(v3Cathode < 300.0);
     CHECK(circuit.getNonConvergenceCount() == 0);
@@ -1052,13 +991,11 @@ TEST_CASE("The classic tone stack scoops the mids", "[circuit][preamp]")
 
     INFO("100 Hz " << low << ", 1 kHz " << middle << ", 5 kHz " << high);
 
-    // With everything at noon this stack has a deep notch in the middle -- it's
-    // the defining feature of the classic passive tone stack, and the reason
-    // the "flat" setting on these amps is anything but.
+    // At noon the stack has its deep mid notch.
     CHECK(middle < low * 0.7);
     CHECK(middle < high * 0.7);
 
-    // And each control has to move its own band.
+    // Each control moves its own band.
     auto at = [&](double f, float bass, float mid, float treble)
     {
         amp.setControls(1.0f, bass, mid, treble);
@@ -1091,13 +1028,10 @@ TEST_CASE("The bright cap only works with the volume down", "[circuit][preamp][s
     INFO("volume 0.2: " << quietDull << " -> " << quietBright
                         << "   volume 1.0: " << loudDull << " -> " << loudBright);
 
-    // Turned down, the cap bypasses most of the pot's track and lifts the top
-    // end substantially.
+    // Turned down, the cap bypasses most of the track and lifts the treble.
     CHECK(quietBright > quietDull * 1.5);
 
-    // Wound fully up there's no track left to bypass, so the switch does
-    // nothing at all. That's the real complaint about bright caps, and it falls
-    // straight out of the topology rather than being modelled in.
+    // Turned fully up there is no track to bypass, so the switch does nothing.
     CHECK(loudBright == Catch::Approx(loudDull).epsilon(1.0e-3));
 }
 
@@ -1121,16 +1055,14 @@ TEST_CASE("A Zener clamps at its breakdown voltage", "[circuit][zener]")
 
         INFO("Vz = " << vz << ": forward " << forward << ", reverse " << reverse);
 
-        // Forwards it's an ordinary silicon diode, whatever its Zener voltage.
+        // Forwards it is an ordinary silicon diode.
         CHECK(forward == Catch::Approx(0.72).margin(0.15));
 
-        // Backwards it holds at Vz, a little above it because of the current the
-        // series resistor is pushing through.
+        // Backwards it holds a little above Vz (series resistor current).
         CHECK(-reverse > vz);
         CHECK(-reverse < vz + 0.6);
 
-        // That asymmetry is the point -- clipping one way at 0.7 V and the other
-        // at Vz is what a single Zener gives you.
+        // Clipping at 0.7 V one way and Vz the other.
         CHECK(-reverse > forward * 3.0);
         CHECK(circuit.getNonConvergenceCount() == 0);
     }
@@ -1138,10 +1070,7 @@ TEST_CASE("A Zener clamps at its breakdown voltage", "[circuit][zener]")
 
 TEST_CASE("A stack of Zeners breaks down at the stack's voltage", "[circuit][zener]")
 {
-    // seriesCount scales the forward junction, and used not to scale the reverse
-    // one: a pair of Zeners clipped at two forward drops one way and at a single
-    // Vz the other, which is neither diode anybody owns. Both directions belong
-    // to the same stack.
+    // seriesCount scales both directions: a stack of Zeners clips at n Vz in reverse too.
     constexpr double vz = 5.1;
 
     auto clampAt = [] (int seriesCount)
@@ -1164,8 +1093,7 @@ TEST_CASE("A stack of Zeners breaks down at the stack's voltage", "[circuit][zen
 
     INFO("1x " << one << ", 2x " << two << ", 3x " << three);
 
-    // Each holds at n*Vz, a little above because of the current the series
-    // resistor pushes through -- the same allowance the single-Zener case takes.
+    // Each holds a little above n*Vz.
     CHECK(one > vz);
     CHECK(one < vz + 0.6);
 
@@ -1175,8 +1103,7 @@ TEST_CASE("A stack of Zeners breaks down at the stack's voltage", "[circuit][zen
     CHECK(three > 3.0 * vz);
     CHECK(three < 3.0 * vz + 1.8);
 
-    // And the knee widens with the stack rather than staying a single diode's:
-    // the steps are even, which a scaled offset alone would not give.
+    // The knee widens with the stack: the steps are even.
     CHECK((two - one) == Catch::Approx(three - two).margin(0.35));
 }
 
@@ -1203,13 +1130,12 @@ TEST_CASE("A JFET stage biases and amplifies", "[circuit][jfet]")
 
     INFO("Vd = " << vDrain << "  Vs = " << vSource);
 
-    // Self-biased: drain current through the source resistor lifts the source,
-    // which puts the gate that far below it. Depletion mode, so no divider needed.
+    // Self-biased via the source resistor; depletion mode needs no divider.
     CHECK(vSource > 0.1);
     CHECK(vSource < 1.0);
     CHECK(vDrain == Catch::Approx(9.0 - (vSource / 2200.0) * 22000.0).epsilon(0.03));
 
-    // Gain is gm*Rd, and gm for a square law is 2*beta*(Vgs - Vto).
+    // Gain is gm*Rd, with gm = 2*beta*(Vgs - Vto) for a square law.
     const double gain = measureResponse(circuit, 1000.0, 0.01f, 0.3) / 0.01;
     INFO("gain = " << gain);
     CHECK(gain > 10.0);
@@ -1219,9 +1145,7 @@ TEST_CASE("A JFET stage biases and amplifies", "[circuit][jfet]")
 
 TEST_CASE("An op-amp gives its textbook closed-loop gain", "[circuit][opamp]")
 {
-    // Non-inverting amplifier: gain should be 1 + Rf/Rg, set by the resistors
-    // and essentially independent of the op-amp itself. That's the whole point
-    // of feedback, and it's the sharpest test of the model.
+    // Non-inverting gain should be 1 + Rf/Rg, essentially independent of the op-amp.
     auto gainOf = [](double rf, double rg)
     {
         Circuit circuit;
@@ -1262,9 +1186,8 @@ TEST_CASE("An op-amp clips at its supply rails", "[circuit][opamp]")
     circuit.setOutputNode("out");
     circuit.prepare(sampleRate);
 
-    // Built out of primitives, the op-amp's only nonlinearity is its two clamp
-    // diodes, so DK handles it like any other circuit. The earlier single-device
-    // model forced the full-matrix path here.
+    // Built from primitives, the op-amp's only nonlinearity is its clamp diodes, so DK
+    // handles it.
     REQUIRE(circuit.getSolverStrategy() == Circuit::SolverStrategy::DiscreteK);
 
     const double phaseStep = 2.0 * std::numbers::pi * 1000.0 / sampleRate;
@@ -1285,15 +1208,13 @@ TEST_CASE("An op-amp clips at its supply rails", "[circuit][opamp]")
 
     INFO("V(out) spans " << lowest << " to " << highest);
 
-    // Rails at 0 and 9 with 1.5 V of headroom puts the output near 1.5 to 7.5.
-    // The clamp is diodes, so it's soft -- the output eases past a little as it
-    // is driven harder, the way a real output stage does, rather than stopping
-    // dead. What it must not do is approach the rails themselves.
+    // Rails 0 and 9 with 1.5 V headroom: output about 1.5 to 7.5 V. The diode clamp is
+    // soft, but must not approach the rails.
     CHECK(lowest > 0.6);
     CHECK(lowest < 2.2);
     CHECK(highest > 6.8);
     CHECK(highest < 8.4);
-    CHECK(highest - lowest > 4.0); // and it really is using the range
+    CHECK(highest - lowest > 4.0); // and it uses the range
 }
 
 //==============================================================================
@@ -1302,8 +1223,7 @@ TEST_CASE("An op-amp clips at its supply rails", "[circuit][opamp]")
 
 TEST_CASE("Diode models hit their forward voltages", "[circuit][diode]")
 {
-    // Drive through a resistor large enough that it, not the diode, sets the
-    // current, then read the drop.
+    // Drive through a resistor large enough to set the current, then read the drop.
     auto forwardVoltage = [](const Circuit::DiodeModel& model, double milliamps)
     {
         constexpr double supply = 100.0;
@@ -1318,10 +1238,8 @@ TEST_CASE("Diode models hit their forward voltages", "[circuit][diode]")
         return static_cast<double>(measureDC(circuit, static_cast<float>(supply), 0.05));
     };
 
-    // The makers' typical curves at 1 mA, digitised from the vector paths:
-    // Vishay's 1N4148 (Fig. 2) and Kingbright's WP7113 red, green and blue.
-    // The 1N5817's is the fit's extrapolation below Vishay's 10 mA curve, so
-    // it is held to the fit rather than to a sheet.
+    // Makers' typical curves at 1 mA: Vishay 1N4148 (Fig. 2), Kingbright WP7113 red,
+    // green and blue. The 1N5817 is held to its fit (extrapolated below Vishay's 10 mA).
     CHECK(forwardVoltage(Circuit::DiodeModel::d1n4148(), 1.0) == Catch::Approx(0.609).margin(0.006));
     CHECK(forwardVoltage(Circuit::DiodeModel::germanium(), 1.0) == Catch::Approx(0.33).margin(0.03));
     CHECK(forwardVoltage(Circuit::DiodeModel::schottky(), 1.0) == Catch::Approx(0.098).margin(0.005));
@@ -1329,11 +1247,8 @@ TEST_CASE("Diode models hit their forward voltages", "[circuit][diode]")
     CHECK(forwardVoltage(Circuit::DiodeModel::greenLed(), 1.0) == Catch::Approx(1.857).margin(0.02));
     CHECK(forwardVoltage(Circuit::DiodeModel::blueLed(), 1.0) == Catch::Approx(2.571).margin(0.02));
 
-    // The emission coefficient shows up as how much the forward voltage moves
-    // per decade of current -- the knee. An LED's is half again silicon's
-    // (red) to more than twice (blue), which is why it clips more gradually.
-    // It used to be read as two to four times, from generic LED figures; the
-    // makers' curves say less.
+    // The emission coefficient shows as voltage per decade of current: an LED's is 1.5x
+    // (red) to over 2x (blue) silicon's.
     auto knee = [&forwardVoltage](const Circuit::DiodeModel& model)
     {
         return forwardVoltage(model, 1.0) - forwardVoltage(model, 0.1);
@@ -1351,8 +1266,7 @@ TEST_CASE("Swapping the overdrive's clipping diodes changes its ceiling", "[circ
 {
     auto peakWith = [](const Circuit::DiodeModel& model)
     {
-        // Built with the pair in place rather than swapped in: an LED carries a
-        // series resistance, which only addDiode() can wire.
+        // Built with the pair in place: an LED's series resistance needs addDiode().
         auto ts = Circuits::makeMidHumpOverdrive(model);
         ts.circuit.prepare(sampleRate);
         ts.setControls(0.5f, 0.7f, 1.0f);
@@ -1371,10 +1285,8 @@ TEST_CASE("Swapping the overdrive's clipping diodes changes its ceiling", "[circ
     CHECK(red > silicon * 1.5f);
     CHECK(blue > red * 1.3f);
 
-    // And this is the reason the handles exist. addOpAmp() builds its rail
-    // clamps from ordinary diodes and takes ids 0 and 1 for U1's, so the
-    // clipping pair is 2 and 3. Assuming otherwise silently changes the wrong
-    // parts and leaves the circuit sounding unaltered.
+    // addOpAmp() takes diode ids 0 and 1 for its rail clamps, so the clipping pair is 2
+    // and 3. The handles avoid relying on that.
     auto ts = Circuits::makeMidHumpOverdrive();
     CHECK(ts.clipperUp == 2);
     CHECK(ts.clipperDown == 3);
@@ -1386,9 +1298,8 @@ TEST_CASE("Swapping the overdrive's clipping diodes changes its ceiling", "[circ
 
 namespace
 {
-    /** A follower on +/-4.5 V hit with a +/-2 V square wave: the fastest the
-        output ever moves, in V/us. At four times 48 kHz, so a sample is short
-        enough to see a slope of a few tenths of a volt per microsecond. */
+    /** A follower on +/-4.5 V hit with a +/-2 V square: the fastest output slope, in V/us.
+        At four times 48 kHz, to resolve a few tenths of a V/us. */
     double followerSlewRate(const Circuit::OpAmpModel& model)
     {
         constexpr double rate = 4.0 * sampleRate;
@@ -1417,8 +1328,8 @@ namespace
         return fastest;
     }
 
-    /** The Rat's gain stage without its filters: non-inverting, gain 1000, on a
-        9 V rail biased at 4.5. */
+    /** The Rat's gain stage without filters: non-inverting, gain 1000, 9 V rail biased at
+        4.5. */
     std::vector<float> ratStage(const Circuit::OpAmpModel& model, Circuit::SolverStrategy strategy,
                                 float drive, int& nonConverged)
     {
@@ -1436,11 +1347,8 @@ namespace
         circuit.setOutputNode("o2");
         circuit.setSolverStrategy(strategy);
 
-        // Tighter than the default, so what is compared is the two solvers'
-        // answer rather than where each one's stopping rule happens to land.
-        // At the default 1e-4 the op-amp's sharp rail clamp leaves them
-        // 0.3 mV apart on a 1 V drive, both inside tolerance; at 1e-6 they
-        // agree to the last bit of a float.
+        // Tighter than default, so the two solvers' answers are compared rather than their
+        // stopping points.
         circuit.setConvergenceTolerance(1.0e-7, 1.0e-6);
         circuit.prepare(sampleRate);
 
@@ -1457,13 +1365,11 @@ namespace
 
 TEST_CASE("A slow op-amp slews at its datasheet rate", "[circuit][opamp]")
 {
-    // The tail current over the compensation capacitor, and nothing else: the
-    // same figure the datasheet quotes, read back off a follower's edge.
+    // Tail current over compensation capacitor: the datasheet's figure.
     CHECK(followerSlewRate(Circuit::OpAmpModel::lm308()) == Catch::Approx(0.3).epsilon(0.05));
     CHECK(followerSlewRate(Circuit::OpAmpModel::lm741()) == Catch::Approx(0.5).epsilon(0.05));
 
-    // And without the pair the same edge is taken at the bandwidth's pace,
-    // which at this sample rate is far faster.
+    // Without the pair the edge follows the bandwidth, far faster.
     auto unlimited = Circuit::OpAmpModel::lm308();
     unlimited.slewRate = 0.0;
     CHECK(followerSlewRate(unlimited) > 0.6);
@@ -1471,9 +1377,8 @@ TEST_CASE("A slow op-amp slews at its datasheet rate", "[circuit][opamp]")
 
 TEST_CASE("A slewing op-amp gives one answer under both solvers", "[circuit][opamp]")
 {
-    // The input pair is a nonlinear element on the differential input -- the
-    // shape OpAmp.h records breaking the DK solve once. Driven hard enough to
-    // slew on every cycle, the two strategies have to agree.
+    // The input pair is a nonlinear element on the differential input. Slewing every
+    // cycle, both strategies must agree.
     for (const float drive : {0.01f, 0.1f, 1.0f})
     {
         int dk = -1, full = -1;
@@ -1491,8 +1396,7 @@ TEST_CASE("A slewing op-amp gives one answer under both solvers", "[circuit][opa
         CHECK(full == 0);
     }
 
-    // And slewing is audible there: a hard-driven Rat is a fifth different with
-    // the 308's real slew rate than without it.
+    // Slewing is audible: a hard-driven Rat differs by a fifth with the 308's slew rate.
     int unused = 0;
     auto unlimited = Circuit::OpAmpModel::lm308();
     unlimited.slewRate = 0.0;
@@ -1512,13 +1416,9 @@ TEST_CASE("A slewing op-amp gives one answer under both solvers", "[circuit][opa
 
 TEST_CASE("The TL072 and LM741 follow TI's own macromodels", "[circuit][opamp]")
 {
-    // Non-inverting, gain 101, +/-15 V into 10k, 0.1 V in -- 10 V out, which a
-    // 741 has to slew to above about 8 kHz and a TL072 never does. The
-    // references are TI's TL072 and uA741 Boyle cards run in ngspice-47 on the
-    // same circuit: the fundamental's amplitude and phase over 5 ms, at the
-    // same 192 kHz. Before the second pole and the 741's measured bandwidth
-    // these were 1.3-4.9% (TL072) and 2.8-3.9% (741) out in amplitude and up to
-    // 4.3 degrees in phase, the 741 right only where two errors cancelled.
+    // Non-inverting, gain 101, +/-15 V into 10k, 0.1 V in (10 V out: a 741 slews above
+    // about 8 kHz, a TL072 never). References: TI's TL072 and uA741 Boyle cards in
+    // ngspice-47, fundamental amplitude and phase over 5 ms at 192 kHz.
     struct Reference
     {
         const char* name;
@@ -1552,8 +1452,7 @@ TEST_CASE("The TL072 and LM741 follow TI's own macromodels", "[circuit][opamp]")
         for (int i = 0; i < 1920; ++i)
             out.push_back(circuit.process(0.1f * static_cast<float>(std::sin(step * i))));
 
-        // The fundamental over the second half, which is a whole number of
-        // cycles at both frequencies.
+        // The fundamental over the second half (whole cycles at both frequencies).
         double mean = 0.0;
 
         for (int i = 960; i < 1920; ++i)
@@ -1581,10 +1480,9 @@ TEST_CASE("The TL072 and LM741 follow TI's own macromodels", "[circuit][opamp]")
 
 namespace
 {
-    /** A gain of 11 on a 9 V battery: input coupled in and biased to 4.5 V
-        through 1M, feedback 100k over 10k, the gain leg AC-coupled, 10k load
-        to the half supply. 30 ms of a 1 kHz sine at 192 kHz -- the same deck,
-        node for node, that the references below were run through. */
+    /** Gain 11 on a 9 V battery: input biased to 4.5 V through 1M, feedback 100k over 10k
+        with the gain leg AC-coupled, 10k load to half supply. 30 ms of 1 kHz at 192 kHz,
+        the same deck as the references. */
     std::vector<double> nineVoltStage(const Circuit::OpAmpModel& model, double drive, double supply = 9.0)
     {
         Circuit circuit;
@@ -1612,20 +1510,12 @@ namespace
 
 TEST_CASE("On 9 V an op-amp clips the way TI's own macromodels do", "[circuit][opamp]")
 {
-    // The stage above, 0.6 V in -- clipping on both rails, two-thirds of
-    // each cycle flat -- through TI's TL072 and uA741 cards and its NE5534
-    // card with the 22 pF that makes it a 5532, in ngspice-47. Every fourth
-    // sample of the 21st millisecond, one whole cycle.
+    // The stage above at 0.6 V in (clipping on both rails) through TI's TL072, uA741 and
+    // NE5534 + 22 pF (5532) cards in ngspice-47: every fourth sample of the 21st ms.
     //
-    // What this holds is the *shape*: the knee, the flat, and how the output
-    // comes off the rail and recovers. The cards' clip levels are their own
-    // clamp settings rather than the sheets' swing -- the uA741 card stops
-    // 0.39 V short of each rail where the sheet says 1 V -- so each model is
-    // given its card's level here, measured into this 10k load. The levels
-    // the models really use are the next test's business.
-    //
-    // Before the clamp was scaled to the gain stage, the clip level itself
-    // drifted with the drive by 0.4 V, and none of these could match.
+    // Holds the shape (knee, flat, recovery). Each model is given its card's clip level,
+    // since the cards' clamps differ from the sheets' swing; the real levels are the next
+    // test's.
     struct Reference
     {
         const char* name;
@@ -1657,14 +1547,11 @@ TEST_CASE("On 9 V an op-amp clips the way TI's own macromodels do", "[circuit][o
         model.negativeRailHeadroom = -1.0;
         model.headroomLoad = 10000.0;
 
-        // The cards' open-loop gain does not follow the supply; for the shape
-        // alone, nor does this one.
+        // The cards' open-loop gain doesn't follow the supply; neither does this.
         model.openLoopGainSupplyExponent = 0.0;
 
-        // And no bias current. The deck starts the input at 4.5 V and its
-        // coupling takes a second to settle, so in 30 ms the cards never show
-        // the offset their bias would give -- where Céline solves the bias
-        // point first, and a 5532's 200 nA through 1M starts it 0.2 V low.
+        // No bias current: the deck's input never settles in 30 ms, while Céline solves the
+        // bias point first.
         model.inputBiasCurrent = 0.0;
 
         const auto out = nineVoltStage(model, 0.6);
@@ -1685,8 +1572,7 @@ TEST_CASE("On 9 V an op-amp clips the way TI's own macromodels do", "[circuit][o
         const double spread = std::sqrt(squares / n - (sum / n) * (sum / n));
         const double rms = std::sqrt(error / n);
 
-        // 1.6%, 0.3% and 1.3% of the swing as measured; what is left on the
-        // TL072 is its card's slightly rounder knee.
+        // 1.6%, 0.3% and 1.3% of the swing; the TL072 card has a slightly rounder knee.
         INFO(r.name << ": " << 100.0 * rms / spread << "% rms of the swing, worst " << worst << " V");
         CHECK(rms < 0.025 * spread);
         CHECK(worst < 0.12);
@@ -1695,12 +1581,9 @@ TEST_CASE("On 9 V an op-amp clips the way TI's own macromodels do", "[circuit][o
 
 TEST_CASE("An op-amp clips where its sheet says, however hard it is driven", "[circuit][opamp]")
 {
-    // The swing a sheet quotes is the output at the pin into a stated load,
-    // driven as hard as you like. So both of those have to hold here: the
-    // level is the sheet's (into this 10k, scaled from the sheet's own load
-    // by the output resistance), and driving 2.5 times harder moves it by no
-    // more than a few tens of millivolts. On a pedal's 9 V and on an amp's
-    // +/-15 alike.
+    // A sheet's swing is at the pin into a stated load, driven hard. The level must match
+    // the sheet (scaled to this 10k by output resistance) and move only tens of mV with
+    // 2.5x the drive, on 9 V and +/-15 V.
     using M = Circuit::OpAmpModel;
 
     for (const double supply : {9.0, 30.0})
@@ -1729,11 +1612,10 @@ TEST_CASE("An op-amp clips where its sheet says, however hard it is driven", "[c
         CHECK(std::abs(hard.second - harder.second) < 0.03);
     }
 
-    // And the sheets that plot swing against supply. TL071 Figure 10 reads
-    // 1.11 V of headroom on +/-4.5 V and 1.40 on +/-15; NJR's NJM4558 lines
-    // have slope one, so 1 V everywhere; Motorola's MC4741C gives the 741's
-    // two sides separately, 0.69 / 1.44 on +/-15 and 0.81-0.99 / 1.67-1.85
-    // from +/-6 to +/-9, which the fitted lines hold to within 0.12 V.
+    // Sheets plotting swing against supply: TL071 Fig. 10 reads 1.11 V headroom on
+    // +/-4.5 V and 1.40 on +/-15; NJR's NJM4558 is 1 V everywhere; Motorola's MC4741C
+    // gives 0.69 / 1.44 on +/-15 and 0.81-0.99 / 1.67-1.85 from +/-6 to +/-9 (held within
+    // 0.12 V).
     const auto nineVolt = [](M m) { return m.withRails(9.0, 0.0); };
     const auto fifteenVolt = [](M m) { return m.withRails(15.0, -15.0); };
 
@@ -1745,18 +1627,15 @@ TEST_CASE("An op-amp clips where its sheet says, however hard it is driven", "[c
     CHECK(nineVolt(M::lm741()).positiveHeadroom() == Catch::Approx(0.94).margin(0.01));
     CHECK(nineVolt(M::lm741()).negativeHeadroom() == Catch::Approx(1.83).margin(0.01));
 
-    // And the 741's open-loop gain: 200 V/mV on +/-15, 53 on +/-4.5 (TI
-    // uA741 Figure 5-6).
+    // The 741's open-loop gain: 200 V/mV on +/-15, 53 on +/-4.5 (TI uA741 Fig. 5-6).
     CHECK(fifteenVolt(M::lm741()).openLoopGainOnRails() == Catch::Approx(2.0e5));
     CHECK(nineVolt(M::lm741()).openLoopGainOnRails() == Catch::Approx(53.0e3).epsilon(0.02));
 }
 
 TEST_CASE("Input bias current flows the way the input pair says", "[circuit][opamp]")
 {
-    // A follower with 1M from its input to ground: the bias current has
-    // nowhere to go but through that, so the output sits at -I x 1M. An NPN
-    // pair (the 741) draws it in and pulls the input negative; a PNP pair
-    // (the 4558, by NJR's equivalent circuit) pushes it out.
+    // A follower with 1M to ground: the output sits at -I x 1M. An NPN pair (741) pulls
+    // it negative, a PNP pair (4558) positive.
     using M = Circuit::OpAmpModel;
 
     const auto follower = [](const M& model)
@@ -1782,7 +1661,7 @@ TEST_CASE("Input bias current flows the way the input pair says", "[circuit][opa
     CHECK(follower(M::lm308()) == Catch::Approx(-0.0015).margin(1.0e-5));
     CHECK(std::abs(follower(M::tl072())) < 1.0e-4);
 
-    // And a model that does not ask for it costs nothing.
+    // A model without bias current costs nothing.
     auto none = M::lm741();
     none.inputBiasCurrent = 0.0;
     CHECK(std::abs(follower(none)) < 1.0e-6);
@@ -1790,10 +1669,8 @@ TEST_CASE("Input bias current flows the way the input pair says", "[circuit][opa
 
 TEST_CASE("A second pole leaves the gain crossing unity where the datasheet says", "[circuit][opamp]")
 {
-    // The datasheet's unity-gain bandwidth is where the gain crosses; the
-    // dominant pole is raised so the second pole does not pull that crossing
-    // down. At the crossing the open-loop magnitude is one, and the lag is
-    // 180 degrees less the margin.
+    // The datasheet's unity-gain bandwidth is where the gain crosses one; the lag there is
+    // 180 degrees less the phase margin.
     for (const auto& model : {Circuit::OpAmpModel::tl072(), Circuit::OpAmpModel::lm741(),
                               Circuit::OpAmpModel::jrc4558(), Circuit::OpAmpModel::lm308()})
     {
@@ -1810,7 +1687,7 @@ TEST_CASE("A second pole leaves the gain crossing unity where the datasheet says
         CHECK(180.0 - lag == Catch::Approx(model.phaseMargin).margin(0.1));
     }
 
-    // And a model without one is exactly the single pole it always was.
+    // A model without a second pole is the plain single pole.
     auto single = Circuit::OpAmpModel::tl072();
     single.phaseMargin = 0.0;
     CHECK(single.lowFrequencyGainBandwidth() == Catch::Approx(single.gainBandwidth).epsilon(1.0e-15));
@@ -1818,9 +1695,8 @@ TEST_CASE("A second pole leaves the gain crossing unity where the datasheet says
 
 TEST_CASE("A degenerated input pair solves its own transfer curve", "[opamp][model]")
 {
-    // u = (1 - d) atanh(x) + d x, solved by Newton inside the device. Bare, it
-    // is tanh; degenerated, the same small-signal slope and the same limit,
-    // reached later and more abruptly.
+    // u = (1 - d) atanh(x) + d x, solved by Newton in the device: tanh when bare; when
+    // degenerated, the same slope and limit reached later and more abruptly.
     for (const double d : {0.0, 0.35, 0.8})
     {
         for (const double u : {-60.0, -6.0, -1.5, -0.2, 0.0, 0.3, 1.0, 2.5, 8.0, 400.0})
@@ -1832,8 +1708,7 @@ TEST_CASE("A degenerated input pair solves its own transfer curve", "[opamp][mod
             CHECK(std::abs(x) <= 1.0);
             CHECK(std::isfinite(slope));
 
-            // Out where the whole tail is on one side, x is one to the last bit
-            // and the curve has nothing left to check.
+            // Saturated: nothing left to check.
             if (1.0 - std::abs(x) < 1.0e-9)
                 continue;
 
@@ -1855,8 +1730,7 @@ TEST_CASE("A degenerated input pair solves its own transfer curve", "[opamp][mod
 
 TEST_CASE("Only a part that can slew at the circuit's rate gets the input pair", "[circuit][opamp]")
 {
-    // A sample can ask the output to cross its whole swing, so a part whose
-    // slew rate covers swing x rate never slews and needs no pair.
+    // A part whose slew rate covers swing x rate never slews and needs no pair.
     using M = Circuit::OpAmpModel;
     const auto nineVolt = [](M m) { return m.withRails(9.0, 0.0); };
 
@@ -1868,7 +1742,7 @@ TEST_CASE("Only a part that can slew at the circuit's rate gets the input pair",
     CHECK_FALSE(nineVolt(M::ne5532()).slewsAt(16.0 * 48000.0));
     CHECK_FALSE(nineVolt(M::tl072()).slewsAt(16.0 * 48000.0));
 
-    // What the pair costs: two Newton ports beside the clamps' two.
+    // The pair adds two Newton ports beside the clamps' two.
     const auto ports = [](M model)
     {
         Circuit circuit;
@@ -1888,8 +1762,7 @@ TEST_CASE("Only a part that can slew at the circuit's rate gets the input pair",
 
 TEST_CASE("An ideal op-amp gives exactly the textbook gain", "[circuit][nullor]")
 {
-    // Not "close to" -- exactly. A nullor is the textbook assumption, so an
-    // inverting amp built on one has no error term to allow for.
+    // Exact: an ideal nullor has no error term.
     auto invertingGain = [](double rin, double rf)
     {
         Circuit circuit;
@@ -1902,20 +1775,17 @@ TEST_CASE("An ideal op-amp gives exactly the textbook gain", "[circuit][nullor]"
 
         const double out = circuit.process(1.0f);
 
-        // The inverting input is a virtual ground, and here it really is ground.
+        // The inverting input is a virtual ground.
         CHECK(circuit.getNodeVoltage("sum") == Catch::Approx(0.0).margin(1.0e-9));
 
-        // No nonlinear devices at all: one constraint row and nothing for Newton
-        // to do. That is the reason to reach for this over the macro model.
+        // No nonlinear devices: one constraint row, nothing for Newton.
         CHECK(circuit.getPortCount() == 0);
         CHECK_FALSE(circuit.isNonlinear());
 
         return out;
     };
 
-    // To float resolution, which is as exact as process() can report -- -4.7
-    // isn't representable in a float, so a tighter tolerance than this would be
-    // testing the return type rather than the solver.
+    // To float resolution (-4.7 isn't representable in a float).
     CHECK(invertingGain(10000.0, 10000.0) == Catch::Approx(-1.0).epsilon(1.0e-6));
     CHECK(invertingGain(10000.0, 47000.0) == Catch::Approx(-4.7).epsilon(1.0e-6));
     CHECK(invertingGain(1000.0, 100000.0) == Catch::Approx(-100.0).epsilon(1.0e-6));
@@ -1934,9 +1804,7 @@ TEST_CASE("An ideal op-amp gives exactly the textbook gain", "[circuit][nullor]"
 
 TEST_CASE("A transformer transforms voltage, current and impedance", "[circuit][transformer]")
 {
-    // Impedance reflection is the sharp test here: nothing in the model states
-    // it, so getting n^2 out is evidence the two equations are right rather than
-    // that the answer was written in.
+    // Impedance reflection (n^2) isn't stated in the model, so it tests the two equations.
     for (const double turns : {1.0, 2.0, 10.0})
     {
         constexpr double load = 1000.0;
@@ -1963,16 +1831,14 @@ TEST_CASE("A transformer transforms voltage, current and impedance", "[circuit][
         // ...current multiplies by it, in the opposite direction...
         CHECK(secondaryCurrent == Catch::Approx(-turns * primaryCurrent).epsilon(1.0e-6));
 
-        // ...so power is conserved exactly, and the primary sees the load
-        // multiplied by the square of the ratio.
+        // ...so power is conserved and the primary sees the load times n^2.
         CHECK(primary / primaryCurrent == Catch::Approx(load * turns * turns).epsilon(1.0e-6));
     }
 }
 
 TEST_CASE("A centre tap splits the secondary evenly", "[circuit][transformer]")
 {
-    // One core, so both halves are locked to the same flux -- which is why this
-    // is a single three-winding transformer and not two of them.
+    // One core: a single three-winding transformer.
     Circuit circuit;
     circuit.addResistor("in", "pa", 1.0);
     circuit.addCenterTapTransformer("pa", "gnd", "sa", "tap", "sb", 1.0, 1.0);
@@ -1990,8 +1856,7 @@ TEST_CASE("A centre tap splits the secondary evenly", "[circuit][transformer]")
 
     INFO("sa " << upper << ", tap " << circuit.getNodeVoltage("tap") << ", sb " << lower);
 
-    // Half the primary each, and in opposition -- which is what lets one of them
-    // conduct on each half cycle in a full-wave rectifier.
+    // Half the primary each, in opposition (as a full-wave rectifier needs).
     CHECK(upper == Catch::Approx(5.0).margin(0.01));
     CHECK(lower == Catch::Approx(-5.0).margin(0.01));
 }
@@ -1999,9 +1864,8 @@ TEST_CASE("A centre tap splits the secondary evenly", "[circuit][transformer]")
 TEST_CASE("A magnetising inductance turns an ideal transformer into a real one",
           "[circuit][transformer]")
 {
-    // The ideal transformer has no low-frequency limit; a real one is bounded by
-    // its primary inductance. Composing them gives the behaviour without the
-    // component needing to know about it.
+    // Primary inductance composed with the ideal transformer gives the low-frequency
+    // limit.
     Circuit circuit;
     circuit.addCapacitor("in", "pa", 10.0e-6);
     circuit.addResistor("pa", "gnd", 1.0e6);
@@ -2012,8 +1876,7 @@ TEST_CASE("A magnetising inductance turns an ideal transformer into a real one",
     circuit.setOutputNode("sa");
     circuit.prepare(sampleRate);
 
-    // 10:1 into 8 ohms, so the load reflects to 800 ohms and 10 H corners at
-    // 800/(2*pi*10) = 12.7 Hz.
+    // 10:1 into 8 ohms reflects to 800 ohms; 10 H corners at 800/(2*pi*10) = 12.7 Hz.
     const float atLow = measureResponse(circuit, 20.0, 1.0f, 0.5);
     const float inBand = measureResponse(circuit, 1000.0, 1.0f, 0.5);
 
@@ -2024,10 +1887,8 @@ TEST_CASE("A magnetising inductance turns an ideal transformer into a real one",
     CHECK(atLow > inBand * 0.8);                       // but only just, at 20 Hz
 }
 
-// Hidden from the default run (the "." tag): this is the measurement harness
-// behind the drive-dependence figures in LIMITATIONS.md's capacitance section,
-// not a pass/fail test -- it prints a table. Run it explicitly with
-// ./Tests [scratch] to re-measure.
+// Hidden (".") measurement harness behind LIMITATIONS.md's capacitance figures; prints
+// a table. Run with ./Tests [scratch].
 TEST_CASE ("Miller sweep: response against drive, with and without capacitance", "[.][scratch]")
 {
     using namespace CircuitComponents;
@@ -2098,15 +1959,9 @@ TEST_CASE ("Miller sweep: response against drive, with and without capacitance",
 
 TEST_CASE("A node held up only by semiconductors still solves", "[circuit][dk]")
 {
-    // DK lifts the nonlinear devices out of the linear matrix, so a node whose
-    // only company is semiconductor terminals used to end up with no
-    // conductance in it at all and a singular factorisation. A transistor's
-    // collector wired straight to the next one's base is exactly that node, and
-    // it is an ordinary direct-coupled pair, not an exotic case.
-    //
-    // The symptom was silence with no diagnostic: the DC system stamps the
-    // devices properly, so the operating point solved and looked correct, while
-    // process() saw an invalid factorisation and returned 0 for every sample.
+    // A node touching only semiconductor terminals has no linear conductance after DK
+    // lifts the devices out, so the factorisation was singular (silent output). A
+    // direct-coupled pair is exactly that.
     Circuit circuit;
     circuit.setInputNode("in");
     circuit.addVoltageSource("vcc", "gnd", 9.0);
@@ -2116,7 +1971,7 @@ TEST_CASE("A node held up only by semiconductors still solves", "[circuit][dk]")
     circuit.addResistor("e1", "gnd", 4700.0);
     circuit.addTransistor("b1", "c1", "e1", Circuit::BjtModel::npnSilicon());
 
-    // "c1" now carries the NPN's collector and the PNP's base, and nothing else.
+    // "c1" carries only the NPN's collector and the PNP's base.
     circuit.addTransistor("c1", "e1", "vcc", Circuit::BjtModel::pnpSilicon());
 
     circuit.setOutputNode("e1");
@@ -2124,8 +1979,8 @@ TEST_CASE("A node held up only by semiconductors still solves", "[circuit][dk]")
 
     REQUIRE(circuit.foundOperatingPoint());
 
-    // The real check: a circuit whose matrix wouldn't factorise returns exactly
-    // zero forever, so any finite non-zero response proves it is solving.
+    // A singular matrix returns zero forever, so a finite non-zero response proves it
+    // solves.
     double phase = 0.0;
     const auto step = 2.0 * juce::MathConstants<double>::pi * 220.0 / 48000.0;
 
@@ -2152,12 +2007,8 @@ TEST_CASE("A node held up only by semiconductors still solves", "[circuit][dk]")
 //==============================================================================
 TEST_CASE("The 2N5952 reproduces its datasheet", "[jfet][model]")
 {
-    // Held to the same standard as the valve models: the fitted parameters have
-    // to land inside every figure the manufacturer publishes, at the operating
-    // point the sheet quotes. Fairchild give no typicals for this part, only
-    // limits, so "inside the band" is the whole of what can be asked -- but the
-    // three figures are tied together by the square law, so a pair chosen at
-    // odds with each other shows up as the third falling outside.
+    // The fitted parameters must land inside every published limit (Fairchild gives no
+    // typicals). The three figures are tied by the square law.
     const auto m = CircuitComponents::JfetModel::n2n5952();
 
     // Fairchild 2N5952 Rev A1, at VDS = 15 V, VGS = 0.
@@ -2180,32 +2031,20 @@ TEST_CASE("The 2N5952 reproduces its datasheet", "[jfet][model]")
     CHECK(gfs <= 6.5e-3);                //     6500 umho max
     CHECK(gos <= 75.0e-6);               // gos 75 umho max
 
-    // N-channel, and the gate junction is present -- a Phase 90 drives these
-    // gates from an LFO and the stage has to block when that goes positive.
+    // N-channel, with the gate junction present (a Phase 90 drives gates positive).
     CHECK(m.channel == CircuitComponents::JfetModel::Channel::N);
     CHECK(m.gateSaturationCurrent > 0.0);
 }
 
 TEST_CASE("The 2N5952 works as a voltage-controlled resistor", "[jfet][model]")
 {
-    // What the part is in the palette for. Near Vds = 0 the channel is a
-    // resistor whose value the gate sets, and a phaser is four of them sweeping
-    // together -- so what matters is not the absolute ohms but that the gate
-    // moves them over a usable range.
-    //
-    // Driven through linearise(), deliberately. The version of this test that
-    // this replaces computed the slope resistance from the triode-region formula
-    // transcribed into the test body, which only ever confirmed that the formula
-    // had been retyped correctly. It passed for months while the device it
-    // claimed to cover conducted in one direction only, because the branch that
-    // did that was never reached from here.
+    // Near Vds = 0 the channel is a gate-controlled resistor (a phaser uses four). Checked
+    // through linearise(), so it tests the device itself.
     CircuitComponents::Jfet jfet{};
     jfet.model = CircuitComponents::JfetModel::n2n5952();
     CircuitComponents::DeviceLinearisation out{};
 
-    // Slope resistance at the origin: the channel conductance the solver would
-    // actually stamp, taken just off zero so the reading is the device's and not
-    // a special case.
+    // Slope resistance just off the origin: the conductance the solver stamps.
     const auto channelOhms = [&](double vgs)
     {
         double v[2] = {vgs, 1.0e-6};
@@ -2219,9 +2058,7 @@ TEST_CASE("The 2N5952 works as a voltage-controlled resistor", "[jfet][model]")
 
     INFO("Rds(on): " << wideOpen << " / " << halfOff << " / " << pinched << " ohm");
 
-    // A few hundred ohms wide open is what this part measures, and it has to
-    // climb by more than a decade before pinch-off or a phaser built round it
-    // would barely sweep.
+    // A few hundred ohms wide open, rising more than a decade before pinch-off.
     CHECK(wideOpen > 100.0);
     CHECK(wideOpen < 1000.0);
     CHECK(halfOff > wideOpen * 1.5);
@@ -2230,12 +2067,8 @@ TEST_CASE("The 2N5952 works as a voltage-controlled resistor", "[jfet][model]")
 
 TEST_CASE("A JFET channel conducts both ways", "[jfet][model]")
 {
-    // The defect the test above could not see. A JFET has no built-in drain and
-    // source -- it is one channel with a gate over it, and whichever end sits
-    // lower is the source. Treating negative Vds as an off state turned the part
-    // into a half-wave rectifier, and did it worst in the circuit it is in the
-    // palette for: a phaser or a compressor holds the channel near Vds = 0 and
-    // swings the signal straight through zero.
+    // A JFET is symmetric: whichever end is lower is the source. It must conduct for
+    // negative Vds (phasers swing through zero).
     CircuitComponents::Jfet jfet{};
     jfet.model = CircuitComponents::JfetModel::n2n5952();
     CircuitComponents::DeviceLinearisation out{};
@@ -2254,7 +2087,7 @@ TEST_CASE("A JFET channel conducts both ways", "[jfet][model]")
         return out.jacobian[3];
     };
 
-    // It conducts at all, in the direction that used to read exactly zero.
+    // It conducts in the reverse direction.
     const double forward = drainCurrent(-1.0, 0.4);
     const double reverse = drainCurrent(-1.0, -0.4);
 
@@ -2262,27 +2095,18 @@ TEST_CASE("A JFET channel conducts both ways", "[jfet][model]")
     CHECK(forward > 1.0e-6);
     CHECK(reverse < -1.0e-6);
 
-    // The channel is symmetric about its own terminals rather than about the
-    // gate: measured from the *source*, a reversed channel sees Vgd instead of
-    // Vgs, so it opens wider and passes more. That asymmetry is real -- it is
-    // why a JFET used as a variable resistor wants the classic 50% drain-to-gate
-    // feedback pair to cancel it -- so what is checked is that it is present and
-    // the right way round, not that the device is antisymmetric.
+    // Measured from the source, a reversed channel sees Vgd, so it passes more. The
+    // asymmetry is real and must be the right way round.
     CHECK(std::abs(reverse) > std::abs(forward));
 
-    // Antisymmetric where it should be: with the gate referred to the midpoint
-    // of the swing, both ends of the channel see the same thing.
+    // With the gate referred to the midpoint, both ends see the same: antisymmetric.
     const double a = drainCurrent(-1.0, 0.4);
     double v[2] = {-1.0 - 0.4, -0.4};
     linearise(jfet, v, out);
-    //
-    // To within the gate junctions' leakage: the drain terminal also carries
-    // the gate-drain junction's current, gmin-sized here, and in the mirrored
-    // case that junction sits at the other end. Picoamps against milliamps.
+    // To within gate-junction leakage (picoamps against milliamps).
     CHECK(out.current[1] == Catch::Approx(-a).margin(1.0e-11));
 
-    // And smooth across the crossing, which is where the signal spends its time.
-    // A kink here would be a discontinuity in the conductance the solver stamps.
+    // Smooth across the crossing.
     const double justAbove = slope(-1.0, 1.0e-9);
     const double justBelow = slope(-1.0, -1.0e-9);
 
@@ -2293,17 +2117,13 @@ TEST_CASE("A JFET channel conducts both ways", "[jfet][model]")
 //==============================================================================
 TEST_CASE("The 2N5133 reproduces its datasheet", "[bjt][model]")
 {
-    // Same standard as the valves and the 2N5952: the fitted card has to
-    // reproduce the figures the manufacturer publishes, at the currents they
-    // publish them at. Computed with the engine's own forward-active equations
-    // (see linearise in Transistor.h) rather than an independent formula, so
-    // this measures the model the solver will actually run.
+    // The fitted card must reproduce the manufacturer's figures at their currents,
+    // through the engine's own forward-active equations (see linearise in Transistor.h).
     const auto m = CircuitComponents::BjtModel::npn2N5133();
 
     const auto forwardActive = [&m](double ic)
     {
-        // Ic = IS*(ef - 1) with the collector junction off, so ef follows from
-        // the current, and Vbe from ef.
+        // Ic = IS*(ef - 1) with the collector junction off; ef from the current, Vbe from ef.
         const double ef = ic / m.saturationCurrent + 1.0;
         const double vbe = m.forwardScaleVoltage() * std::log(ef);
 
@@ -2324,7 +2144,7 @@ TEST_CASE("The 2N5133 reproduces its datasheet", "[bjt][model]")
     CHECK(hfe1mA == Catch::Approx(220.0).epsilon(0.01));
     CHECK(hfe50uA == Catch::Approx(50.0).epsilon(0.01));
 
-    // And inside the graded window at the point it is graded.
+    // Inside the graded window.
     CHECK(hfe1mA >= 60.0);
     CHECK(hfe1mA <= 1000.0);
 
@@ -2333,8 +2153,7 @@ TEST_CASE("The 2N5133 reproduces its datasheet", "[bjt][model]")
     CHECK(vbe1mA > 0.55);
     CHECK(vbe50uA < vbe1mA);
 
-    // BF is the no-recombination asymptote, so it should sit under the hFE
-    // maximum -- a typical part approaching the spread's top without passing it.
+    // BF is the asymptote, so it should sit under the hFE maximum.
     CHECK(m.forwardBeta < 1000.0);
     CHECK(m.forwardBeta > hfe1mA);
 
@@ -2343,9 +2162,8 @@ TEST_CASE("The 2N5133 reproduces its datasheet", "[bjt][model]")
 
 TEST_CASE("The 2N5133's gain sags at low current", "[bjt][model]")
 {
-    // The reason the part is worth having as its own model rather than as
-    // "another silicon NPN": a plain Ebers-Moll device holds BF flat all the
-    // way down, and this one loses three quarters of its gain over one decade.
+    // This part loses three quarters of its gain over one decade; plain Ebers-Moll holds
+    // BF flat.
     const auto m = CircuitComponents::BjtModel::npn2N5133();
     const auto plain = CircuitComponents::BjtModel::npnSilicon();
 
@@ -2367,17 +2185,14 @@ TEST_CASE("The 2N5133's gain sags at low current", "[bjt][model]")
 
     CHECK(cold < hot * 0.3);   // 50 against 220 is a factor of 4.4
 
-    // The generic silicon model, by contrast, barely moves -- which is what
-    // makes it the wrong stand-in for this part.
+    // The generic silicon model barely moves.
     CHECK(gainAt(plain, 50.0e-6) > gainAt(plain, 1.0e-3) * 0.9);
 }
 
 //==============================================================================
 TEST_CASE("Node names resolve to indices that read the same voltage", "[circuit][metering]")
 {
-    // What lets a scope read a node every sample without hashing its name every
-    // sample. The index form has to agree with the name form exactly, or the
-    // readout quietly moves to a different node.
+    // The index form must read exactly what the name form reads.
     Circuit circuit;
     circuit.addResistor("in", "mid", 1000.0);
     circuit.addResistor("mid", "gnd", 3000.0);
@@ -2391,8 +2206,7 @@ TEST_CASE("Node names resolve to indices that read the same voltage", "[circuit]
     CHECK(mid >= 0);
     CHECK(ground == 0); // ground is always node 0
 
-    // A name the netlist hasn't got resolves to -1 and reads as 0 V, so an
-    // unresolved probe reads like ground rather than indexing off the end.
+    // An unknown name resolves to -1 and reads 0 V.
     CHECK(circuit.getNodeIndex("nowhere") == -1);
     CHECK(circuit.getNodeVoltage(Circuit::NodeIndex{-1}) == Catch::Approx(0.0));
 
@@ -2402,8 +2216,7 @@ TEST_CASE("Node names resolve to indices that read the same voltage", "[circuit]
     CHECK(circuit.getNodeVoltage(mid) == Catch::Approx(0.75).margin(1.0e-9));
     CHECK(circuit.getNodeVoltage(mid) == Catch::Approx(circuit.getNodeVoltage("mid")));
 
-    // Indices survive processing -- nodes are only ever appended, never
-    // renumbered -- which is what makes it safe to resolve once per build.
+    // Indices survive processing (nodes are only appended).
     for (int i = 0; i < 64; ++i)
         circuit.process(0.5f);
 
@@ -2414,11 +2227,8 @@ TEST_CASE("Node names resolve to indices that read the same voltage", "[circuit]
 //==============================================================================
 TEST_CASE("A singular netlist stays quiet instead of re-factorising forever", "[circuit]")
 {
-    // An output terminal on a node nothing else touches: its row is all zeros,
-    // so the matrix will not factorise. process() has to report that once and
-    // then be cheap about it -- it used to retry the whole O(n^3) stamp and
-    // factorise on every sample, each attempt as doomed as the last, because
-    // rebuildLinearSystem() clears linearDirty whether or not it succeeded.
+    // A dangling output node makes the matrix singular. process() must report it once and
+    // not re-stamp and re-factorise every sample.
     Circuit circuit;
     circuit.addResistor("in", "a", 1000.0);
     circuit.addResistor("a", "gnd", 1000.0);
@@ -2436,18 +2246,14 @@ TEST_CASE("A singular netlist stays quiet instead of re-factorising forever", "[
         REQUIRE(out == 0.0f);
     }
 
-    // Still singular after all that: the answer does not drift, and nothing has
-    // quietly declared the factorisation usable again.
+    // Still singular: nothing marks it usable again.
     CHECK(! circuit.hasUsableFactorisation());
 }
 
 //==============================================================================
 TEST_CASE("A value change still re-stamps after prepare", "[circuit]")
 {
-    // The other half of the change above. Gating the rebuild on linearDirty
-    // alone is only safe because every setter re-sets it, so this pins that a
-    // knob move is still picked up -- the case that would break if the gate were
-    // ever tightened further.
+    // Rebuilds are gated on linearDirty, so a knob move must still set it.
     Circuit circuit;
     const auto top = circuit.addResistor("in", "out", 1000.0);
     circuit.addResistor("out", "gnd", 1000.0);
@@ -2467,23 +2273,14 @@ TEST_CASE("A value change still re-stamps after prepare", "[circuit]")
 //==============================================================================
 TEST_CASE("A valve plate never sources current", "[valve][model]")
 {
-    // A plate collects electrons. It cannot emit them, so its current cannot go
-    // negative however the rest of the valve is driven -- and both formulations
-    // used to let it, by different routes.
-    //
-    // This is not an exotic region. A push-pull output stage undershoots its
-    // plates on inductive kick from the transformer, which is why some amps fit
-    // flyback diodes across the primary; and Newton visits it while hunting for
-    // an operating point, where a large negative current pushes the iteration
-    // away from the root rather than towards it.
+    // A plate can't emit electrons, so its current must never go negative (inductive
+    // kick and Newton's search both visit that region).
     CircuitComponents::DeviceLinearisation out{};
 
     SECTION("Koren pentode, past the arctangent's useful range")
     {
-        // Koren bends the plate curve over with atan(Vp/KVB), a fit over the
-        // region the valve is used in. Below zero it returns a negative number
-        // and took the plate current with it: an EL34 with the grid at +5 V
-        // reported -285 mA at Vpk = -100 V.
+        // Koren's atan(Vp/KVB) goes negative below zero (an EL34 read -285 mA at
+        // Vpk = -100 V).
         CircuitComponents::Pentode pentode{};
 
         for (const auto& model : {CircuitComponents::PentodeModel::el34(),
@@ -2503,15 +2300,12 @@ TEST_CASE("A valve plate never sources current", "[valve][model]")
                     INFO("Vg1 = " << grid << ", Vpk = " << plate
                                   << ", Ia = " << out.current[2] << " A");
 
-                    // gmin is stamped across every port and rides on the answer,
-                    // so the floor is that rather than a hard zero.
+                    // gmin rides on every port, so the floor is that, not zero.
                     REQUIRE(out.current[2] >= CircuitComponents::gmin * plate - 1.0e-15);
                 }
         }
 
-        // The screen keeps conducting throughout -- it does not depend on the
-        // plate, which is the whole point of a screen grid, and clamping the
-        // plate must not have quietly changed that.
+        // The screen keeps conducting regardless of the plate.
         double v[3] = {-13.5, 265.0, -100.0};
         linearise(pentode, v, out);
         CHECK(out.current[1] > 0.0);
@@ -2519,15 +2313,8 @@ TEST_CASE("A valve plate never sources current", "[valve][model]")
 
     SECTION("Dempwolf-Zolzer triode, where Ig overtakes Ik")
     {
-        // These derive the plate current by subtraction, Ia = Ik - Ig, which is
-        // what makes them conserve cathode current. But their grid current has
-        // no plate term at all, so once the plate falls far enough for Ik to
-        // collapse below Ig the difference goes negative.
-        //
-        // Reachable two ways, and the second is the common one: deep plate
-        // undershoot, and *cutoff* -- where Ik falls below the model's constant
-        // Ig0 term, tens of nanoamps, and the subtraction goes slightly negative
-        // at every cut-off moment a clipping preamp has.
+        // These compute Ia = Ik - Ig, and Ig has no plate term, so deep plate undershoot or
+        // cutoff (Ik below Ig0) made it negative.
         CircuitComponents::Triode triode{};
 
         for (const auto& model : {CircuitComponents::TriodeModel::measured12ax7RSD(),
@@ -2551,9 +2338,7 @@ TEST_CASE("A valve plate never sources current", "[valve][model]")
 
     SECTION("Koren triode, which was already guarded")
     {
-        // Included so the three stay honest against one standard. Koren computes
-        // the plate current independently and switches off below cutoff, so it
-        // never had this defect -- worth pinning rather than assuming.
+        // Koren computes plate current independently; checked against the same standard.
         CircuitComponents::Triode triode{};
         triode.model = CircuitComponents::TriodeModel::ecc83();
 
@@ -2572,11 +2357,8 @@ TEST_CASE("A valve plate never sources current", "[valve][model]")
 //==============================================================================
 TEST_CASE("A starved pentode finds its bias a fraction of a volt above the cathode", "[valve][model]")
 {
-    // A pentode behind 100k on 300 V, screen on the rail: the screen takes most
-    // of the cathode current and the plate is starved down into the knee,
-    // under a volt from the cathode. Once the plate-slope refit sharpened the
-    // knees, Newton overshot from there into the flat region below the cathode
-    // and the KT66 settled at -149 V. See limitPortVoltages().
+    // A pentode behind 100k on 300 V, screen on the rail: the plate starved into the knee.
+    // Newton must not overshoot below the cathode (see limitPortVoltages()).
     using M = Circuit::PentodeModel;
 
     for (const auto& model : {M::el34(), M::u6l6gc(), M::el84(), M::kt66(), M::kt77(), M::u6v6(), M::kt88()})
@@ -2602,14 +2384,8 @@ TEST_CASE("A starved pentode finds its bias a fraction of a volt above the catho
 
 TEST_CASE("A pentode conducts smoothly as its screen comes up", "[valve][model]")
 {
-    // The gate that cuts the valve off used to sit at Ug2 = 1 V, where the
-    // model is still plainly conducting -- so Newton, which walks every node up
-    // from zero during the operating-point solve, met a step on the way.
-    //
-    // Below a *positive* grid the model is genuinely continuous through zero,
-    // so the step was pure artefact. This walks across where the old gate was
-    // and insists no neighbouring pair of screen voltages disagrees by more
-    // than the trend either side of it.
+    // Below a positive grid the model is continuous through zero screen voltage: no step
+    // between neighbouring screen voltages.
     CircuitComponents::Pentode pentode{};
     CircuitComponents::DeviceLinearisation out{};
 
@@ -2624,7 +2400,7 @@ TEST_CASE("A pentode conducts smoothly as its screen comes up", "[valve][model]"
 
         for (int step = 0; step <= 40; ++step)
         {
-            const double screen = 0.05 * step; // 0 V to 2 V, straight over the old gate
+            const double screen = 0.05 * step; // 0 V to 2 V
             double v[3] = {0.0, screen, 250.0};
             linearise(pentode, v, out);
 
@@ -2632,9 +2408,7 @@ TEST_CASE("A pentode conducts smoothly as its screen comes up", "[valve][model]"
 
             INFO("Ug2 = " << screen << ": Ik = " << ik * 1e3 << " mA");
 
-            // Monotone up, and never jumping by more than a fifth of a
-            // milliamp between neighbouring screen voltages a twentieth of a
-            // volt apart. The old gate stepped 0.18 mA at once on the EL34.
+            // Monotone, and at most 0.2 mA between screen voltages 0.05 V apart.
             CHECK(ik >= previous - 1.0e-12);
             CHECK(ik - previous < 0.2e-3);
             previous = ik;
@@ -2644,10 +2418,8 @@ TEST_CASE("A pentode conducts smoothly as its screen comes up", "[valve][model]"
 
 TEST_CASE("A Koren triode conserves cathode current", "[valve][model]")
 {
-    // Koren's curve, continued past a positive grid, is what the cathode emits;
-    // the grid's share has to come out of the plate rather than be added
-    // alongside it. This is the invariant the Dempwolf-Zolzer path has always
-    // held, now held by both.
+    // Koren's curve past a positive grid is cathode emission; the grid's share comes out
+    // of the plate.
     CircuitComponents::Triode triode{};
     CircuitComponents::DeviceLinearisation out{};
 
@@ -2666,8 +2438,7 @@ TEST_CASE("A Koren triode conserves cathode current", "[valve][model]")
             const double ig = out.current[0];
             const double ia = out.current[1];
 
-            // Ik is Koren's own curve at this point, recomputed independently of
-            // the split so this measures the split rather than restating it.
+            // Ik recomputed independently, so this measures the split.
             const double root = std::sqrt(model.kvb + 250.0 * 250.0);
             const double a = 1.0 / model.mu + grid / root;
             const double e1 = (250.0 / model.kp) * std::log1p(std::exp(model.kp * a));
@@ -2678,8 +2449,7 @@ TEST_CASE("A Koren triode conserves cathode current", "[valve][model]")
             CHECK(ia + ig == Catch::Approx(ik).epsilon(1.0e-6));
         }
 
-        // And a grid below the cathode is untouched: the whole of Koren's
-        // current still reaches the plate, to well inside any audible margin.
+        // A grid below the cathode leaves Koren's current on the plate.
         double v[2] = {-2.0, 250.0};
         linearise(triode, v, out);
 
@@ -2688,10 +2458,8 @@ TEST_CASE("A Koren triode conserves cathode current", "[valve][model]")
         const double e1 = (250.0 / model.kp) * std::log1p(std::exp(model.kp * a));
         const double ik = 2.0 * std::pow(e1, model.ex) / model.kg1;
 
-        // Written out with the gmin terms rather than hidden behind a loose
-        // tolerance: the plate carries gmin*Vpk, and the subtraction hands it
-        // back the grid branch's gmin*Vgk. Together 2.5e-10 A on these numbers,
-        // which is what a slack epsilon here would have been quietly absorbing.
+        // The plate carries gmin*Vpk and the subtraction returns the grid's gmin*Vgk: 2.5e-10 A
+        // here.
         const double leakage = CircuitComponents::gmin * 250.0 - CircuitComponents::gmin * -2.0;
 
         INFO("cold grid: Ia = " << out.current[1] * 1e3 << " mA vs Ik " << ik * 1e3 << " mA");
@@ -2701,9 +2469,7 @@ TEST_CASE("A Koren triode conserves cathode current", "[valve][model]")
 
 TEST_CASE("The plate-current floor leaves working valves alone", "[valve][model]")
 {
-    // The other half of the guard above. A floor that fired during ordinary
-    // operation would change what every saved sheet sounds like, so this pins
-    // the datasheet operating points the models were fitted at.
+    // The floor must not fire at the datasheet operating points.
     CircuitComponents::DeviceLinearisation out{};
 
     CircuitComponents::Triode triode{};
@@ -2726,12 +2492,8 @@ TEST_CASE("The plate-current floor leaves working valves alone", "[valve][model]
 //==============================================================================
 TEST_CASE("A transistor and a JFET run as ngspice runs them", "[bjt][jfet][model]")
 {
-    // The same circuits, the same parameters, in ngspice-47 at the engine's
-    // thermal voltage. A BJT with an Early voltage: the engine used to scale
-    // by 1 + Vce/VAF where Gummel-Poon -- and so every vendor's VAF -- means
-    // 1 + Vcb/VAF, and read collector currents ~1% high. A JFET with its drain
-    // pulled under its gate: the engine used to have no gate-drain junction,
-    // and was 0.77 V out there.
+    // The same circuits and parameters in ngspice-47 at the engine's thermal voltage: a
+    // BJT with an Early voltage, and a JFET with its drain pulled under its gate.
     struct BjtCase { double rb, rc, vin, vb, vc; };
     const BjtCase bjtCases[] = { { 1.0e6, 10.0e3, 3.0, 0.651197349, 3.689222270 },
                                  { 100.0e3, 1.0e3, 2.0, 0.695649053, 5.982498490 } };
@@ -2789,11 +2551,9 @@ TEST_CASE("A transistor and a JFET run as ngspice runs them", "[bjt][jfet][model
 
 TEST_CASE("The Early effect scales the transport current with collector voltage", "[bjt][model]")
 {
-    // Gummel-Poon's form, as every vendor card's VAF assumes: the transport
-    // current is divided by q1 = 1 / (1 - Vbc/VAF), a factor 1 + Vcb/VAF,
-    // which is an output resistance ro = VAF/Ic in disguise. Checked at the
-    // device, where the numbers are exact: at Vbe 0.65 V and Vcb 5 V the
-    // scale is 1.0675 and ro should come out at 74.03/Ic.
+    // Gummel-Poon's Early effect: transport current divided by q1 = 1 / (1 - Vbc/VAF), a
+    // factor 1 + Vcb/VAF (ro = VAF/Ic). At Vbe 0.65 V, Vcb 5 V: scale 1.0675, ro =
+    // 74.03/Ic.
     CircuitComponents::DeviceLinearisation on{};
     CircuitComponents::DeviceLinearisation off{};
 
@@ -2809,35 +2569,32 @@ TEST_CASE("The Early effect scales the transport current with collector voltage"
     lineariseWith(74.03, 0.65, -5.0, on);
     lineariseWith(0.0, 0.65, -5.0, off);
 
-    // Port 1 is (base, collector): its current is the base junction's minus the
-    // transport current, so negated it is essentially the collector current.
+    // Port 1 is (base, collector); negated, its current is essentially the collector
+    // current.
     const double icOn = -on.current[1];
     const double icOff = -off.current[1];
 
     INFO("Ic = " << icOff * 1e3 << " mA without, " << icOn * 1e3 << " mA with");
     CHECK(icOn / icOff == Catch::Approx(1.0 + 5.0 / 74.03).epsilon(1.0e-3));
 
-    // The output conductance is the difference the effect makes to the
-    // collector port's own slope: 1/ro with ro = VAF/Ic.
+    // The output conductance is the change in the collector port's slope: 1/ro.
     const double go = on.jacobian[3] - off.jacobian[3];
     INFO("go = " << go * 1e6 << " uS, so ro = " << 1.0 / go / 1e3 << " kohm");
     CHECK(go > 0.0);
     CHECK(1.0 / go == Catch::Approx(74.03 / icOff).epsilon(0.01));
 
-    // And the cross term mirrors it: the base-emitter port now also sees the
-    // base-collector voltage, with the opposite sign. Nothing new in the other
-    // direction -- the factor depends on Vbc alone.
+    // The cross term mirrors it with opposite sign; the factor depends on Vbc alone.
     CHECK(on.jacobian[1] == Catch::Approx(-go).epsilon(0.01));
     CHECK(std::abs(off.jacobian[1]) < 1.0e-12);
 
-    // PNP mirrors it exactly, polarity folded in twice.
+    // PNP mirrors it exactly.
     CircuitComponents::DeviceLinearisation pnpOut{};
     CircuitComponents::Bjt pnp{};
     pnp.model = CircuitComponents::BjtModel::pnpSilicon();
     double v[2] = {-0.65, 5.0};
     linearise(pnp, v, pnpOut);
 
-    // Less its high-injection knee, which this checks around.
+    // Without its high-injection knee.
     const auto pnpModel = CircuitComponents::BjtModel::pnpSilicon();
     const double scale = 1.0 + 5.0 / pnpModel.forwardEarlyVoltage;
     const double forward = pnpModel.saturationCurrent * (std::exp(0.65 / 0.025852) - 1.0);
@@ -2847,20 +2604,15 @@ TEST_CASE("The Early effect scales the transport current with collector voltage"
 
 namespace
 {
-    /** The grounded-emitter stage both transistor-refinement tests measure:
-        high gain and a high-impedance drive, so the Early output resistance
-        and the Miller-multiplied capacitance each have something to act on.
-
-        Biased near 0.13 mA through a 15M base resistor -- the 2N3904's
-        typical gain of 230 times its 0.56 uA -- which keeps the transistor's
-        own input resistance (~46k) comparable to the 100k source rather than
-        shorting the capacitance's pole out. */
+    /** A grounded-emitter stage with high gain and a high-impedance drive. Biased near
+        0.13 mA through 15M, so the transistor's input resistance (~46k) is comparable to
+        the 100k source. */
     Circuit makeGroundedEmitterStage(Circuit::BjtModel model)
     {
         Circuit circuit;
         circuit.addVoltageSource("vcc", "gnd", 9.0);
         circuit.addResistor("vcc", "base", 15.0e6);
-        circuit.addCapacitor("in", "src", 100.0e-6);  // blocks DC, transparent in band
+        circuit.addCapacitor("in", "src", 100.0e-6);  // blocks DC
         circuit.addResistor("src", "base", 100000.0); // the source the Miller cap works against
         circuit.addResistor("vcc", "collector", 22000.0);
         circuit.addTransistor("base", "collector", "gnd", model);
@@ -2873,20 +2625,17 @@ namespace
 
     double stageGainAt(Circuit& circuit, double frequency)
     {
-        // 1 mV in, ~110 out: deep inside the small-signal region.
+        // 1 mV in, ~110 out: small-signal.
         return measureResponse(circuit, frequency, 0.001f, 0.3) / 0.001;
     }
 }
 
 TEST_CASE("The Early effect moves a stage's gain by a few percent", "[circuit][transistor]")
 {
-    // In a circuit the effect is deliberately small -- a few percent of gain,
-    // not a doubling, and not nothing either. The sign is the topology's
-    // business: with this stage's current-source-ish bias the higher collector
-    // current wins over the extra output resistance and the gain rises
-    // slightly; with a stiff voltage bias it would fall.
+    // The Early effect changes the gain by a few percent here; with this bias the gain
+    // rises slightly.
     auto model = Circuit::BjtModel::npnSilicon();
-    model.capBaseEmitter = model.capBaseCollector = 0.0; // the DC effect only
+    model.capBaseEmitter = model.capBaseCollector = 0.0; // DC effect only
 
     auto withoutEarly = model;
     withoutEarly.forwardEarlyVoltage = 0.0;
@@ -2910,8 +2659,7 @@ TEST_CASE("The Early effect moves a stage's gain by a few percent", "[circuit][t
     CHECK(std::abs(change) < 0.10);
     CHECK(on.getNonConvergenceCount() == 0);
 
-    // And both solvers read the same device: DK eliminates the linear part and
-    // iterates on the ports, full Newton stamps everything each iteration.
+    // Both solvers read the same device.
     auto fullNewtonStage = makeGroundedEmitterStage(model);
     fullNewtonStage.setSolverStrategy(Circuit::SolverStrategy::FullNewton);
     fullNewtonStage.prepare(sampleRate);
@@ -2924,11 +2672,9 @@ TEST_CASE("The Early effect moves a stage's gain by a few percent", "[circuit][t
 
 TEST_CASE("Junction capacitance puts a pole on a transistor stage", "[circuit][transistor]")
 {
-    // The estimate for the stage above: Av ~ gm * Rc ~ 108, so
-    // Cin = Cbe + Cbc*(1+Av) ~ 400 pF, against 100k || 15M || r_pi ~ 31k that
-    // is a lowpass at ~12.7 kHz -- inside the audio band, which is the whole
-    // reason this is modelled. Low-frequency gain is Av times the divider the
-    // 100k source makes with r_pi, about a third.
+    // Av ~ gm * Rc ~ 108, so Cin = Cbe + Cbc*(1+Av) ~ 400 pF against
+    // 100k || 15M || r_pi ~ 31k: a pole near 12.7 kHz. Low-frequency gain is Av times the
+    // source divider, about a third.
     const auto gainAt = stageGainAt;
 
     auto model = Circuit::BjtModel::npnSilicon();
@@ -2945,7 +2691,7 @@ TEST_CASE("Junction capacitance puts a pole on a transistor stage", "[circuit][t
     INFO("low-frequency gain = " << g0);
     REQUIRE(g0 > 25.0);
 
-    // Find the -3 dB point by scanning, then check it lands near the estimate.
+    // Find the -3 dB point by scanning, then compare to the estimate.
     double poleFrequency = 0.0;
     double previousGain = g0;
     double previousFrequency = 100.0;
@@ -2957,8 +2703,7 @@ TEST_CASE("Junction capacitance puts a pole on a transistor stage", "[circuit][t
 
         if (g <= g0 * 0.7071 && poleFrequency == 0.0)
         {
-            // Interpolate on the log-frequency axis, where a one-pole rolloff
-            // is a straight line.
+            // Interpolate on log frequency, where a one-pole rolloff is straight.
             const double t = (std::log10(g0 * 0.7071) - std::log10(previousGain))
                            / (std::log10(g) - std::log10(previousGain));
             poleFrequency = previousFrequency * std::pow(f / previousFrequency, t);
@@ -2973,12 +2718,11 @@ TEST_CASE("Junction capacitance puts a pole on a transistor stage", "[circuit][t
     CHECK(poleFrequency > 4000.0);
     CHECK(poleFrequency < 16000.0);
 
-    // Well past the pole the stage should be more than 6 dB down.
+    // Well past the pole, more than 6 dB down.
     CHECK(previousGain < g0 * 0.5);
     CHECK(stage.getNonConvergenceCount() == 0);
 
-    // The capacitances are the only frequency limit here: without them the
-    // stage is flat to 20 kHz, at the same gain.
+    // Without the capacitances the stage is flat to 20 kHz.
     auto noCaps = model;
     noCaps.capBaseEmitter = noCaps.capBaseCollector = 0.0;
     auto flatStage = makeGroundedEmitterStage(noCaps);
@@ -2991,8 +2735,7 @@ TEST_CASE("Junction capacitance puts a pole on a transistor stage", "[circuit][t
     CHECK(flat0 == Catch::Approx(g0).epsilon(0.01));
     CHECK(flat20k == Catch::Approx(flat0).epsilon(0.03));
 
-    // And it is the Miller path, not the base-emitter capacitance: Cbe alone
-    // puts the pole near 800 kHz, which is flat for audio purposes.
+    // The Miller path sets it: Cbe alone puts the pole near 800 kHz.
     auto emitterOnly = model;
     emitterOnly.capBaseCollector = 0.0;
     auto beOnlyStage = makeGroundedEmitterStage(emitterOnly);
@@ -3004,10 +2747,9 @@ TEST_CASE("Junction capacitance puts a pole on a transistor stage", "[circuit][t
     CHECK(beOnly20k == Catch::Approx(g0).epsilon(0.03));
 }
 
-//==============================================================================
+// ==============================================================================
 // SCRATCH: GE ET-T509B resistance-coupled amplifier table, 12AX7.
-// Not a permanent test yet -- this is the measurement that says how far off the
-// shipped ECC83 model is against a real circuit rather than one bias point.
+// Measures the ECC83 model against a real circuit table.
 namespace
 {
     struct GeRow { double rp, rs, rg1, rk; int gain; double eo; double ebb; };
@@ -3064,8 +2806,7 @@ namespace
 
 namespace
 {
-    /** Gain the way GE measured it: drive the stage until it puts out 2.0 V RMS
-        (the sheet's note 2), then divide by the input that took. */
+    /** Gain as GE measured it: drive to 2.0 V RMS out (note 2), divided by the input. */
     double geGain(const GeRow& r, const CircuitComponents::TriodeModel& model)
     {
         auto build = [&]
@@ -3075,11 +2816,8 @@ namespace
             c->setOutputOffsetToOperatingPoint();
             return c;
         };
-        // Fixed point rather than bisection. The stage is very nearly linear at
-        // this level -- driving to 2 V RMS moves the gain about 1% -- so scaling
-        // the drive by the RMS it missed by converges in a couple of passes.
-        // Bisecting to the same accuracy costs forty circuit builds per row,
-        // which is ten times the runtime for no more precision.
+        // Fixed-point iteration: the stage is nearly linear, so scaling the drive by the miss
+        // converges in a couple of passes.
         double drive = 2.0 * std::numbers::sqrt2 / 50.0;
         double got = 0.0;
         for (int it = 0; it < 4; ++it)
@@ -3097,10 +2835,8 @@ namespace
 
 TEST_CASE("SCRATCH GE resistance-coupled table", "[.][ge]")
 {
-    // Candidates to compare in the real solver. The analytic fitter in the
-    // scratch tree is only a proxy -- it solves the load line directly instead
-    // of running the circuit -- so whatever it proposes has to be confirmed
-    // here, through the same DK engine the plugin actually uses.
+    // Candidate models, confirmed through the DK engine (the scratch fitter only solves
+    // the load line).
     struct Candidate { const char* name; CircuitComponents::TriodeModel model; };
     std::vector<Candidate> candidates;
     candidates.push_back({"JJ", CircuitComponents::TriodeModel::ecc83()});
@@ -3154,11 +2890,11 @@ TEST_CASE("SCRATCH GE bias diagnostics", "[.][gebias]")
         const double va = c->getNodeVoltage("plate"), vk = c->getNodeVoltage("cathode");
         const double ia = (r.ebb - va) / (r.rp * 1e6);
 
-        // small-signal gain: tiny sine, well below anything nonlinear
+        // Small-signal gain: a tiny sine.
         c->setOutputOffsetToOperatingPoint();
         const double a = geOutputRms(*c, 1.0e-4) / (1.0e-4 / std::numbers::sqrt2);
 
-        // the model's own gm and ra at that bias
+        // The model's own gm and ra at that bias.
         CircuitComponents::Triode t{}; t.model = model;
         CircuitComponents::DeviceLinearisation o{};
         double v[2] = {-(vk - 0.0) , va - vk};

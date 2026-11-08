@@ -9,16 +9,9 @@
 #include <cmath>
 #include <functional>
 
-/*
-    Bypass is pressed from two places -- the power button and the host's -- and has to
-    be one switch whichever is used. And because it is pressed with the track running,
-    in the middle of an A/B, switching it must not be heard as anything but the circuit
-    going away and coming back.
-
-    The same crossfade AURA and GALLERY use, and the same tests, measured against a
-    drawn circuit: the circuit, its oversampler and the cabinet all run whatever the
-    bypass says, and BypassFade decides how much of them is heard.
-*/
+/* Bypass from the power button or the host is one switch, and switching mid-playback
+   must not click. Same crossfade and tests as AURA and GALLERY: the circuit,
+   oversampler and cabinet always run; BypassFade decides how much is heard. */
 
 namespace
 {
@@ -32,8 +25,8 @@ namespace
         parameter->setValueNotifyingHost (parameter->convertTo0to1 (value));
     }
 
-    /** A steady 220 Hz sine through the plugin for `blocks` blocks, calling `atBlock`
-        before each one, and the left channel of what comes out. */
+    /** A steady 220 Hz sine for `blocks` blocks, calling `atBlock` before each; returns
+        the left channel. */
     std::vector<float> playSine (PluginProcessor& plugin, int blocks, const std::function<void (int)>& atBlock)
     {
         juce::AudioBuffer<float> buffer (2, blockSize);
@@ -62,9 +55,8 @@ namespace
         return out;
     }
 
-    /** The worst break in the waveform between two sample positions. The second
-        difference: near zero for any smooth signal, and a spike wherever the waveform
-        actually steps. */
+    /** The worst break in the waveform between two positions: the second difference, near
+        zero for a smooth signal. */
     float worstCurvature (const std::vector<float>& out, int from, int to)
     {
         auto worst = 0.0f;
@@ -76,16 +68,14 @@ namespace
         return worst;
     }
 
-    /** A tone through the plugin with the bypass toggled every `period` blocks, and the
-        worst break in the waveform relative to the tone's own. The baseline is the
-        rougher of the two settled states, bypassed and not -- a clipped sine has
-        corners a clean one has not, and a fade between them is not a click. */
+    /** Toggles bypass every `period` blocks and returns the worst break relative to the
+        rougher of the two settled states (a clipped sine has corners). */
     float worstToggleRatio (PluginProcessor& plugin)
     {
         constexpr int period = 30;
         constexpr int warmUp = 2 * period;
 
-        // Bypassed for the first period and on for the second, each settled by its end.
+        // Bypassed for the first period, on for the second, each settled by its end.
         auto bypassed = true;
         setParameter (plugin, "bypass", 1.0f);
 
@@ -113,9 +103,8 @@ namespace
         return toggling / baseline;
     }
 
-    /** A decaying burst of noise as long as a cabinet the plugin keeps, as a real
-        .wav: a response with a tail, so a cabinet replaying its past has something to
-        replay it through. */
+    /** A decaying noise burst as long as the cabinet cap, as a real .wav: a response with
+        a tail. */
     juce::File writeCabinet (const juce::File& folder)
     {
         const auto file = folder.getChildFile ("cab.wav");
@@ -173,9 +162,7 @@ TEST_CASE ("The host's bypass is the plugin's own", "[bypass]")
 
 TEST_CASE ("The power button follows a bypass pressed in the host", "[bypass][gui]")
 {
-    // The host's bypass is the plugin's own parameter, so pressing it there has to
-    // light the button here -- otherwise the toolbar says the circuit is running while
-    // the host has switched it out.
+    // Pressing the host's bypass lights the button.
     runWithinPluginEditor ([] (PluginProcessor& plugin)
     {
         auto* editor = plugin.getActiveEditor();
@@ -202,9 +189,8 @@ TEST_CASE ("The power button follows a bypass pressed in the host", "[bypass][gu
 //==============================================================================
 TEST_CASE ("Toggling the bypass does not click", "[bypass][clicks]")
 {
-    // The diode clipper on the default sheet, driven into its knee: a different level,
-    // a different shape and a different phase from what went in, so swapping one for the
-    // other in a sample was a step in the waveform.
+    // The default diode clipper driven into its knee: level, shape and phase all differ
+    // from the input.
     SECTION ("at the host's rate")
     {
         PluginProcessor plugin;
@@ -214,8 +200,7 @@ TEST_CASE ("Toggling the bypass does not click", "[bypass][clicks]")
         CHECK (worstToggleRatio (plugin) < 3.0f);
     }
 
-    // Oversampled, the circuit comes back later than it went in, and the dry signal
-    // has to be delayed to meet it.
+    // Oversampled, the dry signal is delayed to meet the circuit.
     SECTION ("oversampled four times")
     {
         PluginProcessor plugin;
@@ -243,9 +228,7 @@ TEST_CASE ("Toggling the bypass does not click", "[bypass][clicks]")
 
 TEST_CASE ("Coming out of bypass does not play what the cabinet heard before it", "[bypass][clicks]")
 {
-    // A cabinet that is not fed while bypassed keeps the input it last heard, and on
-    // the way back in convolves it: the past, arriving over a signal that has since
-    // gone quiet. It used to be skipped while bypassed, which is exactly that.
+    // A cabinet not fed while bypassed would replay its last input on re-engage.
     const auto folder = makeFolder();
     REQUIRE (folder.createDirectory());
 
@@ -268,8 +251,8 @@ TEST_CASE ("Coming out of bypass does not play what the cabinet heard before it"
 
     setParameter (plugin, "bypass", 1.0f);
 
-    // Bypassed, and silent, for most of a second: many times the cabinet's length, and
-    // long enough for the circuit's own capacitors to have let go too.
+    // Bypassed and silent for most of a second: longer than the cabinet and the
+    // circuit's capacitors.
     for (int block = 0; block < 80; ++block)
     {
         buffer.clear();
@@ -296,12 +279,8 @@ TEST_CASE ("Coming out of bypass does not play what the cabinet heard before it"
 //==============================================================================
 TEST_CASE ("Bypassed, the plugin is the input delayed by the latency it reports", "[bypass]")
 {
-    // The host compensates for the oversampler's latency whether the plugin is
-    // bypassed or not, so the bypassed signal has to arrive that late too. It used to
-    // get there by riding through the halfband filters with the circuit, which lined
-    // it up but filtered it; it is a delay line now, so bypassed is bit for bit what
-    // went in. Each side is its own input, whatever the channel mode, since only the
-    // engaged path collapses to mono.
+    // Bypassed output is the input delayed by the reported latency, bit for bit, per side
+    // in every channel mode.
     for (const auto factor : PluginProcessor::oversamplingFactors)
     {
         for (const auto mode : { 0, 3 }) // Stereo, Mono L+R
@@ -329,7 +308,7 @@ TEST_CASE ("Bypassed, the plugin is the input delayed by the latency it reports"
             {
                 for (int i = 0; i < blockSize; ++i)
                 {
-                    // Different on each side, so a bypass that folded to mono could not pass.
+                    // Different on each side, so a mono fold would fail.
                     const auto left = random.nextFloat() * 0.5f - 0.25f;
                     const auto right = random.nextFloat() * 0.5f - 0.25f;
                     buffer.setSample (0, i, left);
@@ -347,8 +326,7 @@ TEST_CASE ("Bypassed, the plugin is the input delayed by the latency it reports"
                 }
             }
 
-            // Past the fade and the latency, every sample out is the one that went in
-            // that long ago -- bit for bit, since bypass must not touch it at all.
+            // Past the fade and latency, every sample is the input from that long ago.
             for (auto i = (size_t) (latency + 4096); i < outLeft.size(); ++i)
             {
                 REQUIRE (juce::exactlyEqual (outLeft[i], inLeft[i - (size_t) latency]));
@@ -360,9 +338,8 @@ TEST_CASE ("Bypassed, the plugin is the input delayed by the latency it reports"
 
 TEST_CASE ("Changing the oversampling while bypassed does not click", "[bypass][clicks]")
 {
-    // A new factor reports a new latency, and the dry delay has to follow it. Jumping
-    // straight to the new read position skips samples of the input -- a click in what
-    // bypass promises is the untouched signal -- so it crossfades there instead.
+    // A new factor moves the dry delay, which crossfades to its new position rather than
+    // skipping samples.
     PluginProcessor plugin;
     plugin.prepareToPlay (sampleRate, blockSize);
     setParameter (plugin, "bypass", 1.0f);
@@ -394,8 +371,8 @@ TEST_CASE ("Changing the oversampling while bypassed does not click", "[bypass][
     REQUIRE (plugin.getLatencySamples() != before);
     run (40);
 
-    // A 100 Hz sine's second difference is under 1e-4. Two samples skipped at once
-    // put a step a hundred times that into it.
+    // A 100 Hz sine's second difference is under 1e-4; skipped samples would put a step
+    // a hundred times that.
     float worst = 0.0f;
 
     for (size_t i = 2; i < out.size(); ++i)
@@ -407,15 +384,9 @@ TEST_CASE ("Changing the oversampling while bypassed does not click", "[bypass][
 
 TEST_CASE ("Pressing Rebuild while a note plays does not click", "[clicks]")
 {
-    // A rebuild swaps a fresh circuit in for the running one. The fresh one starts
-    // at its bias point -- every capacitor at rest -- while the one it replaces was
-    // halfway through a waveform, so swapping them in a sample was a step. Now the
-    // old one fades to silence, the new one takes over there, and fades in. Every
-    // example sheet, since a sheet with little memory hides the step; and a change
-    // of oversampling factor too, which swaps the filters along with the circuit.
-    //
-    // Measured as the largest sample-to-sample step. A pop is a step; a 30 ms dip
-    // is not, though it bends the waveform's curvature where it turns round.
+    // Rebuilding dips through silence rather than swapping mid-waveform. Every example
+    // sheet, plus factor changes. Measured as the largest sample-to-sample step: a pop is
+    // a step; the 30 ms dip isn't.
     const auto names = SchematicModel::Examples::getNames();
     const int fadeLength = juce::roundToInt (PluginProcessor::rebuildFadeSeconds * sampleRate);
 
@@ -500,8 +471,7 @@ TEST_CASE ("Pressing Rebuild while a note plays does not click", "[clicks]")
 
                 CHECK (around <= 1.5f * baseline);
 
-                // And it does go through silence: at the turn, a few samples
-                // either side are within a fraction of a percent of nothing.
+                // At the turn, a few samples either side are near silent.
                 const auto turn = (size_t) (switchAt * blockSize + fadeLength);
                 auto peak = 0.0f, atTurn = 0.0f;
 

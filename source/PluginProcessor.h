@@ -12,24 +12,11 @@
 #include <vector>
 
 //==============================================================================
-/**
-    A circuit sandbox: the schematic on screen is the signal path.
+/** The plugin: the schematic on screen is the signal path.
 
-    Two speeds of change, and the split between them is the whole design:
-
-      Topology      Adding a part, moving a wire, retyping a resistor. Changes
-                    which nodes exist, so the matrix is rebuilt and a fresh bias
-                    point solved. That allocates, so it happens on the message
-                    thread when the user asks -- `rebuild()`.
-
-      Controls      Pots and switches only move a resistance the engine has
-                    already stamped, which it re-stamps per block without
-                    allocating. So they stay live.
-
-    That is why there is a Rebuild button rather than an attempt to edit the
-    running circuit: it keeps the fast path honest instead of making every knob
-    pay for the possibility of a topology change.
-*/
+    Topology changes (parts, wires, values) need rebuild(): the matrix is rebuilt and a
+    new bias point solved, on the message thread. Pots and switches stay live: the
+    engine re-stamps their resistance per block without allocating. */
 class PluginProcessor : public juce::AudioProcessor
 {
 public:
@@ -62,291 +49,170 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
-    /** Hands the host a real bypass control rather than making it fade around
-        the plugin. Without it the host makes a second bypass of its own, which
-        neither lights the power button nor goes through the crossfade -- two
-        switches that could disagree about whether the plugin was on. With it
-        there is one, wherever it is pressed from. */
+    /** The plugin's own bypass, so the host uses it instead of adding another. */
     juce::AudioProcessorParameter* getBypassParameter() const override { return bypassParameter; }
 
     //==========================================================================
     // The schematic, and turning it into something that runs
     //==========================================================================
 
-    /** The drawing. Owned here rather than by the editor so it survives the
-        window being closed, and so the host can save it. Message thread only. */
+    /** The drawing. Message thread only. */
     SchematicModel::Schematic& getSchematic() noexcept { return schematic; }
     const SchematicModel::Schematic& getSchematic() const noexcept { return schematic; }
 
-    /** Builds the schematic and swaps it in. Stamping, factorising and the bias
-        solve happen before the swap, so the audio thread is locked out only for
-        as long as it takes to move a few pointers; a failed build leaves the
-        previous circuit running and reports why. Message thread; it allocates.
+    /** Builds the schematic and swaps it in. All the work happens before the swap, so the
+        audio thread is locked out only to move pointers; a failed build keeps the previous
+        circuit running. Message thread; allocates.
 
-        The swap is a dip, not a cut: the running circuit fades out to
-        silence over rebuildFadeSeconds, the new one takes over at the silent
-        sample, and fades in over the same again. A fresh circuit starts at its
-        bias point with every capacitor at rest, while the one it replaces is
-        halfway through a waveform, so swapping them on one sample was a step --
-        a pop on every Rebuild with a note sounding, measured at 45 times the
-        waveform's own curvature on a 12AX7 stage.
-
-        Through silence rather than crossfaded, because only one circuit ever
-        runs at once: a crossfade runs both for the length of it, and on a sheet
-        already near a core's worth of CPU that is a dropout -- a click, the
-        thing the fade is for. And it holds across a change of rate, which a
-        crossfade cannot: the old circuit fades out on the filters it was
-        discretised for, and the new one comes in on its own. The cost is a gap
-        of about twice rebuildFadeSeconds on every Rebuild, which is the trade
-        made on purpose. */
+        The swap dips through silence: the old circuit fades out over rebuildFadeSeconds,
+        the new one fades in. Only one circuit runs at a time, and a change of
+        oversampling factor swaps its filters at the silent point. */
     SchematicModel::BuildResult rebuild();
 
-    /** Frees the circuit, and filters, a finished fade out left behind. The
-        audio thread cannot -- destroying a Circuit frees memory -- so it only
-        says the fade is over, and this does the rest. Cheap when there is
-        nothing to do, so the editor calls it from its timer; without an editor
-        they wait for the next rebuild. Message thread. */
+    /** Frees the circuit and filters left by a finished fade-out (the audio thread can't).
+        Cheap when there is nothing to do; called from the editor's timer. Message thread. */
     void releaseFadedCircuits();
 
-    /** Each half of a rebuild's dip. The bypass's length, so the two feel
-        alike. */
+    /** Length of each half of the rebuild dip. */
     static constexpr double rebuildFadeSeconds = BypassFade::fadeSeconds;
 
-    /** Deliberate inaccuracies traded for CPU. Read at rebuild() time, so a
-        plain value is enough. These travel *with* the document, unlike the
-        window size, because they change what the circuit sounds like. */
+    /** Build settings, read at rebuild() time. Saved in the document. */
     SchematicModel::BuildOptions buildOptions;
 
     /** See wasDocumentFromNewerBuild(). */
     bool documentFromNewerBuild = false;
 
-    /** How many times the host's rate the circuit runs at: one of
-        `oversamplingFactors`.
-
-        Every nonlinear device generates harmonics without limit, and at 48 kHz
-        what they make above 24 kHz folds back as inharmonic grit. Each doubling
-        costs a little under twice the CPU, the per-sample solve dominating --
-        Newton needs fewer iterations when consecutive samples are closer.
-
-        Changing it re-prepares the circuits -- the DK discretisation depends on
-        the timestep -- so it goes through rebuild() rather than per block. */
+    /** Oversampling factor: one of `oversamplingFactors`. Changing it rebuilds the
+        circuits, since the discretisation depends on the timestep. */
     int oversamplingFactor = 1;
 
-    /** Every factor the Settings menu offers, and the only ones a document can
-        ask for: the halfband chain comes in powers of two, one stage each. */
+    /** The factors offered: one halfband stage per doubling. */
     static constexpr std::array<int, 5> oversamplingFactors { 1, 2, 4, 8, 16 };
     static constexpr int maximumOversamplingFactor = oversamplingFactors.back();
 
-    /** Sets the factor and rebuilds. Message thread; returns the build result
-        so the caller can report failures the same way Rebuild does. */
+    /** Sets the factor and rebuilds. Message thread; returns the build result. */
     SchematicModel::BuildResult setOversamplingFactor (int factor);
 
-    /** Loads the cabinet impulse response the Output terminal names, and
-        returns what stopped it, or an empty string.
-
-        Message thread; it reads a file. Not folded into `rebuild()`, because a
-        cabinet touches nothing the matrix contains -- though rebuild() does call
-        it, so loading a preset brings its cabinet along.
-
-        A missing file is a *warning*, not an error: the sheet is fine, the
-        setting is kept, and audio carries on without the cab. */
+    /** Loads the impulse response the Output terminal names; returns an error message or
+        empty. Message thread. Also called by rebuild(). A missing file is a warning and
+        the audio runs without the cabinet. */
     juce::String refreshCabinet();
 
-    /** How long an impulse response may be, in samples **at 48 kHz**; anything
-        longer is truncated. Against a reference rate because what is limited is
-        a filter *duration* -- 42.7 ms has to stay 42.7 ms at 96 kHz rather than
-        becoming half a cab, so the sample count follows the session rate. */
+    /** Longest impulse response, in samples at 48 kHz; scaled with the session rate so the
+        duration stays the same. Longer ones are truncated. */
     static constexpr int cabinetImpulseSamples = 2048;
     static constexpr double cabinetReferenceRate = 48000.0;
 
-    /** The most taps the engine will ever be handed, which is the cap taken at the
-        highest rate this is expected to run at. The engine is sized for it once, in
-        prepareToPlay, because sizing allocates -- and a session opened at 192 kHz
-        must not be the one that finds out the buffers were cut for 48. */
+    /** The most taps ever loaded, at the highest expected rate. The convolver is sized for
+        this once, in prepareToPlay. */
     static constexpr int maximumCabinetSamples =
         (int) (cabinetImpulseSamples * 192000.0 / cabinetReferenceRate);
 
-    /** The audio file the Input terminal can play in place of the host's
-        input, for benching. Its own object, with its own threading, because
-        none of it is part of the sheet -- see InputFilePlayer for why it is
-        deliberately left out of the document and the host's state alike.
-
-        Played **before everything**, the bypass's dry copy included, so that
-        bypassing while a file plays gives the file back untouched: the A/B a
-        bench is for. The input gain still applies, since that is what sets how
-        hard any source hits the circuit. */
+    /** The file player that can replace the host input. Not part of the document. Played
+        before everything, including bypass's dry copy; the input gain still applies. */
     InputFilePlayer& getInputFilePlayer() noexcept { return inputFile; }
 
     //==========================================================================
-    /** One scope's picture, written by the audio thread and read by the UI.
-
-        A scrolling min/max envelope rather than a list of samples: the circuit
-        runs at up to 192 kHz into a hundred-odd pixels, so something has to
-        decimate and every Nth sample would alias.
-
-        Lock-free by construction -- one writer, one reader, fixed storage, no
-        blocking operation. */
+    /** One scope's picture: a scrolling min/max envelope, written by the audio thread and
+        read by the UI. Lock-free, fixed storage. */
     struct ScopeTrace
     {
-        /** How many columns the picture is. Fixed, because the storage has to be
-            allocated before the audio thread ever touches it. */
+        /** Number of columns. */
         static constexpr int columns = 128;
 
         std::atomic<float> minimum[columns] {};
         std::atomic<float> maximum[columns] {};
 
-        /** The column being filled. Everything to its left is complete. */
+        /** The column being filled; everything to its left is complete. */
         std::atomic<int> writeColumn { 0 };
 
-        /** The settled DC level and the full swing over the visible window --
-            the two numbers you actually bias against, alongside the picture. */
+        /** DC level and peak-to-peak swing over the window. */
         std::atomic<float> dcAverage { 0.0f };
         std::atomic<float> peakToPeak { 0.0f };
 
-        /** True once this trace has a circuit behind it. A scope whose pins
-            touch nothing still draws, and draws a flat line, which is honest but
-            indistinguishable from a node genuinely at zero -- so it says which. */
+        /** True once the trace has a circuit behind it. */
         std::atomic<bool> live { false };
     };
 
-    /** As many scopes as the pool has room for. Fixed for the same reason the
-        knob parameters are: the storage cannot be grown from the audio thread,
-        and a sheet can draw as many probes as it likes. */
+    /** Number of scope slots. */
     static constexpr int maxScopes = 8;
 
-    /** The trace for the scope element with this id, or null. Message thread. */
+    /** The trace of the scope with this id, or null. Message thread. */
     const ScopeTrace* getScopeTrace (int elementId) const noexcept;
 
-    /** Re-reads the scopes' time bases off the drawing and clears their
-        pictures. Its own entry point rather than part of rebuild(): retiming a
-        probe changes nothing about the circuit. Message thread. */
+    /** Re-reads the scopes' time bases and clears their pictures. Message thread. */
     void refreshScopeTiming();
 
-    /** Ask for a part's current to be measured, or 0 to stop measuring.
-
-        Nothing is measured until something asks, so an editor that is closed --
-        or open on a part with no readable current -- costs the audio thread
-        nothing at all. */
+    /** Sets the part whose current is measured, or 0 to stop. */
     void setInspectedElement (int elementId) noexcept;
 
-    /** The mean current and power through the inspected part, and the largest
-        current seen over the window. False when that part has no reading: it is
-        not in the built circuit, or it is a type whose current cannot be
-        derived from its terminal voltages. See CurrentProbe. */
+    /** Mean current, mean power and peak current of the inspected part. False when it
+        isn't in the built circuit or its current can't be derived (see CurrentProbe). */
     bool readInspectedCurrent (float& current, float& power, float& peak) const noexcept;
 
-    /** How wide a slice of time the picture covers. */
+    /** Time span of a scope picture. */
     static constexpr double scopeWindowSeconds = 0.04;
 
-    /** How long the loaded impulse response actually came out, in samples, or 0
-        if there isn't one.
-
-        Exists because loading happens on a background thread and returns
-        nothing, so this is the only way to see that a file was truncated to the
-        cap rather than merely asked to be. */
+    /** Length of the loaded impulse response in samples, or 0. */
     int getCabinetLength() const { return cabinetLength.load(); }
 
-    /** Writes the knob parameters back onto the parts that own them.
-
-        The parameters are the live truth -- what the audio thread reads, the
-        host automates and the session saves. A part's stored position is the
-        drawing's memory, so a knob keeps its meaning when the slots shift under
-        it. Wherever the two could disagree the parameters win, and this is that
-        direction. Message thread only. */
+    /** Writes the knob parameters back onto their parts. The parameters win wherever the
+        two disagree. Message thread. */
     void adoptControlPositions();
 
-    /** The live controls of the circuit currently running, in the order their
-        parts appear on the sheet. Message thread: for building the control
-        panel, not for audio. */
+    /** The running circuit's live controls, in strip order. Message thread. */
     std::vector<SchematicModel::LiveControl> getLiveControls() const;
 
     //==========================================================================
     // The whole circuit as one document
     //==========================================================================
 
-    /** The drawing and the knob positions together.
-
-        This is what the host saves *and* what a preset file contains -- one
-        format, one code path. A circuit without its knob settings is half a
-        preset, and a session that reopened with the knobs restored but the
-        circuit gone would be worse than one that saved nothing. */
+    /** The drawing and knob positions as one tree: what the host saves and what a preset
+        file contains. */
     juce::ValueTree createDocument();
 
-    /** The editor's last size. On the processor because the editor is rebuilt
-        every time the window closes, and in getStateInformation but deliberately
-        not in createDocument, so loading a preset never resizes your window.
-        Atomic because a host may save state from a thread of its choosing. */
+    /** The editor's last size. Saved in the plugin state, not in documents. Atomic: hosts
+        may save from any thread. */
     std::atomic<int> editorWidth { 1060 };
     std::atomic<int> editorHeight { 700 };
 
-    /** Whether the palette is folded to symbols. Here for the same reason the size
-        is -- the editor is rebuilt every time the window closes, and the panel
-        should come back as it was left -- but in neither the state nor the
-        document: it is how this window looks, not what the session sounds like.
-        Read and written on the message thread only. */
+    /** Whether the palette is folded. Kept across editor rebuilds, not saved. Message
+        thread. */
     bool paletteCollapsed = false;
 
-    /** Which preset the sheet came from, as the toolbar field shows it.
-
-        Here for the same reason the size is: the editor is rebuilt every time the
-        window closes, so a name that lived only there came back blank -- the sheet
-        still said what it always did and the field above it claimed nothing had been
-        loaded. Empty means no preset; `presetIsFactory` distinguishes a built-in,
-        which Save must not think it can overwrite, from a file on disk.
-
-        In getStateInformation but deliberately not in createDocument, again like the
-        size: loading a preset must not tell you it loaded a different one. Touched
-        from the message thread, and read wherever the host chooses to save from --
-        the same bargain createDocument already makes with the schematic itself. */
+    /** The preset the sheet came from, as the toolbar shows it; empty for none.
+        `presetIsFactory` marks a shipped example, which Save can't overwrite. Saved in the
+        plugin state, not in documents. */
     juce::String presetName;
     bool presetIsFactory = false;
     bool presetModified = false;
     juce::File presetFile;
 
-    /** Loads one back, rebuilds, and tells any open editor to catch up.
-        Returns false if the tree isn't one of ours. */
+    /** Loads a document, rebuilds and notifies an open editor. False if the tree isn't
+        ours. */
     bool restoreDocument(const juce::ValueTree& document);
 
-    /** Extension for saved circuits -- Céline schematics. */
+    /** Extension for saved circuits. */
     static constexpr const char* circuitFileExtension = ".celsch";
 
-    /** The ValueTree type a saved circuit carries, and what both the host's
-        state blob and a `.celsch` file are wrapped in. */
+    /** The ValueTree type of a saved circuit, for both the host state and .celsch files. */
     static constexpr const char* documentType = "CELINESCHEMATIC";
 
-    /** The property naming the build that wrote a document.
-
-        Absent means "older than this field", which is the harmless direction --
-        such a sheet is by definition not from the future. Only a version this
-        build does not recognise as its own or older is worth saying anything
-        about. */
+    /** Names the build that wrote a document. Absent in older documents. */
     static constexpr const char* documentVersionProperty = "celineVersion";
 
-    /** Whether the document most recently restored came from a build newer
-        than this one.
-
-        Answered here rather than reported through the build, because the answer
-        belongs to the *import*: it is true the moment the file is read, and a
-        person wants to know before they start looking at what they opened, not
-        as one line among the build's notes afterwards. Set on every restore, so
-        it never describes a document older than the current one. */
+    /** Whether the last restored document came from a newer build. */
     bool wasDocumentFromNewerBuild() const noexcept { return documentFromNewerBuild; }
 
-    /** This build's version, as written into every document it saves. */
+    /** This build's version, written into saved documents. */
     static juce::String getBuildVersion();
 
-    /** Orders two dotted version strings: negative if `a` is older, 0 if they
-        match, positive if `a` is newer.
-
-        Compared component by component as *numbers*, not as text -- "0.10.0" is
-        newer than "0.9.79" and a string compare says the opposite. Missing
-        components read as zero, so "1.0" and "1.0.0" are the same build. */
+    /** Compares dotted versions numerically: negative if `a` is older, 0 if equal,
+        positive if newer. Missing components count as zero. */
     static int compareVersions (const juce::String& a, const juce::String& b);
 
-    /** How many circuits actually run. Stereo keeps one per channel with its
-        own capacitor state; the mono settings run one and send its output to
-        both, differing only in what they feed it -- the easiest 50% of the
-        simulation anyone will ever save. */
+    /** Stereo runs one circuit per channel; the mono modes run one circuit and copy its
+        output to both. */
     enum class ChannelMode
     {
         Stereo = 0,
@@ -355,50 +221,31 @@ public:
         MonoSum,
     };
 
-    /** Fired when restoreDocument() replaced the drawing, so an open editor can
-        reload the canvas. A callback rather than a cast to the editor type: the
-        processor has no business knowing what an editor is, and some hosts
-        restore state from a thread the UI can't be touched from, which the
-        editor's own handler can deal with. */
+    /** Fired when restoreDocument() replaced the drawing. May come from a non-UI thread. */
     std::function<void()> onSchematicReplaced;
 
-    /** How many generic knob parameters exist.
-
-        The parameter list is fixed at construction, so a sheet's pots and
-        switches map onto a pool of this size and anything past it gets no fader
-        -- rebuild() says so rather than dropping it quietly.
-
-        Raising this is safe: new ids land after the existing ones, so saved
-        sessions and host automation are untouched. Lowering it is not. */
+    /** Number of generic knob parameters. A sheet's pots and switches map onto these in
+        order; rebuild() reports any that don't fit. Raising it is safe, lowering it breaks
+        saved sessions. */
     static constexpr int maxLiveControls = 16;
 
-    /** The most latency the oversampler reports at any factor, which the
-        bypass's dry path is sized for once, in prepareToPlay. Not the latency
-        of the factor in force: that changes from the message thread while
-        audio runs, and the delay line cannot grow then. The halfbands report
-        3, 4, 5 and 5 samples at 2x to 16x -- each further stage runs at a
-        higher rate, so adds less at the host's -- which leaves this room for a
-        longer filter, and a test holds every factor's real figure under it. */
+    /** Upper bound on the oversampler's latency at any factor; the bypass dry delay is
+        sized for it once. */
     static constexpr int maximumOversamplingLatency = 64;
 
     /** Parameter id for live control `index`. */
     static juce::String getControlParameterId (int index) { return "knob" + juce::String (index + 1); }
 
-    /** The level of a full-scale sine at the circuit with its gain at 0 dB, in
-        dBu: one volt peak per unit of full scale (see the input parameter), so
-        0.707 V RMS against dBu's 0.775 V -- -10 log10(1.2), about -0.79. The
-        output is read at the same scale, so it holds at both ends. */
+    /** Level of a full-scale sine at 0 dB gain, in dBu: 1 V peak per unit of full scale,
+        so -10 log10(1.2), about -0.79. The same at input and output. */
     static double fullScaleSineDbu() noexcept { return -10.0 * std::log10 (1.2); }
 
-    /** The INPUT knob as a calibration level: the dBu a full-scale sine reaches
-        the circuit at. NAM's `input_level_dbu`, for a capture rendered here.
-        Turning the knob up puts more volts on the circuit for the same signal. */
+    /** The INPUT knob as a calibration level: the dBu a full-scale sine reaches at the
+        circuit (NAM's `input_level_dbu`). */
     static double inputGainToDbu (double gainDb) noexcept { return fullScaleSineDbu() + gainDb; }
 
-    /** The OUTPUT knob as a calibration level: the dBu at the circuit's output
-        that comes out at full scale. NAM's `output_level_dbu`. The opposite sign
-        to the input's, because this gain comes after the circuit -- turning it
-        down takes more circuit volts to fill the same scale. */
+    /** The OUTPUT knob as a calibration level: the circuit output in dBu that reaches full
+        scale (NAM's `output_level_dbu`). */
     static double outputGainToDbu (double gainDb) noexcept { return fullScaleSineDbu() - gainDb; }
 
     juce::AudioProcessorValueTreeState apvts;
@@ -406,13 +253,11 @@ public:
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
-    /** Rebuilt whenever the factor or the block size changes. Null at 1x, where
-        the signal goes straight to the circuit. */
+    /** Recreated when the factor or block size changes. Null at 1x. */
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler;
     int preparedBlockSize = 512;
 
-    /** A filter chain for `factor`, built and ready, and the latency it will
-        report. Built off-lock: it allocates and designs filters. */
+    /** A filter chain for `factor`, ready to install, and its latency. */
     struct PreparedOversampler
     {
         std::unique_ptr<juce::dsp::Oversampling<float>> filters;
@@ -421,138 +266,80 @@ private:
 
     PreparedOversampler makeOversampler (int factor) const;
 
-    /** Swaps `fresh` in at once, with no fade, and takes up its factor and
-        latency. For when nothing is playing through it, or nothing can be
-        faded: prepareToPlay, and a factor whose sheet will not build. */
+    /** Installs `fresh` immediately, without a fade. For prepareToPlay, or a factor whose
+        sheet won't build. */
     void installOversamplerNow (PreparedOversampler& fresh, int factor);
 
-    /** Builds at `factor` and swaps the circuits in through the rebuild dip,
-        bringing `fresh` filters with them when the factor changes -- see
-        rebuild(). */
+    /** Builds at `factor` and swaps in through the rebuild dip, with `fresh` filters when
+        the factor changed. */
     SchematicModel::BuildResult rebuildAt (int factor, PreparedOversampler* fresh);
 
-    /** Ends any rebuild dip at once: the circuit fading out is dropped and the
-        new one plays at full level. prepareToPlay, where audio was stopped and
-        there is nothing to fade. */
+    /** Ends any rebuild dip at once. For prepareToPlay. */
     void cancelRebuildFade();
 
-    /** Bypass, faded rather than switched, against a copy of the input delayed
-        by the latency the host is compensating for. At the host's rate, after
-        the cabinet, because the cabinet is part of what bypass takes away and
-        a copy of the input is the only dry signal there is out here -- see
-        processBlock. */
+    /** Bypass crossfade against the latency-matched dry input, applied after the cabinet. */
     BypassFade bypassFade;
 
     SchematicModel::Schematic schematic;
 
-    /** Guards `circuits` and `controls`. Held for microseconds by the message
-        thread to swap them in, and only ever *tried* by the audio thread, which
-        would rather pass the block through dry than block. */
+    /** Guards `circuits` and `controls`. The message thread holds it briefly to swap; the
+        audio thread only tries it, and passes audio through dry if it fails. */
     juce::SpinLock circuitLock;
 
-    /** One per channel, so each keeps its own capacitor and device state. */
+    /** One per channel. */
     std::vector<std::unique_ptr<Circuit>> circuits;
     std::vector<SchematicModel::LiveControl> controls;
 
-    /** The circuit a rebuild replaced, while it fades out to silence -- see
-        rebuild(). Guarded by `circuitLock` like `circuits`, and kept, silent,
-        after the fade until releaseFadedCircuits() or the next rebuild frees
-        it off the audio thread. */
+    /** The circuit a rebuild replaced, while it fades out. Guarded by `circuitLock`, freed
+        by releaseFadedCircuits() or the next rebuild. */
     std::vector<std::unique_ptr<Circuit>> fadingCircuits;
 
-    /** The filters `fadingCircuits` run on, when a change of factor gave the
-        new circuit filters of its own. Otherwise the two take turns on
-        `oversampler`, and this is empty. Null with fadingOwnOversampler set
-        means the old circuit ran at the host's rate. */
+    /** The filters `fadingCircuits` run on, when a factor change gave the new circuit its
+        own. Null with fadingOwnOversampler set means the old circuit ran at the host rate. */
     std::unique_ptr<juce::dsp::Oversampling<float>> fadingOversampler;
     bool fadingOwnOversampler = false;
 
-    /** Samples of the dip's two halves left, at the host's rate, and the length
-        of each. Set under `circuitLock` with the swap; counted down by the audio
-        thread. Never both non-zero. */
+    /** Samples left in each half of the dip, at the host rate. Set under `circuitLock`,
+        counted down by the audio thread. Never both non-zero. */
     int fadeOutRemaining = 0;
     int fadeInRemaining = 0;
     int rebuildFadeLength = 1;
 
-    /** Set by the audio thread when a fade out reaches silence, so
-        releaseFadedCircuits() need not take the lock to find out there is
-        nothing to do. */
+    /** Set by the audio thread when a fade-out reaches silence. */
     std::atomic<bool> rebuildFadeFinished { false };
 
     //==========================================================================
-    /** The speaker cabinet, at the very end of everything.
-
-        **After the output gain**, which convolution being linear allows.
-
-        **After the oversampler**, at the host's rate: an impulse response is a
-        fixed-rate FIR that generates no harmonics and so cannot alias. It is
-        the one part of the chain that gains nothing from running faster.
-
-        **Zero latency**, so it stays out of the latency the oversampler
-        reports -- which is what keeps it in step with the dry path bypass
-        depends on. The house engine convolves its first partition directly, so
-        it has none of its own.
-
-        **The house engine rather than juce::dsp::Convolution**, and the reason
-        is threading. JUCE's documents that its methods may not be interleaved:
-        a load has to be synchronised with process(), "which in practice means
-        making the load() call from the audio thread". Loading from the message
-        thread while audio ran -- which is what a schematic edit did -- is a
-        data race, and the symptom is a heap-use-after-free rather than
-        anything you would hear coming. This engine is built the other way
-        round: the message thread prepares a filter and parks it, and the audio
-        thread picks it up at a frame boundary under a try-lock it never waits
-        on. Two further things follow from the swap being ours. It keeps the
-        input history, so a reload carries on from the same past instead of
-        convolving an empty one -- JUCE's clicked on every load. And it lands
-        within a frame rather than whenever a background thread gets to it:
-        measured at about 275 blocks, a second and a half, before a cabinet
-        became audible. */
+    /** The speaker cabinet, last in the chain: after the output gain, at the host rate,
+        with no latency of its own. PartitionedConvolver rather than juce::dsp::Convolution
+        so a new filter can be set from the message thread while audio runs. */
     PartitionedConvolver cabinet;
 
     /** See getInputFilePlayer(). */
     InputFilePlayer inputFile;
 
-    /** The length of the response in the convolver, since the engine does not
-        keep one. Message thread writes it, the editor reads it. */
+    /** Length of the loaded impulse response. Written by the message thread. */
     std::atomic<int> cabinetLength { 0 };
 
-    /** Whether the audio thread should actually run it: true only when the
-        switch is on *and* a file is loaded, so a missing impulse response is
-        one branch rather than a silent block. Atomic because the message thread
-        sets it while audio is running. */
+    /** Whether to run the cabinet: switched on and a file loaded. */
     std::atomic<bool> cabinetActive { false };
 
-    /** What is already in the convolver, so an unchanged path does not reload on
-        every rebuild -- loading re-reads the file and hands it to a background
-        thread. Message thread only. */
+    /** The file already loaded, to skip reloading an unchanged path. Message thread. */
     juce::File loadedCabinetFile;
 
-    //==========================================================================
-    // Scopes. The probes are what the last build found; the traces are the
-    // pictures the audio thread fills in.
+    // ==========================================================================
+    // Scopes: probes from the last build, and the traces the audio thread fills.
 
-    /** Which nodes each scope watches. Swapped under `circuitLock` alongside the
-        circuits, because the node names are only meaningful for the circuit they
-        were extracted from -- a probe left pointing at a node the new circuit
-        has not got would read a silent zero and look like a dead stage. */
+    /** Which nodes each scope watches. Swapped with the circuits under `circuitLock`. */
     std::vector<SchematicModel::ScopeProbe> probes;
 
-    /** One picture per scope. A plain array rather than a vector: it must not be
-        reallocated while the audio thread is writing into it, and the audio
-        thread is writing into it whenever a scope exists. */
+    /** One trace per scope slot. Fixed array: never reallocated while audio runs. */
     std::array<ScopeTrace, maxScopes> scopeTraces;
 
-    /** Which element owns each trace slot, mirrored out of `probes` under
-        `circuitLock`, so getScopeTrace() -- called from the paint path several
-        times a frame -- finds a trace without locking. Locking in paint would
-        hand the audio thread a reason to drop a block every frame. 0 means the
-        slot is unused. */
+    /** The element owning each trace slot (0 = unused), so getScopeTrace() can find a
+        trace without locking. */
     std::array<std::atomic<int>, maxScopes> scopeElementIds {};
 
-    /** Where the audio thread has got to in the column it is filling. Not in
-        ScopeTrace because nothing outside the audio thread has any business
-        reading them, and putting them there would invite it. */
+    /** The audio thread's progress through the current column. */
     struct ScopeAccumulator
     {
         float minimum = 0.0f;
@@ -562,22 +349,13 @@ private:
 
     std::array<ScopeAccumulator, maxScopes> scopeAccumulators;
 
-    /** How many samples go into one column, at the rate the circuit actually
-        runs at -- which is the oversampled one, since that is where the samples
-        come from. Recomputed whenever that rate changes.
-
-        One per scope, because the time base is a property of the probe: a sheet
-        can watch a 20 kHz ripple on one and an envelope settling on another, and
-        those are not the same number of samples per column. */
+    /** Samples per column for each scope, at the oversampled rate. */
     std::array<int, maxScopes> samplesPerScopeColumn { };
 
-    /** The window the *inspected part's* current is averaged over. Not per
-        scope -- it is not a scope -- and kept as its own figure so that
-        retiming a probe does not silently retime the current readout with it. */
+    /** Samples the inspected part's current is averaged over. */
     int samplesPerCurrentWindow = 2048;
 
-    /** Everything the per-sample loop reads, gathered once a block so the two
-        render paths take one argument rather than eight. */
+    /** Everything the per-sample loop reads, gathered once per block. */
     struct BlockState
     {
         ChannelMode mode = ChannelMode::Stereo;
@@ -587,51 +365,38 @@ private:
         int controlCount = 0;
     };
 
-    /** One circuit per side, each with its own state. `set` is the live
-        circuits or the ones fading out after a rebuild; only `live` ones take
-        the controls and feed the scopes and the current readout. */
+    /** One circuit per channel. `set` is the live circuits or the fading ones; only live
+        ones apply the controls and feed the scopes and current readout. */
     void runStereo (std::vector<std::unique_ptr<Circuit>>& set, bool live,
                     float* left, float* right, int count, const BlockState& state);
 
-    /** One circuit, its output copied to both sides. */
+    /** One circuit, output copied to both channels. */
     void runMono (std::vector<std::unique_ptr<Circuit>>& set, bool live,
                   float* left, float* right, int count, const BlockState& state);
 
-    /** The rebuild dip on one piece at the host's rate: down towards silence
-        while the old circuit plays, up from it while the new one does. */
+    /** Applies the rebuild dip at the host rate: down while the old circuit plays, up while
+        the new one does. */
     void applyRebuildFade (juce::AudioBuffer<float>& piece, bool outgoing) noexcept;
 
     void applyControls (Circuit& circuit, const BlockState& state);
 
     void prepareScopes();
 
-    /** Takes one reading from every probe. Called from inside the per-sample
-        loop, so it is the one piece of scope code that has to be cheap: two
-        node lookups per probe, measured at 3.5 ns a sample against a 310 ns
-        solve. */
+    /** Takes one reading from every probe. Called per sample, so it must be cheap. */
     void sampleScopes (Circuit& circuit) noexcept;
 
-    //==========================================================================
-    // The inspected part's current.
-    //
-    // One part at a time, because the inspector only ever shows one: a whole
-    // sheet's worth of readings would cost a node lookup per part per sample to
-    // produce numbers nobody is looking at. The editor says which, the audio
-    // thread answers, and when no inspector is open nothing is measured at all.
+    // ==========================================================================
+    // The inspected part's current (one part at a time; nothing measured when no one
+    // asks).
 
-    /** Which part the inspector is showing, or 0. Written by the message thread,
-        read by the audio thread, and safe to be stale by a block -- the worst a
-        race can do is measure the previously selected part for one more buffer. */
+    /** The part being measured, or 0. Written by the message thread, read by the audio
+        thread. */
     std::atomic<int> inspectedElement { 0 };
 
-    /** Where that part's pins landed. Swapped with the circuits under
-        `circuitLock`, for the same reason the scope probes are. */
+    /** Where its pins landed. Swapped with the circuits under `circuitLock`. */
     std::vector<SchematicModel::CurrentProbe> currentProbes;
 
-    /** Running totals for the inspected part, averaged over the window the
-        scope draws. Mean rather than instantaneous: a number reshuffling itself
-        sixty times a second is one you cannot read, and what cooks a resistor is
-        average power anyway. */
+    /** Running totals for the inspected part, averaged over the scope window. */
     struct CurrentAccumulator
     {
         double sumCurrent = 0.0;
@@ -647,9 +412,7 @@ private:
     std::atomic<float> inspectedPeakCurrent { 0.0f };
     std::atomic<bool> inspectedLive { false };
 
-    /** One reading from the inspected part, if there is one. Called from the
-        per-sample loop next to sampleScopes and costing the same two node
-        lookups -- but only ever for a single part. */
+    /** One reading from the inspected part. Called per sample. */
     void sampleInspectedCurrent (Circuit& circuit) noexcept;
 
     double currentSampleRate = 44100.0;
@@ -657,26 +420,14 @@ private:
     juce::AudioParameterBool* bypassParameter = nullptr;
     juce::AudioParameterChoice* channelModeParameter = nullptr;
 
-    /** The raw value cells processBlock reads, looked up once in the
-        constructor.
-
-        Not an optimisation for its own sake: getControlParameterId() builds
-        "knob" + String(n), which is two heap allocations, and the loop that
-        reads them runs the full pool every block whatever the sheet holds --
-        about thirty allocations per block on the audio thread. The lookup
-        itself is free (APVTS keys its map by StringRef), so the strings were
-        the whole cost.
-
-        The pointers are stable: an adapter lives as long as the APVTS does, and
-        the parameter list is fixed at construction. */
+    /** Raw parameter values processBlock reads, looked up once so the audio thread never
+        builds parameter id strings. */
     std::atomic<float>* bypassValue = nullptr;
     std::atomic<float>* inputGainValue = nullptr;
     std::atomic<float>* outputGainValue = nullptr;
     std::array<std::atomic<float>*, maxLiveControls> controlValues {};
 
-    /** So a switch back to stereo can clear the circuit that has been sitting
-        idle. Its capacitors would otherwise still hold whatever charge they had
-        when it was last used, and re-engaging would thump. */
+    /** Last channel mode, so switching back to stereo can reset the idle circuit. */
     ChannelMode lastChannelMode = ChannelMode::Stereo;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginProcessor)

@@ -5,92 +5,55 @@
 #include <atomic>
 #include <memory>
 
-/**
-    An audio file played into the circuit in place of the host's input -- for
-    benching, where the same take through two versions of a sheet is the only
-    comparison worth making by ear.
+/** Plays an audio file into the circuit instead of the host input, for comparing sheets.
 
-    Deliberately **not part of the document**. A file on one machine is a path
-    that does not exist on the next, and a sheet that started playing something
-    when it was opened would be a preset with a side effect. So nothing here
-    reaches createDocument() or the host's state: the player lives as long as
-    the plugin instance does, survives the editor closing, and starts every
-    session empty and on live input.
+    Not saved in the document or the plugin state: every session starts on live input.
 
-    Three threads, and the split between them is the design:
+    Threads:
+    - message thread: requests (load, play, stop, loop, file/live); all return at once;
+    - one worker thread, created on first use: decodes and resamples, one job at a time;
+    - audio thread: render() copies samples under a try-lock, silence if it is busy.
 
-      Message thread  Asks for things: load a file, play, stop, loop, live or
-                      file. Every call returns at once.
-
-      Worker thread   Decodes and resamples. A long file at a foreign rate is
-                      seconds of work, which the message thread must not spend
-                      and the audio thread cannot. One thread, made the first
-                      time a file is asked for, so an instance that never plays
-                      one never has it; and one job at a time, so the jobs never
-                      race each other for the decoded buffer.
-
-      Audio thread    render(), which copies samples and nothing else. It takes
-                      the buffer under a try-lock the worker holds only to swap
-                      two pointers, and plays silence rather than wait.
-
-    The file is resampled **once, to the host's rate**, on the worker, rather
-    than on the fly: an offline resampler can afford a filter no realtime one
-    could, and the circuit then sees exactly the samples a file already at the
-    session rate would have given it. A file at the session rate is not touched
-    at all, so it reaches the circuit bit-exact.
-*/
+    Files are resampled once to the host rate; a file already at that rate is untouched. */
 class InputFilePlayer
 {
 public:
-    /** The longest file taken, in seconds; anything longer is truncated, and
-        the status says so. A bound on memory rather than on use: five minutes
-        of stereo float is 115 MB at 48 kHz and 460 MB at 192 kHz, which is
-        already more than a benching loop should cost. */
+    /** Longest file accepted, in seconds; longer files are truncated. */
     static constexpr double maximumSeconds = 300.0;
 
     InputFilePlayer();
     ~InputFilePlayer();
 
-    //==========================================================================
+    // ==========================================================================
     // Message thread
 
-    /** Decodes `file` in the background and, if it reads, replaces whatever
-        was loaded, stopped and at the start. A file that fails leaves the
-        previous one in place and says why in getStatus().
+    /** Decodes `file` in the background and, if it reads, replaces the current file
+        (stopped, at the start). On failure the previous file stays and getStatus() says why.
 
-        `switchToFileWhenLoaded` turns file input on once the file has read,
-        and only then. Turned on up front, a file that fails to read -- with
-        nothing loaded before it -- would leave the circuit listening to
-        silence. A setFileMode() in the meantime is the later word, and cancels
-        the switch. */
+        `switchToFileWhenLoaded` turns file input on once the file has loaded. A
+        setFileMode() before then cancels it. */
     void load (const juce::File& file, bool switchToFileWhenLoaded = false);
 
-    /** The rate render() will be called at. A loaded file at any other rate is
-        dropped -- played as it stands it would come out at the wrong pitch --
-        and resampled again in the background from the file on disk. Called from
-        prepareToPlay, where the audio thread is not running. */
+    /** Sets the rate render() runs at. A loaded file at another rate is dropped and
+        resampled again in the background. Call from prepareToPlay. */
     void prepare (double sampleRate);
 
-    /** File or live input. Going back to live stops the file, so that coming
-        back to it starts from the top rather than from wherever it was left
-        running unheard. */
+    /** File or live input. Switching to live stops the file. */
     void setFileMode (bool shouldPlayFile) noexcept;
     bool isFileMode() const noexcept { return fileMode.load(); }
 
     void setLooping (bool shouldLoop) noexcept { looping.store (shouldLoop); }
     bool isLooping() const noexcept { return looping.load(); }
 
-    /** Starts the file, from the top if it had played to the end. Switches to
-        file input on the way: a Play that left the circuit listening to the
-        host would be a button that does nothing you can hear. */
+    /** Starts the file (from the top if it had ended) and switches to file input. */
     void play() noexcept;
 
-    /** Stops and goes back to the start. */
+    /** Stops and rewinds. */
     void stop() noexcept;
 
     bool isPlaying() const noexcept { return playing.load(); }
 
-    /** Everything the inspector shows, gathered in one go. */
+    /** Everything the inspector shows. */
     struct Status
     {
         juce::File file;              ///< What is loaded, or none.
@@ -105,70 +68,52 @@ public:
         bool fileMode = false;
         bool looping = false;
 
-        /** Counts finished loads, successful or not, so a caller can tell a new
-            answer from the one it last reported. */
+        /** Counts finished loads, successful or not, so a caller can spot a new result. */
         int loadsFinished = 0;
     };
 
     Status getStatus() const;
 
-    /** Blocks until no load is pending or running, or the time runs out.
-        For tests and benchmarks, which need the file before the first block. */
+    /** Blocks until no load is pending, or the timeout passes. For tests and benchmarks. */
     bool waitUntilLoaded (int timeoutMilliseconds) const;
 
-    //==========================================================================
+    // ==========================================================================
     // Audio thread
 
-    /** In file mode, writes the file over `channels` -- or silence, when it is
-        stopped, finished or still loading -- and returns true. In live mode,
-        touches nothing and returns false.
-
-        A mono file goes to every channel; a stereo file into one channel is
-        their average, the same sum Mono L+R makes. Never allocates, never
-        waits. */
+    /** In file mode, writes the file (or silence when stopped, finished or loading) over
+        `channels` and returns true. In live mode, does nothing and returns false. A mono
+        file goes to every channel; stereo into one channel is averaged. Never allocates
+        or waits. */
     bool render (float* const* channels, int numChannels, int numSamples) noexcept;
 
     //==========================================================================
-    /** Band-limited resampling: a Kaiser-windowed sinc, 64 zero crossings each
-        side, the cutoff at 95% of the lower of the two Nyquists. Measured from
-        44.1 to 48 kHz, every sample of a sine up to 20 kHz lands within -95 dB of
-        the ideal one; from 96 down to 48 kHz, anything from 24.5 kHz up comes out
-        at least 95 dB down instead of folding back into the band.
-
-        Public because it is the one piece here with a right answer that can be
-        checked against arithmetic. `cancel`, when given, is polled so a long
-        job can be abandoned; the result is then empty. */
+    /** Kaiser-windowed sinc resampling, 64 zero crossings, cutoff at 95% of the lower
+        Nyquist. `cancel`, if given, is polled; the result is empty if cancelled. */
     static juce::AudioBuffer<float> resample (const juce::AudioBuffer<float>& source,
                                               double sourceRate, double destinationRate,
                                               const std::atomic<bool>* cancel = nullptr);
 
 private:
-    /** What the worker does every time it runs: bring the installed samples in
-        line with the file and rate most recently asked for. One job rather than
-        a "load" and a "resample", so whatever order the requests came in, the
-        last one wins and a stale job finds nothing left to do. */
+    /** The worker's job: bring the installed samples in line with the latest requested
+        file and rate. The last request wins. */
     void bringUpToDate();
 
     void startJob();
 
-    /** Swaps `fresh` in, stopped and at the start. Returns the old buffer, so
-        it is freed outside the lock. Called with `stateLock` held, so the swap
-        and the installed* fields that describe it change together: otherwise a
-        prepare() landing between the two could keep a buffer at the old rate
-        or throw away one at the new. */
+    /** Swaps `fresh` in, stopped at the start, and returns the old buffer to free outside
+        the lock. Call with `stateLock` held. */
     std::unique_ptr<juce::AudioBuffer<float>> install (std::unique_ptr<juce::AudioBuffer<float>> fresh);
 
-    //==========================================================================
-    // The audio thread's side.
+    // ==========================================================================
+    // Audio thread side.
 
     juce::SpinLock bufferLock;
     std::unique_ptr<juce::AudioBuffer<float>> current;
 
-    /** Written by the audio thread alone, except under `bufferLock`, where the
-        audio thread cannot be. */
+    /** Written only by the audio thread, or under `bufferLock`. */
     std::atomic<juce::int64> position { 0 };
 
-    /** How the message thread moves `position` without writing it. */
+    /** Lets the message thread rewind without writing `position`. */
     std::atomic<bool> rewindPending { false };
 
     std::atomic<bool> playing { false };
@@ -176,9 +121,8 @@ private:
     std::atomic<bool> fileMode { false };
     std::atomic<juce::int64> length { 0 };
 
-    //==========================================================================
-    // Everybody else's. Guarded by `stateLock`, which the audio thread never
-    // takes.
+    // ==========================================================================
+    // Everything else, guarded by `stateLock` (never taken by the audio thread).
 
     juce::CriticalSection stateLock;
 
@@ -188,18 +132,15 @@ private:
     juce::String problem;
     int loadsFinished = 0;
 
-    /** Jobs queued or running. Atomic so waitUntilLoaded can read it without
-        the lock it would otherwise spin on. */
+    /** Jobs queued or running. */
     std::atomic<int> jobsPending { 0 };
 
     std::atomic<bool> cancelled { false };
 
-    /** A load asked to turn file input on when it reads. See load(). */
+    /** Set by load(); see there. */
     std::atomic<bool> switchToFileOnLoad { false };
 
-    /** Made on first use: see the class comment. Last, so it is destroyed
-        first, waiting for its job while everything that job touches still
-        exists. */
+    /** Created on first use. Declared last so it is destroyed first. */
     std::unique_ptr<juce::ThreadPool> worker;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (InputFilePlayer)

@@ -7,23 +7,18 @@ namespace
 {
     constexpr int zeroCrossings = 64;
 
-    /** Table resolution, in steps per zero crossing. Read with linear
-        interpolation, whose error is under h''/8 per step squared -- about
-        4e-7 of full scale here, below the filter's own -90 dB stopband. */
+    /** Kernel table resolution, in steps per zero crossing (linearly interpolated). */
     constexpr int tableSteps = 1024;
 
-    /** 0.1102 (A - 8.7) for A = 90 dB, Kaiser's own rule. */
+    /** Kaiser's rule for 90 dB attenuation: 0.1102 (A - 8.7). */
     constexpr double kaiserBeta = 9.0;
 
-    /** Where the cutoff sits, against the lower Nyquist. The transition band
-        is centred on it, so this is what keeps the band that does not get
-        through from folding back under the one that does. */
+    /** Cutoff as a fraction of the lower Nyquist. */
     constexpr double rolloff = 0.95;
 
     double besselI0 (double x)
     {
-        // The power series converges for every x; at β = 9 it takes about 25
-        // terms to stop moving in double precision.
+        // Power series for I0; about 25 terms at beta = 9.
         double sum = 1.0, term = 1.0;
         const double quarterSquare = 0.25 * x * x;
 
@@ -39,9 +34,8 @@ namespace
         return sum;
     }
 
-    /** The windowed sinc from 0 to `zeroCrossings`, plus one guard entry so
-        the interpolation at the last step has a neighbour. Built once per
-        process, on first use, by whichever worker gets there first. */
+    /** The windowed sinc from 0 to `zeroCrossings`, plus a guard entry for interpolation.
+        Built once, on first use. */
     const std::vector<double>& kernelTable()
     {
         static const std::vector<double> table = []
@@ -80,8 +74,7 @@ juce::AudioBuffer<float> InputFilePlayer::resample (const juce::AudioBuffer<floa
     const auto inLength = source.getNumSamples();
     const auto outLength = juce::jmax (1, (int) std::llround ((double) inLength * destinationRate / sourceRate));
 
-    // Source samples per output sample, and the cutoff in source samples' terms:
-    // the source's own Nyquist when going up, the destination's when coming down.
+    // Source samples per output sample, and the cutoff relative to the source rate.
     const double step = sourceRate / destinationRate;
     const double scale = juce::jmin (1.0, destinationRate / sourceRate) * rolloff;
     const double reach = zeroCrossings / scale;
@@ -90,9 +83,8 @@ juce::AudioBuffer<float> InputFilePlayer::resample (const juce::AudioBuffer<floa
     const auto channels = source.getNumChannels();
     juce::AudioBuffer<float> result (channels, outLength);
 
-    // The weights depend only on where the output sample falls between the
-    // input's, so they are worked out once and used for every channel -- half
-    // the cost of a stereo file, against doing it per channel.
+    // Weights depend only on the output sample's fractional position, so they are shared
+    // by all channels.
     std::vector<double> weights (static_cast<size_t> (2.0 * reach + 3.0));
 
     for (int n = 0; n < outLength; ++n)
@@ -112,8 +104,7 @@ juce::AudioBuffer<float> InputFilePlayer::resample (const juce::AudioBuffer<floa
             const double position = std::abs (t - (first + j)) * tableScale;
             const auto index = (size_t) position;
 
-            // At the very edge of the reach, rounding can land one step past the
-            // table; the kernel is zero there anyway.
+            // Rounding can step just past the table at the edge; the kernel is zero there.
             if (index + 1 >= table.size())
             {
                 weights[(size_t) j] = 0.0;
@@ -144,8 +135,7 @@ InputFilePlayer::InputFilePlayer() = default;
 
 InputFilePlayer::~InputFilePlayer()
 {
-    // The job polls this, so a five-minute resample in flight gives up within a
-    // few thousand samples instead of holding the plugin's destruction hostage.
+    // Makes a running resample give up quickly.
     cancelled.store (true);
     worker.reset();
 }
@@ -188,24 +178,20 @@ void InputFilePlayer::prepare (double sampleRate)
         const juce::ScopedLock lock (stateLock);
         wantedRate = sampleRate;
 
-        // Dropped now rather than when the replacement is ready. The audio
-        // thread is stopped while this runs, so this is the one moment the
-        // buffer can go without anybody hearing it played at the wrong pitch.
-        // Under the lock, with the rate, so a worker cannot install between
-        // the two -- see install().
+        // Dropped now, while the audio thread is stopped, so it is never played at the wrong
+        // pitch. Under the lock with the rate, so a worker can't install in between.
         if (installedRate > 0.0 && ! juce::exactlyEqual (installedRate, sampleRate))
         {
             installedRate = 0.0;
             old = install (nullptr);
         }
 
-        // Also when nothing is installed yet: a load already running at the old
-        // rate will see the rate move under it and decline to install, so
-        // something has to come along behind it.
+        // Also when nothing is installed: a load running at the old rate will decline to
+        // install.
         jobNeeded = wantedFile != juce::File{} && ! juce::exactlyEqual (installedRate, sampleRate);
     }
 
-    // Freed here, outside both locks.
+    // Freed outside both locks.
     old.reset();
 
     if (jobNeeded)
@@ -217,8 +203,7 @@ std::unique_ptr<juce::AudioBuffer<float>> InputFilePlayer::install (std::unique_
     const auto samples = fresh != nullptr ? (juce::int64) fresh->getNumSamples() : 0;
 
     {
-        // Held for a swap and four stores. The audio thread only ever tries for
-        // it, so the worst this costs is one block of silence on the file.
+        // Held only for a swap. The audio thread only try-locks.
         const juce::SpinLock::ScopedLockType lock (bufferLock);
         std::swap (current, fresh);
         position.store (0);
@@ -246,18 +231,14 @@ void InputFilePlayer::bringUpToDate()
         rate = wantedRate;
     }
 
-    // The answer is built here, on the worker, and only the result is handed
-    // over -- so a failure leaves the previous file playing as if nothing had
-    // been asked.
+    // On failure the previous file keeps playing.
     auto fail = [&] (const juce::String& why)
     {
         const juce::ScopedLock lock (stateLock);
         problem = why;
         ++loadsFinished;
 
-        // Back to what is actually loaded, so a later prepare() does not go
-        // looking for the file that failed -- and a file that did not read
-        // switches nothing on.
+        // Revert to what is loaded, so a later prepare() doesn't reload the failed file.
         if (wantedFile == file)
         {
             switchToFileOnLoad.store (false);
@@ -303,11 +284,8 @@ void InputFilePlayer::bringUpToDate()
     {
         const juce::ScopedLock lock (stateLock);
 
-        // Asked again before installing, and installed without letting go of
-        // the lock: if a different file or rate was asked for while this one
-        // decoded, the job queued behind this one will do it, and installing
-        // this would only be heard as the wrong thing -- at the wrong pitch,
-        // if it was the rate that moved.
+        // If another file or rate was requested meanwhile, skip installing; the queued job
+        // handles it.
         if (wantedFile != file || ! juce::exactlyEqual (wantedRate, rate))
             return;
 
@@ -324,8 +302,7 @@ void InputFilePlayer::bringUpToDate()
             fileMode.store (true);
     }
 
-    // Freed outside both locks: the old buffer here, and the new one on the
-    // way out if it was never installed.
+    // Freed outside both locks.
     old.reset();
 }
 
@@ -347,7 +324,7 @@ bool InputFilePlayer::waitUntilLoaded (int timeoutMilliseconds) const
 //==============================================================================
 void InputFilePlayer::setFileMode (bool shouldPlayFile) noexcept
 {
-    // The later word: a load still decoding no longer gets to change this.
+    // An explicit choice cancels a pending switch-on-load.
     switchToFileOnLoad.store (false);
 
     if (! shouldPlayFile)
@@ -358,9 +335,8 @@ void InputFilePlayer::setFileMode (bool shouldPlayFile) noexcept
 
 void InputFilePlayer::play() noexcept
 {
-    // A file that has played to its end starts again from the top. The rewind is
-    // stored before `playing`, and the audio thread reads them the other way
-    // round, so a block that sees the one sees the other.
+    // A finished file restarts. The rewind is stored before `playing`, and render() reads
+    // them in the other order.
     if (length.load() > 0 && position.load() >= length.load())
         rewindPending.store (true);
 
@@ -415,7 +391,7 @@ bool InputFilePlayer::render (float* const* channels, int numChannels, int numSa
         return true;
     }
 
-    // `playing` first, then the rewind -- see play().
+    // `playing` first, then the rewind (see play()).
     const bool isPlaying = playing.load();
     auto at = position.load (std::memory_order_relaxed);
 
@@ -468,8 +444,7 @@ bool InputFilePlayer::render (float* const* channels, int numChannels, int numSa
             written += count;
         }
 
-        // Finished, said now rather than on the next block, so the Play button
-        // goes out on the block the file did.
+        // Report the end on the block it happens.
         if (at >= total && ! looping.load (std::memory_order_relaxed))
             playing.store (false);
     }

@@ -10,81 +10,54 @@
 namespace Celine
 {
     //==========================================================================
-    /**
-        The parts bin: one button per element type, each drawing its own symbol
-        so the palette reads as a set of parts rather than a list of words.
-
-        A panel floating down the left of the sheet, two columns wide. Each row
-        is one of the pairs written on a line of `paletteOrder` -- Input beside
-        Output, Capacitor beside Resistor -- and the names are drawn at the one
-        size at which the longest still fits its column, so every row holds two
-        entries and the grid stays even.
-
-        The tab on its right-hand edge folds it to symbols alone and back. That
-        is the user's choice, never the window's: an earlier version folded on
-        its own whenever the names did not fit, and a panel that changes what
-        it shows as you resize is one you cannot learn. A window too short for
-        the list scrolls it instead.
-    */
+    /** The parts palette, floating on the left of the sheet: two columns of entries, each
+        drawing its symbol, in the pairs listed in `paletteOrder`. Names share one font
+        size, the largest at which the longest fits. The tab on the right edge folds it to
+        symbols only. Scrolls when the window is too short. */
     class ElementPalette : public juce::Component
     {
        public:
         ElementPalette();
 
-        /** Declared here and defined in the .cpp, where Entry is a complete
-            type -- OwnedArray can't destroy what it can't see the size of. */
+        /** Defined in the .cpp, where Entry is complete. */
         ~ElementPalette() override;
 
         std::function<void(SchematicModel::ElementType)> onTypeChosen;
 
-        /** The wire row was clicked. Wire lives here rather than in the toolbar
-            because drawing one is *placing something on the sheet*, which is
-            what this panel is for -- the toolbar is for what you do to what is
-            already there. It is a tool rather than an element type only because
-            of how it is implemented, which is not a distinction worth making the
-            user learn. */
+        /** The wire entry was clicked. */
         std::function<void()> onWireChosen;
 
-        /** Lights whichever row is armed -- a part, the wire, or neither. One
-            call rather than two setters, so the two can't disagree. */
+        /** Lights the armed entry: a part, the wire, or neither. */
         void setActive(const SchematicModel::ElementType* type, bool wire);
 
-        /** Symbols alone, or symbols and names. */
+        /** Symbols only, or symbols and names. */
         void setCollapsed(bool shouldBeCollapsed);
         bool isCollapsed() const noexcept { return collapsed; }
 
-        /** The tab was clicked, so the panel has changed width and whoever
-            places it should place it again. */
+        /** The tab was clicked; the panel changed width. */
         std::function<void()> onCollapsedChanged;
 
-        /** How big the panel wants to be, tab included, when it may be no
-            taller than `maxHeight`: as wide as its two columns, and as tall as
-            its rows -- or `maxHeight`, scrolling, with the scrollbar's width
-            added so the rows keep theirs. */
+        /** Preferred size, tab included, no taller than `maxHeight`. When it must scroll, the
+            scrollbar's width is added. */
         juce::Point<int> getPreferredSize(int maxHeight = std::numeric_limits<int>::max()) const;
 
-        /** Whether the list is taller than the panel and scrolls. */
+        /** Whether the list scrolls. */
         bool isScrolling() const;
 
-        /** The widest the panel can be, folded or not: unfolded, with its
-            scrollbar showing. What the window's minimum width allows for. */
+        /** The widest the panel can be: unfolded, with its scrollbar. */
         int getMaximumWidth() const;
 
-        /** The size every name is drawn at: Theme::paletteFontHeight, or less
-            if that is what it takes for the longest name to fit its column. */
+        /** The font size every name uses. */
         float getNameFontHeight() const noexcept { return nameFontHeight; }
 
-        /** The panel itself, without the tab standing off its edge. */
+        /** The panel without its tab. */
         juce::Rectangle<int> getBodyBounds() const;
 
-        /** How wide the panel is folded to symbols alone, tab excluded and
-            not scrolling -- whether or not it is folded now. The bottom band's
-            INPUT bar is this wide, so it lines up under the folded panel and
-            stays put when the palette is opened over it. */
+        /** The folded panel's width (tab excluded), whether or not it is folded now. The
+            bottom band's INPUT bar uses it. */
         static int getFoldedBodyWidth() noexcept;
 
-        /** Only the panel and its tab, not the empty corners beside the tab,
-            so the sheet under those still takes its clicks. */
+        /** Only the panel and its tab take clicks. */
         bool hitTest(int x, int y) override;
 
         void resized() override;
@@ -94,10 +67,10 @@ namespace Celine
         class Entry;
         class CollapseTab;
 
-        /** Where every entry goes in the list, in order, for the current mode. */
+        /** Each entry's area, in order, for the current mode. */
         std::vector<juce::Rectangle<int>> layOutGrid() const;
 
-        /** Works out getNameFontHeight() from the names. */
+        /** Computes getNameFontHeight() from the names. */
         float fittingFontHeight() const;
 
         float nameFontHeight = 12.0f;
@@ -107,8 +80,7 @@ namespace Celine
 
         bool collapsed = false;
 
-        /** The rows live in here, so a window too short for them scrolls the
-            list rather than the panel running into the band below. */
+        /** Holds the rows, so a short window scrolls them. */
         juce::Viewport viewport;
         juce::Component content;
 
@@ -119,181 +91,110 @@ namespace Celine
     };
 
     //==========================================================================
-    /**
-        Everything about the selected part that can be typed or picked.
+    /** Edits the selected part's fields. Edits go straight into the Element, then fire a
+        callback; the editor decides whether to rebuild. Values accept schematic notation
+        ("4k7", "100n", "2.2M").
 
-        Edits go straight into the Element and then announce themselves; the
-        editor decides whether that means a rebuild. Values accept schematic
-        notation -- "4k7", "100n", "2.2M" -- because that is how they are written
-        on paper and typing 0.0000001 for a capacitor is a good way to get it
-        wrong.
-
-        A card floating over the sheet, always the same width -- what it shows
-        is fitted to it, the shortcut list's lettering included -- and as tall
-        as what it is showing: a resistor is a few fields and gets a short card,
-        the shortcut list a tall one.
-        The editor asks getPreferredSize() and caps it to the room there is;
-        past that cap the fields scroll.
-    */
+        A fixed-width card over the sheet, as tall as its contents. The editor caps its
+        height; beyond that the fields scroll. */
     class ElementInspector : public juce::Component
     {
        public:
         ElementInspector();
 
-        /** Points the inspector at a part, or at nothing. */
+        /** Shows a part, or nothing. */
         void setElement(SchematicModel::Element* element);
 
-        /** Whether the card stays up with the shortcut list when nothing is
-            selected. Off, it shows only while a part is selected and the sheet
-            gets the room back the rest of the time -- for someone who knows
-            the keys. The card hides itself, so every route that changes the
-            selection gets this right without having to know about it. */
+        /** Whether the card shows the shortcut list when nothing is selected. When off, the
+            card hides itself while nothing is selected. */
         void setShortcutsShown(bool shouldShow);
 
-        /** A live reading -- a current, a power, a scope's voltages -- in
-            engineering notation with exactly two digits after the point. The
-            prefix already moves the point to where the number is: a third
-            or fourth decimal of a value written in nanowatts is a digit of
-            noise that only cluttered the panel.
-
-            Not SymbolPainter::formatValue, which is for a part's value as it
-            is written on a schematic: that one trims to two decimals and falls
-            back to scientific notation below a pico, which is where a leakage
-            current through a big resistor lives -- it came out as
-            "-1.14447e-13A", cut off at the edge of its box. A fixed two
-            decimals also keeps the number from changing width as it changes
-            value, so a live readout does not shimmer. */
+        /** A live reading in engineering notation with exactly two decimals, so the width
+            stays steady as the value changes. */
         static juce::String formatReading(double value, const juce::String& unit);
 
-        /** The card that shows everything currently visible without scrolling,
-            padding included. Always Theme::inspectorWidth wide; only the
-            height follows what is showing. */
+        /** Size that shows everything without scrolling. Width is always
+            Theme::inspectorWidth. */
         juce::Point<int> getPreferredSize();
 
-        /** What the inspector shows changed in a way that may change its size --
-            a different part, or a field shown or hidden. */
+        /** The content changed in a way that may change the size. */
         std::function<void()> onPreferredSizeChanged;
 
         /** A field changed. The part is already updated. */
         std::function<void()> onEdited;
 
-        /** A live control's position changed -- a pot's knob or a switch's
-            throw. Separate from onEdited because these are the two things on
-            the sheet the running circuit already follows: telling someone to
-            press Rebuild to hear a change they can already hear is how a build
-            button stops meaning anything. */
+        /** A pot or switch position changed. These are live, so they don't need a rebuild. */
         std::function<void()> onControlEdited;
 
-        /** Where a selected scope's picture comes from. Same callback the canvas
-            uses, so the two draw the same probe the same way. */
+        /** Where a selected scope's trace comes from (same as the canvas). */
         ScopeReader scopeReader;
 
-        /** The selected part's mean current, mean power and peak current. False
-            when there is no reading -- see PluginProcessor::readInspectedCurrent
-            for the two ways that happens. */
+        /** The selected part's mean current, mean power and peak current. False when there is
+            no reading (see PluginProcessor::readInspectedCurrent). */
         std::function<bool (float& current, float& power, float& peak)> currentReader;
 
-        /** Tells the processor which part to measure, so nothing is measured
-            when nobody is looking. Called on every selection change, including
-            to nothing. */
+        /** Tells the processor which part to measure. Called on every selection change. */
         std::function<void (int elementId)> onInspectedElementChanged;
 
-        /** A scope's time base changed. Its own callback because it is the one
-            thing on that panel the audio thread reads -- it sets how many
-            samples go into a column -- while the rest is read by the renderer
-            alone. Not `onEdited`: nothing here reaches the matrix, so lighting
-            the Rebuild button would be asking for a rebuild that changes
-            nothing about the circuit. */
+        /** A scope's time base changed. The audio thread reads it; no rebuild needed. */
         std::function<void()> onScopeTimebaseChanged;
 
-        /** Repaints only the live readouts -- the scope's trace and the
-            selected part's current. Called from the editor's timer, and
-            deliberately not `repaint()`: these have to be asked for again
-            several times a second, and repainting a panel of text editors at
-            that rate to animate one box is most of a core spent on nothing.
-
-            Each panel declines in a line when it is not showing, so calling
-            this on every tick costs nothing when nothing live is selected. */
+        /** Repaints only the live readouts (scope trace, current). Called from the editor's
+            timer; cheap when nothing live is shown. */
         void repaintReadouts();
 
-        /** The Output terminal's cabinet changed -- the switch was thrown, or a
-            different impulse response was chosen.
-
-            Its own callback rather than either of the two above, because it is
-            neither of the things they mean. It is not `onEdited`: nothing about
-            a cabinet reaches the matrix, so lighting the Rebuild button for it
-            would be asking someone to rebuild a circuit that has not changed.
-            And it is not `onControlEdited`: that one pushes a position into the
-            control strip, and a cabinet has no knob there. */
+        /** The Output terminal's cabinet was switched or changed. No rebuild needed. */
         std::function<void()> onCabChanged;
 
-        /** The user asked to pick an impulse response file. The editor owns the
-            dialog, the same way it owns Save and Load -- a panel that draws
-            fields has no business keeping a FileChooser alive across a modal
-            call. */
+        /** The user wants to pick an impulse response; the editor shows the dialog. */
         std::function<void()> onCabFileRequested;
 
-        /** The Input terminal's file player, which its panel drives directly:
-            every call on it returns at once and none of it is part of the sheet,
-            so nothing here needs the editor to decide anything -- not undo, not
-            Rebuild, not the preset's modified mark. Null shows the panel's
-            controls disabled. */
+        /** The input file player, driven directly by the Input panel. Null disables those
+            controls. */
         InputFilePlayer* filePlayer = nullptr;
 
-        /** The user asked to pick a file to play. The editor owns the dialog,
-            as it does the cabinet's. */
+        /** The user wants to pick a file to play; the editor shows the dialog. */
         std::function<void()> onInputFileRequested;
 
         void resized() override;
         void paint(juce::Graphics&) override;
 
-        /** Every colour this panel hands to a child rather than reading as it paints.
-            Called from the constructor and again on every theme change. */
+        /** Colours handed to children with setColour. Called again on every theme change. */
         void applyColours();
         void lookAndFeelChanged() override { applyColours(); }
 
        private:
-        /** The captions, as one list. Two loops need it -- the constructor's, which
-            sets the face, and applyColours', which runs again whenever the theme
-            moves -- and two hand-written copies of thirteen names is one place for a
-            new caption to be added to only one of them. */
+        /** Every caption label. */
         std::array<juce::Label*, 15> captionLabels();
 
         void rebuildForElement();
 
-        /** Lays the fields out again and tells the editor the card's size may
-            have moved. */
+        /** Lays the fields out again and reports a possible size change. */
         void contentChanged();
 
-        /** The width of the field column inside the card, padding excluded, for
-            what is showing now. */
+        /** Width of the field column, padding excluded. */
         int contentWidth() const;
 
-        /** The shortcut list's height, one line per line of text. Measured
-            rather than given whatever the panel had left, which is what it was
-            when the panel was a fixed column -- a card sized to its contents
-            cannot also size its contents to the card. */
+        /** Height of the shortcut list: one line per text line. */
         int hintHeight() const;
 
-        /** The shortcut list's longest line, at its current size. */
+        /** Width of the shortcut list's longest line. */
         int hintWidth() const;
 
-        /** Sizes the shortcut list's lettering so its longest line fits the
-            card, scrollbar and all. */
+        /** Shrinks the shortcut list's font until its longest line fits, scrollbar included. */
         void fitHintToWidth();
 
         void showNothingSelected();
 
-        /** The line under the part's name: what its model is, or nothing. */
+        /** The line under the part's name: its model's description, or nothing. */
         static juce::String headerSubtitleFor(const SchematicModel::Element& part);
 
-        /** Turns the value fields red while they hold nothing. */
+        /** Turns the value fields red while they are unset. */
         void markUnsetFields();
         void fillFieldsFrom(const SchematicModel::Element& part);
         void populateModelBox(const SchematicModel::Element& part);
         void showFieldsFor();
-        /** Places every visible field for a given width, returning the height
-            they came to. */
+        /** Places the visible fields at `width` and returns their total height. */
         int layOutFields(int width);
         static juce::String valueTextFor(const SchematicModel::Element& e);
         static juce::String secondValueText(const SchematicModel::Element& e);
@@ -311,61 +212,35 @@ namespace Celine
         juce::Label orderCaption;
         juce::TextEditor orderEditor;
 
-        /** A pot's knob position, as a percentage. The strip is where you play
-            with it; this is where you say where it should *start*, which is a
-            property of the drawing rather than a thing you reach for mid-take.
-
-            A switch has no counterpart here any more. Its throw is live and
-            nothing else -- there is no starting position to state that the
-            strip does not already hold -- so it lives in the strip alone. */
+        /** A pot's starting position, in percent. Switch positions live in the strip only. */
         juce::Label knobCaption;
         juce::TextEditor knobEditor;
 
-        /** A group box's size, in grid squares. Typed as well as dragged: the
-            corner handle is quicker, but two boxes only line up if you can say
-            what they are, and a box dragged off the visible sheet has no corner
-            left to grab. */
+        /** A group box's size, in grid squares. */
         juce::Label widthCaption, heightCaption;
         juce::TextEditor widthEditor, heightEditor;
         juce::TextEditor valueEditor, labelEditor;
         juce::ComboBox modelBox, taperBox;
 
-        /** A changeover switch's action: ON-ON, ON-OFF-ON, ON-ON-ON. Which of
-            the positions it is *in* lives in the strip, with the other live
-            controls. Poles are not asked for: two switches with one label are
-            a double-pole switch. */
+        /** A changeover switch's action: ON-ON, ON-OFF-ON, ON-ON-ON. */
         juce::Label actionCaption;
         juce::ComboBox actionBox;
 
-        /** Changes the switch's action, keeping its lever on the throw it was
-            on where the new action has that throw. */
+        /** Changes the action, keeping the lever on the same throw if the new action has it. */
         void reshapeSwitch(SchematicModel::SwitchAction action);
 
-        /** Under the model box only when the sheet names a model this build
-            has not got. What a model *is* -- the line that tells a BC109C from
-            a 2N3904 -- is in the heading, under the part's name. */
+        /** Shown under the model box only when the sheet names a model this build lacks. */
         juce::Label modelDescription;
         juce::ToggleButton polarisedButton{"Electrolytic"};
 
-        /** Output only: the cabinet switch, and the file it plays through.
-
-            The button says which file rather than "Browse", because a cabinet
-            you cannot identify without opening a dialog is one you will load
-            twice. When the named file has gone it says that too -- the console
-            reports it as well, but the panel is where you are looking when you
-            wonder why nothing changed. */
-        /** Scope only: the picture and the two numbers under it.
-
-            Its own component rather than painted into the panel, so it can be
-            repainted on its own several times a second while the fields around
-            it stay still -- see repaintReadouts. */
+        /** Scope only: the trace and the two readings under it. Its own component so it can
+            repaint without the fields. */
         struct ScopeView : juce::Component
         {
             explicit ScopeView(ElementInspector& o) : owner(o) {}
             void paint(juce::Graphics&) override;
 
-            /** Volts up the side, time along the bottom, drawn against the scale
-                the trace actually used rather than one worked out again here. */
+            /** Voltage axis on the side, time along the bottom, using the trace's own scale. */
             static void drawScopeAxes(juce::Graphics& g, juce::Rectangle<float> plot,
                                       juce::Rectangle<float> gutter,
                                       juce::Rectangle<float> timeAxis,
@@ -376,11 +251,8 @@ namespace Celine
 
         ScopeView scopeView{*this};
 
-        /** Live current and power through the selected part.
-
-            Its own component for the same reason ScopeView is: it changes
-            several times a second and the fields around it do not, so repainting
-            it must not repaint them. */
+        /** Live current and power through the selected part. Its own component so it can
+            repaint without the fields. */
         struct CurrentView : juce::Component
         {
             explicit CurrentView(ElementInspector& o) : owner(o) {}
@@ -390,30 +262,21 @@ namespace Celine
 
         CurrentView currentView{*this};
 
-        /** A scope's axes. Display only -- none of it reaches the matrix, so
-            none of it lights the Rebuild button. */
+        /** A scope's axes. Display only, no rebuild. */
         juce::ToggleButton scopeAutoButton{"Auto scale"};
         juce::Label scopeMinCaption, scopeMaxCaption, scopeSecondsCaption;
         juce::TextEditor scopeMinEditor, scopeMaxEditor, scopeSecondsEditor;
 
         void commitScopeAxes();
 
-        /** Input only: the file player. Live or file, which file, once or
-            round and round, and the transport.
-
-            Kept in step with the player by repaintReadouts() rather than told,
-            because the player changes on its own -- a file plays to its end, a
-            load finishes -- and the panel is rebuilt whenever the selection
-            moves, so the player is the only one of the two that remembers. */
+        /** Input only: the file player controls. Synced from the player by repaintReadouts(). */
         juce::ToggleButton fileInputButton{"Play a file"};
         juce::Label inputFileCaption;
         juce::TextButton inputFileButton;
         juce::ToggleButton loopButton{"Loop"};
         juce::TextButton playButton{"Play"}, stopButton{"Stop"};
 
-        /** Where the file has got to, as numbers and a bar. Its own component
-            for the same reason the scope's is: it moves while nothing else on
-            the panel does. */
+        /** Playback position, as numbers and a bar. */
         struct TransportView : juce::Component
         {
             explicit TransportView(ElementInspector& o) : owner(o) {}
@@ -423,14 +286,10 @@ namespace Celine
 
         TransportView transportView{*this};
 
-        /** Brings the player's controls into line with what it says. Cheap when
-            nothing changed, so it can run on every timer tick: one read of the
-            player, and a repaint of the transport only when something it draws
-            has moved. */
+        /** Updates the player controls from the player. Cheap when nothing changed. */
         void syncFilePlayer();
 
-        /** What the player said at the last sync, which the transport draws
-            from rather than asking again. */
+        /** The player status at the last sync. */
         InputFilePlayer::Status fileStatus;
 
         juce::ToggleButton cabButton{"Speaker cabinet"};
@@ -438,22 +297,15 @@ namespace Celine
         juce::TextButton cabFileButton;
         juce::Label hintLabel;
 
-        /** The card's heading: what the part is, and what its model is, beside
-            its symbol. Painted rather than built from labels, because it is a
-            picture of the selection and nothing in it is edited. Rotate, flip
-            and delete are not here: the toolbar has all three. */
+        /** The card's heading: the part type and its model, painted beside its symbol. */
         juce::String headerTitle, headerSubtitle;
         bool headerHasSymbol = false;
         SchematicModel::ElementType headerType{};
 
-        /** The heading's strip, the rule under it included. No close button:
-            a click on empty sheet drops the selection already, and a second way
-            to do it inside the card only competed with the fields for clicks. */
+        /** The heading area, including the line under it. */
         juce::Rectangle<int> getHeaderBounds() const;
 
-        /** The fields live inside this, so a part with more of them than the
-            window has room for -- a scope, with its picture and three axes --
-            scrolls rather than running off the bottom of the card. */
+        /** Holds the fields, so a tall part scrolls inside the card. */
         juce::Viewport viewport;
         juce::Component content;
 
@@ -461,88 +313,62 @@ namespace Celine
     };
 
     //==========================================================================
-    /**
-        Everything the last build had to say, as a list you can work through.
+    /** The last build's messages, one row each, coloured by severity. Clicking a row that
+        names a part selects it.
 
-        A status line holds one sentence, which is the right size for "Built: 42
-        parts" and the wrong size for six separate problems -- those arrive
-        joined by double spaces into a paragraph nobody reads to the end of.
-        Here each message is its own row, coloured by severity, carrying the
-        part it is about and where that part sits, and clicking one selects it
-        on the sheet. Finding the resistor at 35,-67 is then a click rather than
-        a hunt.
-
-        A pill floating above the bottom band, as wide and tall as what it has to
-        say. It comes up whenever there is something new and goes again
-        `hideDelayMs` later -- unless what it is showing includes an error or a
-        warning, in which case it stays until a message without one replaces it,
-        since a problem that hides itself is one you only find by ear. It also
-        waits while the pointer is over it, so a row is never pulled out from
-        under a click.
-    */
+        A pill above the bottom band, sized to its contents. Shows on new messages and
+        hides after `hideDelayMs`, unless it shows an error or warning, and never while the
+        pointer is over it. */
     class MessageConsole : public juce::Component, private juce::Timer
     {
        public:
         MessageConsole();
 
-        /** How long a message with nothing wrong in it stays up. */
+        /** How long a message without problems stays up. */
         static constexpr int hideDelayMs = 5000;
 
-        /** The narrowest the pill goes -- its glyph, its padding, and a line of
-            text wide enough not to be a column of single words. Whoever places
-            it has to leave it at least this much room. */
+        /** Narrowest the pill gets; callers must leave this much room. */
         static constexpr int minimumWidth = 201;
 
-        /** The pill that shows everything without scrolling, wrapping only
-            where a line is wider than `maxWidth`. */
+        /** Size that shows everything, wrapping lines longer than `maxWidth`. */
         juce::Point<int> getPreferredSize(int maxWidth);
 
-        /** The text changed, so the pill's size may have. */
+        /** The text changed; the size may have too. */
         std::function<void()> onPreferredSizeChanged;
 
-        /** True while what is showing includes an error or a warning -- the
-            failed build's headline counts -- which is what keeps the console up. */
+        /** True while an error or warning is shown, which keeps the console up. */
         bool hasProblems() const;
 
-        /** True between a message arriving and the console hiding itself. False
-            while a problem is holding it up, and once it has gone. */
+        /** True between a message arriving and the console hiding. */
         bool isWaitingToHide() const { return isTimerRunning(); }
 
-        /** Replaces everything shown. `headline` is the one-line summary that
-            goes at the top -- "Built: 42 parts" or the reason it didn't. */
+        /** Replaces everything. `headline` is the summary line at the top. */
         void setMessages(juce::String status, bool statusIsError,
                          const std::vector<SchematicModel::Diagnostic>& messages);
 
-        /** Just the top line -- "Saved to fuzz.celsch", "press Rebuild to hear
-            it" -- leaving whatever the last build said in place beneath it. */
+        /** Replaces only the top line, keeping the build's messages below. */
         void setHeadline(juce::String text, bool isError);
 
-        /** A row was clicked and it names a part. */
+        /** A row naming a part was clicked. */
         std::function<void(int elementId)> onMessageClicked;
 
         void paint(juce::Graphics&) override;
         void resized() override;
         void mouseDown(const juce::MouseEvent&) override;
 
-        /** The prompt mark, re-tinted. Artwork rather than a colour handed to a child,
-            but the same rule applies: tinting is destructive, so a theme change has to
-            start again from what is in the binary. */
+        /** Re-tints the prompt icon from the original artwork. */
         void applyColours();
         void lookAndFeelChanged() override { applyColours(); }
 
        private:
-        /** Something new arrived: bring the console up, and start the clock
-            unless a problem is holding it there. */
+        /** New content: show the console and start the hide timer unless a problem is shown. */
         void announce();
 
-        /** The clock ran out. Hides the console, or looks again shortly if the
-            pointer is resting on it. */
+        /** Hides the console, or retries shortly if the pointer is over it. */
         void timerCallback() override;
 
-        /** One laid-out row: what to draw, in what colour, and what it points
-            at. Laid out once when the messages change rather than per paint,
-            because a message can wrap to several lines and the wrapping decides
-            both the row height and which row a click landed in. */
+        /** One laid-out row: text, colour and the part it points at. Laid out when the
+            messages change, since wrapping decides row heights and click targets. */
         struct Row
         {
             juce::String text;
@@ -552,8 +378,7 @@ namespace Celine
             int height = 0;
         };
 
-        /** Lays the rows out for a given text width, returning the total
-            height they came to. */
+        /** Lays the rows out at `width` and returns their total height. */
         int measureRows(int width);
         void layOutRows();
 
@@ -565,13 +390,10 @@ namespace Celine
         juce::Viewport viewport;
         juce::Component content;
 
-        /** The prompt glyph in the left gutter, which is the whole of what names
-            this panel. It said "Console" in words before, which is a heading
-            spending a row of a panel on a fact you can see. */
+        /** The prompt icon in the left gutter. */
         std::unique_ptr<juce::Drawable> promptIcon;
 
-        /** The list is inside the viewport, so it draws the rows; the console
-            itself only draws the gutter. */
+        /** Draws the rows inside the viewport; the console draws the gutter. */
         struct Rows : juce::Component
         {
             explicit Rows(MessageConsole& o) : owner(o) {}
