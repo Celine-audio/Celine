@@ -60,8 +60,11 @@ namespace
     {
         juce::StringArray result;
 
+        // The gaps between sections are rows with nothing to read; the list of
+        // names is what these tests are about.
         for (int row = 0; row < panel.getNumShownRows(); ++row)
-            result.add (panel.getRowLabel (row));
+            if (! panel.isRowSeparator (row))
+                result.add (panel.getRowLabel (row));
 
         return result;
     }
@@ -302,8 +305,18 @@ TEST_CASE ("The list is exactly as tall as its rows", "[presets][library]")
     // list's height is exactly its rows plus that padding.
     const auto padding = one - panel.getFieldArea().getBottom() - rowHeight;
     panel.setSearchText ({});
-    CHECK (panel.getPreferredHeight() == panel.getFieldArea().getBottom() + padding
-                                             + panel.getNumShownRows() * rowHeight);
+    int rows = 0;
+
+    for (int row = 0; row < panel.getNumShownRows(); ++row)
+        rows += panel.getRowHeight (row);
+
+    CHECK (panel.getPreferredHeight() == panel.getFieldArea().getBottom() + padding + rows);
+
+    // A section gap is shorter than a row: as much space either side of its line as
+    // the list has above its first row, and no more.
+    for (int row = 0; row < panel.getNumShownRows(); ++row)
+        if (panel.isRowSeparator (row))
+            CHECK (panel.getRowHeight (row) < rowHeight);
 
     // Nothing found keeps one row's room, to say so.
     panel.setSearchText ("nothing called this");

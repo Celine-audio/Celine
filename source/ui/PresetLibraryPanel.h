@@ -35,8 +35,7 @@ namespace Celine
         click on a preset loads it -- the panel says what was picked through the `on`
         callbacks and leaves loading, and closing itself, to the editor.
     */
-    class PresetLibraryPanel : public juce::Component,
-                               private juce::ListBoxModel
+    class PresetLibraryPanel : public juce::Component
     {
     public:
         PresetLibraryPanel();
@@ -110,10 +109,15 @@ namespace Celine
             between the presets loose at the top of the folder. */
         bool hasDividerBelow (int row) const;
 
-        /** Whether the divider under this row is a section break: the line between
-            New, the factory presets and the personal library, drawn heavier than the
-            one between folders inside a section. */
+        /** Whether the next row is a section break: the gap, with a line in it,
+            between New, the factory presets and the personal library. */
         bool hasSectionBreakBelow (int row) const;
+
+        /** True for the rows that are only that gap -- nothing to read or click. */
+        bool isRowSeparator (int row) const;
+
+        /** A row's height: a preset row's, or a section gap's, which is shorter. */
+        int getRowHeight (int row) const;
 
         /** What clicking a row does. */
         void chooseRow (int row);
@@ -131,11 +135,47 @@ namespace Celine
 
     private:
         //======================================================================
-        int getNumRows() override;
-        void paintListBoxItem (int row, juce::Graphics&, int width, int height, bool selected) override;
-        void listBoxItemClicked (int row, const juce::MouseEvent&) override;
-        void backgroundClicked (const juce::MouseEvent&) override;
-        void returnKeyPressed (int lastRowSelected) override;
+        void paintListBoxItem (int row, juce::Graphics&, int width, int height, bool selected);
+        void listBoxItemClicked (int row, const juce::MouseEvent&);
+        void backgroundClicked (const juce::MouseEvent&);
+
+        /** The rows, in a list of their own rather than a juce::ListBox: a ListBox
+            gives every row one height, and a section gap the height of a preset row
+            left twice the space either side of its line that the list has above its
+            first row. Rows are a preset's height; gaps are just tall enough for the
+            same space either side of the line. Hover lights a row, as a menu's item
+            is lit; a click or right-click goes to the panel. */
+        class RowList : public juce::Viewport
+        {
+        public:
+            explicit RowList (PresetLibraryPanel& owner);
+
+            /** Re-reads the rows' heights after `shown` changed. */
+            void updateContent();
+
+            int getLitRow() const noexcept { return lit; }
+            void setLitRow (int row);
+
+            /** The row at a point in the list's own coordinates, or -1. */
+            int getRowAt (int y) const;
+
+            void resized() override;
+
+        private:
+            struct Content : juce::Component
+            {
+                explicit Content (RowList& o) : list (o) {}
+                void paint (juce::Graphics&) override;
+                void mouseMove (const juce::MouseEvent&) override;
+                void mouseUp (const juce::MouseEvent&) override;
+                RowList& list;
+            };
+
+            PresetLibraryPanel& panel;
+            Content content { *this };
+            std::vector<int> tops;   // each row's top, then the total height
+            int lit = -1;
+        };
 
         void applyColours();
         void lookAndFeelChanged() override { applyColours(); }
@@ -149,7 +189,8 @@ namespace Celine
             folder,        // a subfolder of the preset folder
             preset,        // a .celsch in it
             chooseFolder,  // "Choose a folder for your own presets...", when there is none
-            note           // something to read rather than click: an empty folder
+            note,          // something to read rather than click: an empty folder
+            separator      // the gap between New, the factory presets and the library
         };
 
         struct Entry
@@ -204,7 +245,7 @@ namespace Celine
         int fieldTrailingSpace = 0;
 
         juce::TextEditor search;
-        juce::ListBox list { "Presets", this };
+        RowList list { *this };
 
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PresetLibraryPanel)

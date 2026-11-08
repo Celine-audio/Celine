@@ -12,6 +12,10 @@ namespace Celine
         // resemble each other.
         constexpr int gap = 8;
         constexpr int rowHeight = 28;
+
+        /** A section gap: the space the list has above its first lit row (`gap`, and
+            the pixel a lit row is inset), then the line, then the same space again. */
+        constexpr int separatorHeight = 2 * gap + 1;
         constexpr int indentWidth = 16;
         constexpr int chevronWidth = 16;
 
@@ -108,14 +112,6 @@ namespace Celine
         // here the toolbar's Save sits just left of the field, and the folder icon is
         // the editor's, at the field's right-hand end whether this is open or not.
 
-        list.setRowHeight (rowHeight);
-        list.setColour (juce::ListBox::backgroundColourId, juce::Colours::transparentBlack);
-        list.setColour (juce::ListBox::outlineColourId, juce::Colours::transparentBlack);
-
-        // The row under the pointer is lit, as a menu's item is: this opens where the
-        // preset menu did, and is read the way it was.
-        list.setMouseMoveSelectsRows (true);
-        list.getViewport()->setScrollBarThickness (8);
         addAndMakeVisible (list);
 
         // The shipped examples are what a fresh install has, so their folder starts open.
@@ -349,18 +345,38 @@ namespace Celine
             }
         }
 
+        // A gap between the three sections -- New, the factory presets, the library --
+        // as a row of its own with a line through its middle: space either side of the
+        // line is what tells three kinds of thing apart, where a heavy bar under the
+        // last row only shouted. Only between two sections both showing, so a search
+        // that leaves one section has no gap at either end.
+        {
+            juce::Array<Entry> spaced;
+
+            for (int i = 0; i < shown.size(); ++i)
+            {
+                if (i > 0 && sectionOf (shown.getReference (i).kind) != sectionOf (shown.getReference (i - 1).kind))
+                {
+                    Entry spacer;
+                    spacer.kind = Kind::separator;
+                    spacer.group = shown.getReference (i - 1).group;
+                    spaced.add (spacer);
+                }
+
+                spaced.add (shown.getReference (i));
+            }
+
+            shown.swapWith (spaced);
+        }
+
         // Rows only ever come and go below the folder that changed, so the view and
         // the lit row are held where they were -- the pointer is still over that row.
-        const auto position = list.getViewport()->getViewPosition();
-        const auto lit = list.getSelectedRow();
+        const auto position = list.getViewPosition();
+        const auto lit = list.getLitRow();
 
         list.updateContent();
-        list.getViewport()->setViewPosition (position);
-
-        if (juce::isPositiveAndBelow (lit, shown.size()))
-            list.selectRow (lit, true, true);
-        else
-            list.deselectAllRows();
+        list.setViewPosition (position);
+        list.setLitRow (juce::isPositiveAndBelow (lit, shown.size()) ? lit : -1);
 
         repaint();
 
@@ -400,7 +416,8 @@ namespace Celine
             case Kind::chooseFolder:  if (onChooseFolder) onChooseFolder(); break;
             case Kind::factoryFolder:
             case Kind::folder:        toggle (entry); break;
-            case Kind::note:          break;
+            case Kind::note:
+            case Kind::separator:     break;
         }
     }
 
@@ -408,7 +425,12 @@ namespace Celine
     {
         // Exactly the rows there are -- one row's room when a search finds nothing, to
         // say so -- with the same padding above and below them.
-        return fieldArea.getBottom() + fieldGap + 2 * gap + juce::jmax (1, shown.size()) * rowHeight;
+        int rows = 0;
+
+        for (int row = 0; row < shown.size(); ++row)
+            rows += getRowHeight (row);
+
+        return fieldArea.getBottom() + fieldGap + 2 * gap + juce::jmax (rowHeight, rows);
     }
 
     void PresetLibraryPanel::setFieldTrailingSpace (int pixels)
@@ -422,14 +444,32 @@ namespace Celine
 
     bool PresetLibraryPanel::hasDividerBelow (int row) const
     {
-        return juce::isPositiveAndBelow (row + 1, shown.size())
-            && shown.getReference (row).group != shown.getReference (row + 1).group;
+        if (! juce::isPositiveAndBelow (row, shown.size()) || shown.getReference (row).kind == Kind::separator)
+            return false;
+
+        // The next real row: a section gap sits between groups, not in one.
+        int next = row + 1;
+
+        while (juce::isPositiveAndBelow (next, shown.size()) && shown.getReference (next).kind == Kind::separator)
+            ++next;
+
+        return juce::isPositiveAndBelow (next, shown.size())
+            && shown.getReference (row).group != shown.getReference (next).group;
     }
 
     bool PresetLibraryPanel::hasSectionBreakBelow (int row) const
     {
-        return hasDividerBelow (row)
-            && sectionOf (shown.getReference (row).kind) != sectionOf (shown.getReference (row + 1).kind);
+        return isRowSeparator (row + 1);
+    }
+
+    bool PresetLibraryPanel::isRowSeparator (int row) const
+    {
+        return juce::isPositiveAndBelow (row, shown.size()) && shown.getReference (row).kind == Kind::separator;
+    }
+
+    int PresetLibraryPanel::getRowHeight (int row) const
+    {
+        return isRowSeparator (row) ? separatorHeight : rowHeight;
     }
 
     void PresetLibraryPanel::setFieldArea (juce::Rectangle<int> area)
@@ -496,17 +536,23 @@ namespace Celine
     }
 
     //==========================================================================
-    int PresetLibraryPanel::getNumRows()
-    {
-        return shown.size();
-    }
-
     void PresetLibraryPanel::paintListBoxItem (int row, juce::Graphics& g, int width, int height, bool lit)
     {
         if (! juce::isPositiveAndBelow (row, shown.size()))
             return;
 
         const auto& entry = shown.getReference (row);
+
+        if (entry.kind == Kind::separator)
+        {
+            // As far from the rows either side as the list's first row is from the
+            // list's own edge: a lit row is inset a pixel and the list `gap` inside
+            // the body, so the line sits `gap` into a gap `2 * gap + 1` tall.
+            g.setColour (Theme::line().withAlpha (0.16f));
+            g.fillRect (juce::Rectangle<float> (8.0f, (float) gap, (float) width - 16.0f, 1.0f));
+            return;
+        }
+
         const bool clickable = entry.kind != Kind::note;
         const bool current = isCurrent (entry);
 
@@ -548,18 +594,10 @@ namespace Celine
         g.setFont (Fonts::light (fontHeight));
         g.drawText (entry.label, bounds.reduced (4.0f, 0.0f), juce::Justification::centredLeft, true);
 
-        // A rule under the last row of a root group, across the row rather than
-        // indented with it, so it divides the groups rather than underlining a name.
-        // Two weights: a bar the full width of the list between the three sections --
-        // New, the factory presets, the personal library -- which are different kinds
-        // of thing; and a faint hairline, kept in from both ends, between folders
-        // inside one, which are only neighbours.
-        if (hasSectionBreakBelow (row))
-        {
-            g.setColour (Theme::line().withAlpha (0.38f));
-            g.fillRect (juce::Rectangle<float> (0.0f, (float) height - 2.0f, (float) width, 2.0f));
-        }
-        else if (hasDividerBelow (row))
+        // A faint hairline under the last row of a root group, kept in from both ends,
+        // between folders inside one section, which are only neighbours. Between the
+        // sections themselves the separator row does the dividing.
+        if (hasDividerBelow (row) && ! hasSectionBreakBelow (row))
         {
             g.setColour (Theme::line().withAlpha (0.06f));
             g.fillRect (juce::Rectangle<float> (14.0f, (float) height - 1.0f, (float) width - 28.0f, 1.0f));
@@ -593,11 +631,6 @@ namespace Celine
     {
         if (event.mods.isPopupMenu())
             showRevealMenu (folder);
-    }
-
-    void PresetLibraryPanel::returnKeyPressed (int lastRowSelected)
-    {
-        chooseRow (lastRowSelected);
     }
 
     void PresetLibraryPanel::showRevealMenu (const juce::File& target)
@@ -673,5 +706,102 @@ namespace Celine
         search.setBounds (field);
 
         list.setBounds (getListArea().reduced (gap));
+    }
+
+    //==========================================================================
+    PresetLibraryPanel::RowList::RowList (PresetLibraryPanel& owner) : panel (owner)
+    {
+        setViewedComponent (&content, false);
+        setScrollBarsShown (true, false);
+        setScrollBarThickness (8);
+        setWantsKeyboardFocus (false);
+    }
+
+    void PresetLibraryPanel::RowList::updateContent()
+    {
+        tops.assign (1, 0);
+
+        for (int row = 0; row < panel.shown.size(); ++row)
+            tops.push_back (tops.back() + panel.getRowHeight (row));
+
+        resized();
+        content.repaint();
+    }
+
+    void PresetLibraryPanel::RowList::resized()
+    {
+        juce::Viewport::resized();
+
+        const int total = tops.empty() ? 0 : tops.back();
+        const bool scrolls = total > getHeight();
+        content.setSize (getWidth() - (scrolls ? getScrollBarThickness() : 0), total);
+    }
+
+    void PresetLibraryPanel::RowList::setLitRow (int row)
+    {
+        // Only what can be clicked lights: not a gap, not a note.
+        if (juce::isPositiveAndBelow (row, panel.shown.size()))
+        {
+            const auto kind = panel.shown.getReference (row).kind;
+
+            if (kind == Kind::separator || kind == Kind::note)
+                row = -1;
+        }
+        else
+        {
+            row = -1;
+        }
+
+        if (row != lit)
+        {
+            lit = row;
+            content.repaint();
+        }
+    }
+
+    int PresetLibraryPanel::RowList::getRowAt (int y) const
+    {
+        for (size_t row = 0; row + 1 < tops.size(); ++row)
+            if (y >= tops[row] && y < tops[row + 1])
+                return (int) row;
+
+        return -1;
+    }
+
+    void PresetLibraryPanel::RowList::Content::paint (juce::Graphics& g)
+    {
+        const auto clip = g.getClipBounds();
+        const auto& rowTops = list.tops;
+
+        for (size_t row = 0; row + 1 < rowTops.size(); ++row)
+        {
+            if (rowTops[row + 1] <= clip.getY() || rowTops[row] >= clip.getBottom())
+                continue;
+
+            juce::Graphics::ScopedSaveState state (g);
+            g.setOrigin (0, rowTops[row]);
+            g.reduceClipRegion (0, 0, getWidth(), rowTops[row + 1] - rowTops[row]);
+            list.panel.paintListBoxItem ((int) row, g, getWidth(), rowTops[row + 1] - rowTops[row], (int) row == list.lit);
+        }
+    }
+
+    void PresetLibraryPanel::RowList::Content::mouseMove (const juce::MouseEvent& event)
+    {
+        // The row under the pointer is lit, as a menu's item is: this opens where the
+        // preset menu did, and is read the way it was.
+        list.setLitRow (list.getRowAt (event.y));
+    }
+
+    void PresetLibraryPanel::RowList::Content::mouseUp (const juce::MouseEvent& event)
+    {
+        if (! contains (event.getPosition()))
+            return;
+
+        const int row = list.getRowAt (event.y);
+
+        if (row >= 0)
+            list.panel.listBoxItemClicked (row, event);
+        else
+            list.panel.backgroundClicked (event);
     }
 } // namespace Celine
