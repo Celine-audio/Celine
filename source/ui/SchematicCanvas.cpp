@@ -27,25 +27,9 @@ namespace Celine
         // What a caption would cover where it is being tried: other captions and parts (bad)
         // and wires (untidy). Captions are placed in drawing order, so later ones move.
         painter.captionClutter = [this](const Element& element, juce::Rectangle<float> box)
-        {
-            float clutter = 0.0f;
+        { return captionObstacles.clutterAt(element.id, box); };
 
-            for (const auto& placed : placedCaptions)
-                if (placed.intersects(box))
-                    clutter += 10.0f;
-
-            for (const auto& [id, bounds] : captionObstacles)
-                if (id != element.id && bounds.intersects(box))
-                    clutter += 10.0f;
-
-            for (const auto& wire : schematic.getWires())
-                if (box.intersects(juce::Line<float>(wire.a.toFloat(), wire.b.toFloat())))
-                    clutter += 1.0f;
-
-            return clutter;
-        };
-
-        painter.onCaptionPlaced = [this](juce::Rectangle<float> box) { placedCaptions.push_back(box); };
+        painter.onCaptionPlaced = [this](juce::Rectangle<float> box) { captionObstacles.addCaption(box); };
 
         setWantsKeyboardFocus(true);
 
@@ -450,12 +434,34 @@ namespace Celine
             g.fillEllipse(juce::Rectangle<float>(junctionRadius * 2.0f, junctionRadius * 2.0f).withCentre(p));
         }
 
-        captionObstacles.clear();
-        placedCaptions.clear();
+        // Everything a caption could land on, sorted by area once for this paint.
+        {
+            juce::Rectangle<float> extent;
+            bool first = true;
+            const auto grow = [&](juce::Rectangle<float> r)
+            {
+                // Never zero-sized: getUnion() drops an empty rectangle.
+                r = r.withSize(juce::jmax(r.getWidth(), 0.001f), juce::jmax(r.getHeight(), 0.001f));
+                extent = first ? r : extent.getUnion(r);
+                first = false;
+            };
 
-        for (const auto& element : schematic.getElements())
-            if (element.type != ElementType::Rectangle)
-                captionObstacles.emplace_back(element.id, painter.elementBounds(element));
+            for (const auto& element : schematic.getElements())
+                if (element.type != ElementType::Rectangle)
+                    grow(painter.elementBounds(element));
+
+            for (const auto& wire : schematic.getWires())
+                grow(juce::Rectangle<float>(wire.a.toFloat(), wire.b.toFloat()));
+
+            captionObstacles.reset(extent);
+
+            for (const auto& element : schematic.getElements())
+                if (element.type != ElementType::Rectangle)
+                    captionObstacles.addPart(element.id, painter.elementBounds(element));
+
+            for (const auto& wire : schematic.getWires())
+                captionObstacles.addWire(juce::Line<float>(wire.a.toFloat(), wire.b.toFloat()));
+        }
 
         for (const auto& element : schematic.getElements())
             if (element.type != ElementType::Rectangle)

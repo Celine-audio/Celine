@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Schematic/Schematic.h"
+#include "CaptionObstacles.h"
 #include "SchematicSymbols.h"
 
 #include <functional>
@@ -281,11 +282,9 @@ namespace Celine
         SchematicModel::Schematic& schematic;
         SymbolPainter painter;
 
-        /** Every part's bounds, gathered once per paint for caption placement. */
-        mutable std::vector<std::pair<int, juce::Rectangle<float>>> captionObstacles;
-
-        /** Captions already placed in this paint. */
-        mutable std::vector<juce::Rectangle<float>> placedCaptions;
+        /** Parts, wires and captions placed so far, rebuilt each paint for caption
+            placement. */
+        mutable CaptionObstacles captionObstacles;
 
         Tool tool = Tool::Select;
         /** The part being cloned by the Place tool, if any. */

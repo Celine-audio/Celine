@@ -33,37 +33,33 @@ namespace UpdateCheck
             return o;
         }
 
-        /** Fetches the latest release. Empty on any failure. */
-        juce::String fetchLatestRelease (const juce::Thread& thread)
-        {
-            int status = 0;
+        /** The largest reply read. A release's JSON is a few kilobytes. */
+        constexpr int maximumReplyBytes = 1 << 20;
 
-            // GitHub requires a User-Agent. It names the product only.
-            const auto options = juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
-                                     .withConnectionTimeoutMs (timeoutMs)
-                                     .withExtraHeaders ("Accept: application/vnd.github+json\r\n"
-                                                        "User-Agent: Celine-update-check")
-                                     .withStatusCode (&status);
-
-            const auto stream = juce::URL (latestReleaseApi).createInputStream (options);
-
-            if (stream == nullptr || status != 200 || thread.threadShouldExit())
-                return {};
-
-            return stream->readEntireStreamAsString();
-        }
-
-        /** The thread running the request. Deleted at JUCE shutdown, which waits for it. */
+        /** The thread running the request. Deleted at JUCE shutdown, which waits for it:
+            the destructor cancels the request first, so that wait is short even when the
+            network has stalled mid-reply. */
         class Worker final : public juce::Thread, private juce::DeletedAtShutdown
         {
         public:
             Worker() : juce::Thread ("Celine update check") {}
 
-            ~Worker() override { stopThread (timeoutMs + 1000); }
+            ~Worker() override
+            {
+                signalThreadShouldExit();
+
+                {
+                    const juce::ScopedLock hold (streamLock);
+                    if (stream != nullptr)
+                        stream->cancel();
+                }
+
+                stopThread (timeoutMs + 1000);
+            }
 
             void run() override
             {
-                const auto reply = fetchLatestRelease (*this);
+                const auto reply = fetchLatestRelease();
 
                 if (threadShouldExit())
                     return;
@@ -76,6 +72,58 @@ namespace UpdateCheck
                     outcome().newer = release;
                 }
             }
+
+        private:
+            /** Fetches the latest release. Empty on any failure, or when asked to stop. */
+            juce::String fetchLatestRelease()
+            {
+                juce::WebInputStream request (juce::URL (latestReleaseApi), false);
+
+                // GitHub requires a User-Agent. It names the product only.
+                request.withExtraHeaders ("Accept: application/vnd.github+json\r\n"
+                                          "User-Agent: Celine-update-check")
+                    .withConnectionTimeout (timeoutMs);
+
+                // Published before the exit check, so the destructor either sees the flag
+                // checked here or finds the stream to cancel.
+                {
+                    const juce::ScopedLock hold (streamLock);
+                    stream = &request;
+                }
+
+                juce::MemoryOutputStream reply;
+
+                if (! threadShouldExit() && request.connect (nullptr) && request.getStatusCode() == 200)
+                {
+                    // In pieces, so a stop request is seen between them; a read blocked on
+                    // a stalled connection is ended by the destructor's cancel().
+                    char buffer[4096];
+                    const auto deadline = juce::Time::getMillisecondCounter() + static_cast<juce::uint32> (timeoutMs);
+
+                    while (! threadShouldExit() && ! request.isExhausted()
+                           && reply.getDataSize() < static_cast<size_t> (maximumReplyBytes)
+                           && juce::Time::getMillisecondCounter() < deadline)
+                    {
+                        const int got = request.read (buffer, sizeof (buffer));
+                        if (got <= 0)
+                            break;
+                        reply.write (buffer, static_cast<size_t> (got));
+                    }
+                }
+
+                {
+                    const juce::ScopedLock hold (streamLock);
+                    stream = nullptr;
+                }
+
+                if (threadShouldExit() || ! request.isExhausted())
+                    return {};
+
+                return reply.toUTF8();
+            }
+
+            juce::CriticalSection streamLock;
+            juce::WebInputStream* stream = nullptr;
         };
     } // namespace
 

@@ -15,7 +15,7 @@ namespace UpdateCheck
     /** GitHub's latest release, which excludes drafts and pre-releases. */
     inline constexpr auto latestReleaseApi = "https://api.github.com/repos/Celine-audio/Celine/releases/latest";
 
-    /** Timeout for the request. */
+    /** Timeout for connecting, and again for reading the reply. */
     inline constexpr int timeoutMs = 5000;
 
     /** The releases page "Download" opens. */
