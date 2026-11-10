@@ -56,6 +56,10 @@ namespace Celine
         /** Focuses the search field. */
         void focusSearch();
 
+        /** What Return in the search does: chooses the first preset shown. Nothing when
+            the search is empty. */
+        void chooseFirstMatch();
+
         //======================================================================
         std::function<void()> onNewSheet;
         std::function<void (int index)> onFactoryPresetChosen;

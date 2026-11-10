@@ -575,6 +575,16 @@ namespace SchematicModel
             back as the knob turns. */
         double controlPosition = 0.5;
 
+        /** The lever position a 0-1 control value lands on, for a switch with `positions`
+            positions: the nearest, halves going up, so 0.5 is the top of two. The one
+            statement of it: the contacts, the drawing and the strip all ask here. */
+        static int positionForValue(float value, int positions) noexcept
+        {
+            const int top = juce::jmax(1, positions - 1);
+            const auto scaled = juce::jlimit(0.0f, 1.0f, value) * static_cast<float>(top);
+            return juce::jlimit(0, top, static_cast<int>(std::floor(scaled + 0.5f)));
+        }
+
         /** The part's control position, 0 to 1, for pots and switches alike. Non-controls
             read 0.5. */
         float getControlPosition() const noexcept
@@ -593,13 +603,11 @@ namespace SchematicModel
         {
             if (type == ElementType::Spdt)
             {
-                const int top = getSwitchPositions() - 1;
-                switchPosition = juce::jlimit(0, top, juce::roundToInt(juce::jlimit(0.0f, 1.0f, position)
-                                                                       * static_cast<float>(top)));
-                closed = switchPosition == top;
+                switchPosition = positionForValue(position, getSwitchPositions());
+                closed = switchPosition == getSwitchPositions() - 1;
             }
             else if (isSwitch(type))
-                closed = position >= 0.5f;
+                closed = positionForValue(position, 2) == 1;
             else if (type == ElementType::Potentiometer)
                 controlPosition = juce::jlimit(0.0, 1.0, static_cast<double>(position));
         }

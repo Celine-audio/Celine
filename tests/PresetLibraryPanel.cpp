@@ -151,6 +151,33 @@ TEST_CASE ("A row does what the menu item did", "[presets][library]")
     CHECK (newSheets == 1);
 }
 
+TEST_CASE ("Return in the search loads only what was searched for", "[presets][library]")
+{
+    const TempFolder temp;
+    writeTree (temp.folder);
+
+    Celine::PresetLibraryPanel panel;
+    panel.setFactoryPresets (factory);
+    panel.setFolder (temp.folder);
+
+    juce::File chosenFile;
+    int chosenFactory = -1;
+    panel.onPresetChosen = [&] (const juce::File& file) { chosenFile = file; };
+    panel.onFactoryPresetChosen = [&] (int index) { chosenFactory = index; };
+
+    // Empty, or only spaces: the first factory preset must not replace the sheet.
+    panel.chooseFirstMatch();
+    panel.setSearchText ("   ");
+    panel.chooseFirstMatch();
+    CHECK (chosenFactory == -1);
+    CHECK (chosenFile == juce::File{});
+
+    // Something typed: the first match loads.
+    panel.setSearchText ("jcm");
+    panel.chooseFirstMatch();
+    CHECK (chosenFile.getFileName() == "JCM 800.celsch");
+}
+
 TEST_CASE ("The library says what to do when there is no folder, or nothing in it", "[presets][library]")
 {
     Celine::PresetLibraryPanel panel;

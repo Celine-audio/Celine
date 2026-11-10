@@ -48,8 +48,7 @@ namespace SchematicModel
             /** The position a 0-1 control value maps to. */
             static int positionFor(float value, int positions) noexcept
             {
-                const int top = positions - 1;
-                return juce::jlimit(0, top, juce::roundToInt(juce::jlimit(0.0f, 1.0f, value) * static_cast<float>(top)));
+                return Element::positionForValue(value, positions);
             }
 
             bool isClosedAt(float value) const noexcept

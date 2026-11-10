@@ -1855,6 +1855,8 @@ namespace Celine
 
     void MessageConsole::announce()
     {
+        // A fade still running would hide the console when it ends, over this message.
+        juce::Desktop::getInstance().getAnimator().cancelAnimation(this, false);
         setAlpha(1.0f);
         setVisible(true);
 

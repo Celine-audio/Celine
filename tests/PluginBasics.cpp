@@ -945,6 +945,34 @@ TEST_CASE ("The console goes after a clean message and stays for a problem", "[p
     }
 }
 
+TEST_CASE ("A message arriving while the console fades out stays up", "[plugin][ui]")
+{
+    juce::Component parent;
+    parent.setSize (800, 600);
+
+    Celine::MessageConsole console;
+    parent.addAndMakeVisible (console);
+    console.setBounds (100, 100, 400, 60);
+
+    console.setMessages ("Built 15 parts", false, {});
+    REQUIRE (console.isVisible());
+
+    // What timerCallback's fadeOut does on screen: animate a stand-in down to nothing
+    // and hide the console. (fadeOut itself skips the animation off screen.)
+    auto& animator = juce::Desktop::getInstance().getAnimator();
+    animator.animateComponent (&console, console.getBounds(), 0.0f, 400, true, 1.0, 1.0);
+    console.setVisible (false);
+
+    // The next build fails inside those 400 ms.
+    console.setMessages ("Build failed", true, {});
+
+    juce::MessageManager::getInstance()->runDispatchLoopUntil (700);
+
+    CHECK (! animator.isAnimating (&console));
+    CHECK (console.isVisible());
+    CHECK (console.getAlpha() == Catch::Approx (1.0f));
+}
+
 TEST_CASE ("The console is as big as its messages and wraps past its limit", "[plugin][ui]")
 {
     Celine::MessageConsole console;
@@ -2408,6 +2436,46 @@ TEST_CASE ("An SPDT gangs with a plain switch sharing its label", "[schematic]")
     REQUIRE (result.controls.size() == 1);
     CHECK (result.controls[0].name == "CHANNEL");
     CHECK (result.controls[0].contacts.size() == 3);
+}
+
+TEST_CASE ("A switch value lands on the same position in the circuit and on screen", "[schematic]")
+{
+    using namespace SchematicModel;
+
+    // The knob parameters start at 0.5, so a halfway value is the common case, not an edge.
+    for (const float value : { 0.0f, 0.49f, 0.5f, 0.51f, 1.0f })
+    {
+        INFO ("value " << value);
+        const bool up = value >= 0.5f;
+
+        // A plain switch: the contact, the part and the strip toggle agree.
+        Element plain;
+        plain.type = ElementType::Switch;
+        plain.setControlPosition (value);
+
+        LiveControl::Contact contact;
+        contact.positions = 2;
+        contact.closedIn = 1u << 1; // closed in its upper position
+        CHECK (contact.isClosedAt (value) == up);
+        CHECK (plain.closed == up);
+        CHECK ((Element::positionForValue (value, 2) == 1) == up);
+
+        // An ON-ON changeover: the throw drawn is the throw made.
+        Element changeover;
+        changeover.type = ElementType::Spdt;
+        changeover.switchAction = SwitchAction::OnOn;
+        changeover.setControlPosition (value);
+        CHECK (changeover.switchPosition == LiveControl::Contact::positionFor (value, 2));
+        CHECK (changeover.closed == up);
+    }
+
+    // Three positions: thirds of the travel, the middle stop centred on 0.5.
+    CHECK (Element::positionForValue (0.0f, 3) == 0);
+    CHECK (Element::positionForValue (0.24f, 3) == 0);
+    CHECK (Element::positionForValue (0.25f, 3) == 1);
+    CHECK (Element::positionForValue (0.5f, 3) == 1);
+    CHECK (Element::positionForValue (0.75f, 3) == 2);
+    CHECK (Element::positionForValue (1.0f, 3) == 2);
 }
 
 TEST_CASE ("Panel position reorders the control strip", "[schematic]")

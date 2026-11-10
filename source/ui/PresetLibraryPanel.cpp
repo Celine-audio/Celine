@@ -85,19 +85,7 @@ namespace Celine
         search.onTextChange = [this] { applyFilter(); };
 
         // Return loads the first matching preset.
-        search.onReturnKey = [this]
-        {
-            for (int row = 0; row < shown.size(); ++row)
-            {
-                const auto kind = shown.getReference (row).kind;
-
-                if (kind == Kind::preset || kind == Kind::factoryPreset)
-                {
-                    chooseRow (row);
-                    return;
-                }
-            }
-        };
+        search.onReturnKey = [this] { chooseFirstMatch(); };
 
         search.onEscapeKey = [this] { if (onDismiss) onDismiss(); };
         addAndMakeVisible (search);
@@ -476,6 +464,24 @@ namespace Celine
     }
 
     //==========================================================================
+    void PresetLibraryPanel::chooseFirstMatch()
+    {
+        // Nothing typed: Return must not load the first factory preset over the sheet.
+        if (search.getText().trim().isEmpty())
+            return;
+
+        for (int row = 0; row < shown.size(); ++row)
+        {
+            const auto kind = shown.getReference (row).kind;
+
+            if (kind == Kind::preset || kind == Kind::factoryPreset)
+            {
+                chooseRow (row);
+                return;
+            }
+        }
+    }
+
     void PresetLibraryPanel::setSearchText (const juce::String& text)
     {
         // Filters immediately, rather than waiting for onTextChange.

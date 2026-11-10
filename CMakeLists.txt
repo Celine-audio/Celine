@@ -107,6 +107,10 @@ juce_add_plugin("${PROJECT_NAME}"
 
         FORMATS "${FORMATS}"
 
+        # Linux only: without curl, JUCE's Linux networking speaks plain http, and the
+        # update check is https.
+        NEEDS_CURL TRUE
+
         PRODUCT_NAME "${PRODUCT_NAME}")
 
 # Lets the plugin targets and the Tests target share our code without running
@@ -179,10 +183,12 @@ include(XcodePrettify)
 target_compile_definitions(SharedCode
         INTERFACE
 
-        # Neither is used. Turning either on needs the matching NEEDS_* flag in
-        # the juce_add_plugin call above.
+        # Not used. Turning it on needs NEEDS_WEB_BROWSER in juce_add_plugin.
         JUCE_WEB_BROWSER=0
-        JUCE_USE_CURL=0
+
+        # Curl only on Linux, where the update check's https needs it (NEEDS_CURL
+        # above, and the link below so the Tests target gets it too).
+        JUCE_USE_CURL=$<IF:$<PLATFORM_ID:Linux>,1,0>
         JUCE_VST3_CAN_REPLACE_VST2=0
 
         # Only the Standalone windows build is affected.
@@ -211,6 +217,10 @@ target_link_libraries(SharedCode
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags)
+
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_libraries(SharedCode INTERFACE juce::pkgconfig_JUCE_CURL_LINUX_DEPS)
+endif ()
 
 if (AssetFiles)
     target_link_libraries(SharedCode INTERFACE Assets)

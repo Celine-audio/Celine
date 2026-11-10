@@ -195,7 +195,7 @@ namespace Celine
             if (widget.toggle == nullptr || widget.parameter == nullptr)
                 continue;
 
-            const bool on = widget.parameter->getValue() >= 0.5f;
+            const bool on = SchematicModel::Element::positionForValue(widget.parameter->getValue(), 2) == 1;
 
             if (widget.toggle->getToggleState() != on)
                 widget.toggle->setToggleState(on, juce::dontSendNotification);
