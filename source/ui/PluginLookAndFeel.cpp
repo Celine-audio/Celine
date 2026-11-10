@@ -24,6 +24,10 @@ void PluginLookAndFeel::applyPalette()
     for (auto* face : { knob.get(), ioKnob.get() })
         if (face != nullptr)
             Assets::tint(*face, Theme::textOnPanel());
+
+    // The switches sit on the light panels.
+    setColour(pillSwitchTrackColourId, Theme::pill().darker(0.18f));
+    setColour(pillSwitchDotColourId, Theme::panel());
 }
 
 //==============================================================================
@@ -83,54 +87,6 @@ juce::Label* PluginLookAndFeel::createSliderTextBox(juce::Slider& slider)
     }
 
     return label;
-}
-
-void PluginLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
-                                         bool shouldDrawButtonAsHighlighted,
-                                         bool shouldDrawButtonAsDown)
-{
-    if (! button.getProperties().contains(pillSwitchProperty))
-    {
-        LookAndFeel_V4::drawToggleButton(g, button, shouldDrawButtonAsHighlighted,
-                                         shouldDrawButtonAsDown);
-        return;
-    }
-
-    // A pale track that turns accent when on, with a white dot on the "on" side.
-    // Sized to itself, not to the button.
-    const auto bounds = button.getLocalBounds().toFloat();
-    const bool labelled = button.getButtonText().isNotEmpty();
-    const float h = juce::jmin(bounds.getHeight(), 20.0f);
-    const float w = h * 1.8f;
-
-    // Right-aligned with the name on the left when labelled, centred otherwise.
-    const auto track = juce::Rectangle<float>(w, h).withPosition(
-        labelled ? bounds.getRight() - w - 1.0f : bounds.getCentreX() - w * 0.5f,
-        bounds.getCentreY() - h * 0.5f);
-
-    const float alpha = button.isEnabled() ? 1.0f : 0.45f;
-    const bool lit = button.getToggleState();
-
-    auto fill = lit ? Theme::accent() : Theme::pill().darker(0.18f);
-
-    if (shouldDrawButtonAsHighlighted || shouldDrawButtonAsDown)
-        fill = fill.darker(shouldDrawButtonAsDown ? 0.12f : 0.06f);
-
-    g.setColour(fill.withMultipliedAlpha(alpha));
-    g.fillRoundedRectangle(track, h * 0.5f);
-
-    const float inset = 2.0f, dot = h - 2.0f * inset;
-    g.setColour(Theme::panel().withMultipliedAlpha(alpha));
-    g.fillEllipse(track.getX() + inset + (lit ? w - dot - 2.0f * inset : 0.0f),
-                  track.getY() + inset, dot, dot);
-
-    if (labelled)
-    {
-        g.setColour(button.findColour(juce::ToggleButton::textColourId).withMultipliedAlpha(alpha));
-        g.setFont(Fonts::light(14.0f));
-        g.drawText(button.getButtonText(), bounds.withTrimmedRight(w + 8.0f),
-                   juce::Justification::centredLeft, true);
-    }
 }
 
 void PluginLookAndFeel::positionComboBoxText(juce::ComboBox& box, juce::Label& label)

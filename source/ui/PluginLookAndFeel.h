@@ -3,8 +3,7 @@
 #include <CelineUI/LookAndFeelBase.h>
 
 /** Céline's look: the shared LookAndFeelBase plus its own knob (`knob.svg`, rotated
-    by the value) and switch (a track with a dot, used wherever `pillSwitchProperty`
-    is set). */
+    by the value), and the house switch coloured for the light panels it sits on. */
 
 /** Marks a Slider as the plugin's own input/output gain, which gets its own knob. */
 inline constexpr const char* digitalGainProperty = "celineDigitalGain";
@@ -32,10 +31,6 @@ public:
     juce::Label* createSliderTextBox(juce::Slider&) override;
 
     void positionComboBoxText(juce::ComboBox&, juce::Label&) override;
-
-    void drawToggleButton(juce::Graphics&, juce::ToggleButton&,
-                          bool shouldDrawButtonAsHighlighted,
-                          bool shouldDrawButtonAsDown) override;
 
 private:
     /** Knob cap for controls drawn on the circuit. */
