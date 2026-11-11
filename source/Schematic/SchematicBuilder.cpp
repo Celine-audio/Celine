@@ -21,6 +21,8 @@ namespace SchematicModel
                 case 9: return Circuit::DiodeModel::bat41();
                 case 10: return Circuit::DiodeModel::bat46();
                 case 11: return Circuit::DiodeModel::d1n4001();
+                case 12: return Circuit::DiodeModel::zener(4.3);
+                case 13: return Circuit::DiodeModel::zener(3.9);
 
                 default: return Circuit::DiodeModel::d1n4148();
             }

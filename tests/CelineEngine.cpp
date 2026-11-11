@@ -2833,6 +2833,136 @@ namespace
     }
 }
 
+namespace
+{
+    /** A plucked note every half second, twelve harmonics decaying at different
+        rates: enough edges and level changes to walk a clipper across every knee. */
+    double pluckedNotes(int n)
+    {
+        constexpr double notes[] = {82.4, 110.0, 146.8, 196.0, 246.9, 329.6, 98.0, 123.5};
+        const double t = static_cast<double>(n % 24000) / sampleRate;
+        const double f = notes[(n / 24000) % 8];
+        double x = 0.0;
+
+        for (int h = 1; h <= 12; ++h)
+            x += std::sin(2.0 * std::numbers::pi * f * h * t) / h * std::exp(-t * (2.0 + h));
+
+        return x;
+    }
+
+    /** Two inverting stages, each clipped by a 5.1 V and a 9.1 V Zener back to back
+        in its feedback, with a silicon diode beside them: channel A of an Ampeg
+        VH140C, the circuit GitHub issue 5 was filed on, op-amps made ideal. The
+        Zeners are 1.3.0's, a 1N4148 with a breakdown, stored charge and all. */
+    Circuit makeZenerClippedStages()
+    {
+        // The Zener as 1.3.0 built it, so this keeps reproducing the failure
+        // whatever zener() becomes: a 1N4148 with a breakdown.
+        const auto zener130 = [](double vz)
+        {
+            auto z = Circuit::DiodeModel::d1n4148();
+            z.breakdownVoltage = vz;
+            z.breakdownCurrent = 5.0e-3;
+            z.breakdownEmission = 1.5;
+            return z;
+        };
+
+        Circuit c;
+        const auto z51 = zener130(5.1);
+        const auto z91 = zener130(9.1);
+        const auto silicon = Circuit::DiodeModel::d1n4148();
+
+        c.addResistor("in", "a1", 4700.0);
+        c.addCapacitor("a1", "m1", 1.0e-6);
+        c.addIdealOpAmp("gnd", "m1", "o1");
+        c.addDiode("z1", "m1", z51);
+        c.addDiode("z1", "o1", z91);
+        c.addDiode("s1", "o1", silicon);
+        c.addResistor("t1", "s1", 10000.0);
+        c.addResistor("t1", "m1", 10000.0);
+        c.addCapacitor("t1", "gnd", 22.0e-6);
+        c.addResistor("g1", "o1", 4000.0);
+        c.addResistor("o1", "m1", 96000.0);
+
+        c.addResistor("a2", "g1", 10000.0);
+        c.addCapacitor("m2", "a2", 1.0e-6);
+        c.addIdealOpAmp("gnd", "m2", "out");
+        c.addDiode("z2", "m2", z51);
+        c.addDiode("z2", "out", z91);
+        c.addDiode("s2", "out", silicon);
+        c.addResistor("t2", "m2", 10000.0);
+        c.addResistor("s2", "t2", 10000.0);
+        c.addCapacitor("t2", "gnd", 22.0e-6);
+        c.addResistor("out", "m2", 100000.0);
+        c.addResistor("out", "gnd", 47000.0);
+
+        c.setInputNode("in");
+        c.setOutputNode("out");
+        c.prepare(sampleRate);
+        return c;
+    }
+}
+
+TEST_CASE("Newton stops on the circuit's equations, not on a small step", "[circuit][solver]")
+{
+    // Newton used to stop when its last step was small. Its step is the residual
+    // over I + K di/dv, and behind the megohms at an ideal op-amp's input that is a
+    // million: a step inside tolerance left the equations out by 6 V, so the node
+    // voltages written back sat volts from the ports Newton solved. The Zeners'
+    // stored charge, read from those nodes, came out at 3e26 A and the next sample
+    // read 1e38 V -- at 4x drive here, 71263 of 144000 samples failed.
+    for (const double drive : {1.0, 4.0, 16.0})
+    {
+        auto stages = makeZenerClippedStages();
+        float peak = 0.0f;
+
+        for (int n = 0; n < static_cast<int>(sampleRate * 3.0); ++n)
+            peak = std::max(peak, std::abs(stages.process(static_cast<float>(drive * pluckedNotes(n)))));
+
+        INFO("drive " << drive);
+        CHECK(stages.getNonConvergenceCount() == 0);
+        // The 9.1 V Zener and a forward drop: what the clip should be.
+        CHECK(peak < 11.0f);
+        CHECK(peak > 9.0f);
+    }
+}
+
+TEST_CASE("A sample that does not converge is held, not written back", "[circuit][solver]")
+{
+    // An op-amp astable: the comparator's flip is a fold that continuation cannot
+    // walk across, so Newton fails at every edge -- a problem of its own. What it had
+    // when it gave up used to be written back into the nodes and the capacitor --
+    // 180 V out of a part on +/-15 V. Held, the output repeats the last sample that
+    // converged and never leaves the rails. Not asked to oscillate: it does not,
+    // yet, and that is the fold's problem, not the hold's.
+    Circuit astable;
+    astable.addOpAmp("U1", "p", "n", "out", Circuit::OpAmpModel::tl072().withRails(15, -15));
+    astable.addResistor("out", "p", 10000.0);
+    astable.addResistor("p", "gnd", 10000.0);
+    astable.addResistor("out", "n", 10000.0);
+    astable.addCapacitor("n", "gnd", 100.0e-9);
+    astable.addResistor("in", "p", 1.0e6);
+    astable.setInputNode("in");
+    astable.setOutputNode("out");
+    astable.prepare(sampleRate);
+
+    RealtimeGuard guard;
+    float peak = 0.0f;
+    bool finite = true;
+
+    for (int n = 0; n < static_cast<int>(sampleRate); ++n)
+    {
+        const float out = astable.process(n < 10 ? 1.0f : 0.0f);
+        finite = finite && std::isfinite(out);
+        peak = std::max(peak, std::abs(out));
+    }
+
+    CHECK(guard.allocations() == 0);
+    CHECK(astable.getNonConvergenceCount() > 0); // the hold was exercised
+    CHECK(finite);
+    CHECK(peak <= 15.0f);
+}
+
 TEST_CASE("SCRATCH GE resistance-coupled table", "[.][ge]")
 {
     // Candidate models, confirmed through the DK engine (the scratch fitter only solves

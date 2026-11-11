@@ -948,6 +948,67 @@ TEST_CASE("The 1N4148, 1N5817 and LEDs land on their makers' curves", "[diode][m
     check("WP7113QBC", DiodeModel::blueLed(), { { 1.0e-3, 2.571, 0.03 }, { 5.0e-3, 2.806, 0.03 }, { 10.0e-3, 3.000, 0.03 } });
 }
 
+TEST_CASE("The Zeners land on Vishay's BZX55 sheet", "[diode][model][zener]")
+{
+    // docs/specs/diodes/BZX55-Vishay.PDF: the forward curve (Fig. 6, 25 C) and the
+    // capacitance (Fig. 5, at 2 V reverse) digitised from the vector paths; the
+    // breakdown against the table, which gives limits only. Below 5 V Fig. 5 leaves the
+    // chart straight up at 4.92 V, to 175 pF, and the low parts take that.
+    struct Part { double vz, capacitancePf, impedanceAt5mA, impedanceAt1mA, leakageVolts, leakageAmps; };
+
+    for (const auto& part : { Part { 3.9, 174.7, 85.0, 600.0, 1.0, 2.0e-6 }, Part { 4.3, 174.7, 75.0, 600.0, 1.0, 1.0e-6 },
+                              Part { 5.1, 104.4, 35.0, 550.0, 1.0, 0.1e-6 }, Part { 9.1, 46.1, 10.0, 50.0, 6.8, 0.1e-6 } })
+    {
+        const auto m = DiodeModel::zener(part.vz);
+        INFO("BZX55C" << part.vz);
+
+        // Fig. 6 is one curve for the whole series.
+        for (const auto& [current, volts] : { std::pair { 1.0e-6, 0.520 }, { 10.0e-6, 0.589 }, { 100.0e-6, 0.654 },
+                                               { 1.0e-3, 0.716 }, { 10.0e-3, 0.786 } })
+        {
+            const double v = diodeVoltageAt(m, current);
+            INFO("forward at " << current << " A: " << v << " V, sheet " << volts);
+            CHECK(v == Catch::Approx(volts).margin(0.004));
+        }
+
+        CHECK(m.junctionCapacitance == Catch::Approx(part.capacitancePf * 1.0e-12).margin(1.5e-12));
+        CHECK(m.transitTime == Catch::Approx(50.1e-9)); // Diodes Inc's BZT52 card
+
+        // Reverse, straight from the device: the voltage where it carries a current,
+        // and its slope there.
+        Diode d {};
+        d.model = m;
+        const auto reverseAt = [&](double current, double& resistance)
+        {
+            double lo = -part.vz - 2.0, hi = -part.vz + 2.0, i = 0.0, g = 0.0;
+            for (int k = 0; k < 100; ++k)
+            {
+                const double mid = 0.5 * (lo + hi);
+                evaluateDiode(d, mid, i, g);
+                (-i > current ? lo : hi) = mid;
+            }
+            evaluateDiode(d, lo, i, g);
+            resistance = 1.0 / g;
+            return -lo;
+        };
+
+        double r5 = 0.0, r1 = 0.0;
+        CHECK(reverseAt(5.0e-3, r5) == Catch::Approx(part.vz).margin(0.005)); // nominal at IZT
+        reverseAt(1.0e-3, r1);
+        INFO("ZZ " << r5 << " ohms, ZZK " << r1 << " ohms");
+        CHECK(r5 < part.impedanceAt5mA);
+        CHECK(r1 < part.impedanceAt1mA);
+
+        double i = 0.0, g = 0.0;
+        evaluateDiode(d, -part.leakageVolts, i, g);
+        CHECK(-i < part.leakageAmps);
+    }
+
+    // Tunnelling below about 6 V, avalanche above: the low-voltage part's knee is the
+    // softer, as the table's knee impedances say.
+    CHECK(DiodeModel::zener(5.1).breakdownEmission > DiodeModel::zener(9.1).breakdownEmission);
+}
+
 TEST_CASE("The BAT41 reproduces ST's typical curve", "[diode][model]")
 {
     // Figure 1 of the ST sheet (docs/specs), 25 C, and VF 0.4 V typ at 1 mA.

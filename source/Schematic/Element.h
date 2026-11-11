@@ -151,12 +151,14 @@ namespace SchematicModel
              "celine:led-red|WP7113ID|Red, ~1.65 V|LED;"
              "celine:led-green|WP7113GD|Green, ~1.85 V|LED;"
              "celine:led-blue|WP7113QBC|Blue, ~2.55 V|LED;"
-             "celine:zener-9v|Zener 9.1V|Clamps at 9.1 V|Zener;"
-             "celine:zener-5v1|Zener 5.1V|Clamps at 5.1 V|Zener;"
+             "celine:zener-9v|BZX55C9V1|9.1 V Zener, sharp knee|Zener;"
+             "celine:zener-5v1|BZX55C5V1|5.1 V Zener, soft knee|Zener;"
              "celine:diode-1n914|1N914|Same as the 1N4148|Silicon;"
              "celine:diode-bat41|BAT41|~0.4 V, soft knee|Schottky;"
              "celine:diode-bat46|BAT46|~0.26 V, sharp knee|Schottky;"
-             "celine:diode-1n4001|1N4001|Rectifier, ~0.57 V, slow recovery|Silicon"},
+             "celine:diode-1n4001|1N4001|Rectifier, ~0.57 V, slow recovery|Silicon;"
+             "celine:zener-4v3|BZX55C4V3|4.3 V Zener, soft knee|Zener;"
+             "celine:zener-3v9|BZX55C3V9|3.9 V Zener, soft knee|Zener"},
 
             // Base, collector, emitter (addTransistor() order).
             {"BJ Transistor", 3, {{-2, 0}, {2, -2}, {2, 2}}, "", "", 0.0,
