@@ -873,6 +873,7 @@ void PluginProcessor::runStereo (std::vector<std::unique_ptr<Circuit>>& set, boo
         // Measured on the left channel only.
         const bool measured = live && channel == 0;
         const bool probed = measured && ! probes.empty();
+        const int heldBefore = circuit.getNonConvergenceCount();
 
         for (int s = 0; s < count; ++s)
         {
@@ -888,6 +889,10 @@ void PluginProcessor::runStereo (std::vector<std::unique_ptr<Circuit>>& set, boo
             // The circuit runs even when bypassed; the bypass fade decides what is heard.
             samples[s] = wet;
         }
+
+        // Only what is being heard is reported, not a circuit fading out.
+        if (live)
+            addHeldSamples (circuit, heldBefore);
     }
 }
 
@@ -904,6 +909,7 @@ void PluginProcessor::runMono (std::vector<std::unique_ptr<Circuit>>& set, bool 
         applyControls (circuit, state);
 
     const bool haveTwoInputs = right != nullptr;
+    const int heldBefore = circuit.getNonConvergenceCount();
 
     for (int s = 0; s < count; ++s)
     {
@@ -931,6 +937,9 @@ void PluginProcessor::runMono (std::vector<std::unique_ptr<Circuit>>& set, bool 
         if (right != nullptr)
             right[s] = wet;
     }
+
+    if (live)
+        addHeldSamples (circuit, heldBefore);
 }
 
 void PluginProcessor::applyRebuildFade (juce::AudioBuffer<float>& piece, bool outgoing) noexcept

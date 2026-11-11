@@ -1525,9 +1525,15 @@ namespace Celine
 
             if (auto* placed = schematic.findElement(copy))
             {
+                // copyPropertiesTo() leaves out position, and orientation is part of it,
+                // so the turn and the mirror are copied here as the middle-click clone
+                // does. Left out, every copy came out upright: its pins moved, and the
+                // wires copied with it no longer met them.
                 original.copyPropertiesTo(*placed);
                 placed->x = original.x + offset;
                 placed->y = original.y + offset;
+                placed->orientation = original.orientation;
+                placed->mirrored = original.mirrored;
                 copies.push_back(copy);
             }
         }

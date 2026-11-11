@@ -359,5 +359,10 @@ private:
 
     bool nativeTitleBarChecked = false;
 
+    /** Held samples already reported, and when the last report went up. */
+    juce::int64 reportedHeldSamples = 0;
+    juce::uint32 lastHeldReportMs = 0;
+    void reportHeldSamples();
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginEditor)
 };

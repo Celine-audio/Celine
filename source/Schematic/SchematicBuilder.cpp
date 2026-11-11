@@ -554,12 +554,33 @@ namespace SchematicModel
                 control.contacts.push_back({circuit.addSwitch(net(0), net(1 + t), closedNow), positions, closedIn});
             }
 
-            // The strip uses the control's widest switch, and shows an ON-OFF-ON's middle unlit.
+            // The strip uses the control's widest switch. Whether its middle shows unlit is
+            // decided once every part is on the control: see markOffPositions().
             if (positions > control.positions)
                 control.positions = positions;
+        }
 
-            if (element.switchAction == SwitchAction::OnOffOn && control.elementIds.size() == 1)
-                control.offPosition = 1;
+        /** A three-position lever's middle is shown unlit when it connects nothing: when no
+            contact on the control, of any part ganged on it, is closed there. Decided from the
+            contacts once the control is complete, so it says what the circuit does whatever
+            order the parts were drawn in -- set from the first part alone, an ON-OFF-ON drawn
+            before an ON-ON-ON showed the middle off while the other part made a throw there. */
+        void markOffPositions(std::vector<LiveControl>& controls)
+        {
+            for (auto& control : controls)
+            {
+                control.offPosition = -1;
+
+                if (control.kind != LiveControl::Kind::Switch || control.positions != 3)
+                    continue;
+
+                const bool anyClosed = std::any_of(control.contacts.begin(), control.contacts.end(),
+                                                   [](const LiveControl::Contact& contact)
+                                                   { return contact.isClosedAt(0.5f); });
+
+                if (! anyClosed)
+                    control.offPosition = 1;
+            }
         }
 
         /** Stamps one element. Terminals, annotations and scopes stamp nothing. */
@@ -777,6 +798,8 @@ namespace SchematicModel
 
                 if (reportBiasPoint(*circuit, result))
                     return result;
+
+                markOffPositions(controls);
 
                 // Stable: controls at order 0 keep drawing order.
                 std::stable_sort(controls.begin(), controls.end(),

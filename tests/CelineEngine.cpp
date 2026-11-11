@@ -2949,18 +2949,28 @@ TEST_CASE("A sample that does not converge is held, not written back", "[circuit
     RealtimeGuard guard;
     float peak = 0.0f;
     bool finite = true;
+    long long iterations = 0;
 
     for (int n = 0; n < static_cast<int>(sampleRate); ++n)
     {
         const float out = astable.process(n < 10 ? 1.0f : 0.0f);
         finite = finite && std::isfinite(out);
         peak = std::max(peak, std::abs(out));
+        iterations += astable.getLastIterationCount();
     }
 
     CHECK(guard.allocations() == 0);
     CHECK(astable.getNonConvergenceCount() > 0); // the hold was exercised
     CHECK(finite);
     CHECK(peak <= 15.0f);
+
+    // What a run of held samples costs. Spending the whole continuation budget on each
+    // was about 990 iterations a sample -- 3.9 s per second of audio in Release, an
+    // overrun in any host. Continuation is retried only every heldRetryInterval held
+    // samples in a row now, which averages about 55.
+    const double perSample = static_cast<double>(iterations) / sampleRate;
+    INFO(perSample << " iterations a sample");
+    CHECK(perSample < 100.0);
 }
 
 TEST_CASE("SCRATCH GE resistance-coupled table", "[.][ge]")

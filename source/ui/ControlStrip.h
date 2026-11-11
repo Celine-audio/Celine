@@ -130,6 +130,8 @@ namespace Celine
             std::vector<int> elementIds;
         };
 
+        bool switchDisagrees(const Widget& widget) const;
+
         PluginProcessor& processorRef;
 
         juce::Viewport viewport;

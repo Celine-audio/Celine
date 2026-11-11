@@ -141,7 +141,7 @@ namespace Celine
                                && previousIds[static_cast<size_t>(i)]
                                       == widgets[static_cast<size_t>(i)].elementIds;
 
-            if (! samePart)
+            if (! samePart || switchDisagrees(widgets[static_cast<size_t>(i)]))
                 pushPositionFor(controls[static_cast<size_t>(i)].primaryElementId());
         }
 
@@ -153,6 +153,28 @@ namespace Celine
 
         if (onContentChanged != nullptr)
             onContentChanged();
+    }
+
+    bool ControlStrip::switchDisagrees(const Widget& widget) const
+    {
+        // A slot that keeps its part keeps its parameter, which is what the strip and the
+        // circuit read. The one edit that changes what that number means without moving
+        // the lever is a new Action on an xPyT switch: the inspector keeps the part on the
+        // same throw, but 0.5 is throw B of an ON-ON-ON and throw A of an ON-ON. So a
+        // switch whose parameter no longer lands on the position its part is drawn at
+        // takes the part's position, as a slot that changes hands does. Otherwise the two
+        // agree -- every move writes the parameter's position back to the part -- and
+        // nothing moves.
+        if (widget.parameter == nullptr || widget.elementIds.empty())
+            return false;
+
+        const auto* part = processorRef.getSchematic().findElement(widget.elementIds.front());
+
+        if (part == nullptr || part->type != SchematicModel::ElementType::Spdt)
+            return false;
+
+        return SchematicModel::Element::positionForValue(widget.parameter->getValue(), part->getSwitchPositions())
+            != part->switchPosition;
     }
 
     void ControlStrip::pushPositionFor(int elementId)

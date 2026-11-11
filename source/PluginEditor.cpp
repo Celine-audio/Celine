@@ -153,6 +153,10 @@ PluginEditor::PluginEditor (PluginProcessor& p)
 
     // The baseline: undo stops here.
     history.reset (processorRef.getSchematic().toValueTree());
+
+    // Samples held before this window opened were never in front of anyone; report only
+    // new ones.
+    reportedHeldSamples = processorRef.getHeldSampleTotal();
     updateActionButtons();
 
     setResizable (true, true);
@@ -432,6 +436,13 @@ PluginEditor::~PluginEditor()
 
     Celine::Theme::palette().removeChangeListener (this);
 
+    // A first-run or update question still up goes with the window. It is a desktop
+    // window of its own, so nothing else would close it, and its contents draw with
+    // this editor's look and feel, which is about to be destroyed. The modal manager
+    // sees the deletion and does not delete it again.
+    if (openPrompt != nullptr)
+        delete openPrompt.getComponent();
+
     // Before the children go, so none holds a dangling LookAndFeel.
     setLookAndFeel (nullptr);
 
@@ -680,10 +691,39 @@ void PluginEditor::writeControlPositionToSchematic (const std::vector<int>& elem
         inspector.setElement (selected);
 }
 
+void PluginEditor::reportHeldSamples()
+{
+    // A sample the circuit cannot settle is held: the one before it is repeated (see
+    // Circuit::process). A few are inaudible; a run of them is a part of the circuit's
+    // travel the solver cannot follow, and can click or stick. Nothing else says so, so the
+    // console does -- at most once a second, saying how many since the last report, and
+    // as a warning, which keeps it up until something else replaces it.
+    const auto total = processorRef.getHeldSampleTotal();
+
+    if (total <= reportedHeldSamples)
+        return;
+
+    const auto now = juce::Time::getMillisecondCounter();
+
+    if (lastHeldReportMs != 0 && now - lastHeldReportMs < 1000)
+        return;
+
+    const auto fresh = total - reportedHeldSamples;
+    reportedHeldSamples = total;
+    lastHeldReportMs = now;
+
+    console.setWarningHeadline (
+        "The circuit could not be solved on " + juce::String (fresh)
+        + (fresh == 1 ? " sample" : " samples")
+        + ", they were repeated to protect the audio thread. This is an engine limitation or a schematic issue. Please report it.");
+}
+
 void PluginEditor::timerCallback()
 {
     // Backstop for parentHierarchyChanged, in case the window wasn't there yet.
     adoptNativeTitleBar();
+
+    reportHeldSamples();
 
     // First-run questions and update notices, only with the window on screen, one dialog
     // at a time.
@@ -1055,6 +1095,12 @@ void PluginEditor::showPresetLibrary()
         closePresetLibrary();
         return;
     }
+
+    // Every opening starts from the whole list: a search left from last time hid New
+    // and everything that did not match, which looked like presets gone missing.
+    // Cleared here rather than on closing, so every way the library is put away is
+    // covered.
+    presetLibrary.setSearchText ({});
 
     // Re-read every time: files may have changed on disk.
     refreshPresetLibrary();

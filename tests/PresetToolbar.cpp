@@ -114,6 +114,51 @@ TEST_CASE ("Factory and user presets are told apart", "[presets][gui]")
     folder.deleteRecursively();
 }
 
+TEST_CASE ("The preset library opens on the whole list, not the last search", "[presets][gui]")
+{
+    PluginProcessor plugin;
+    auto* base = plugin.createEditorAndMakeActive();
+    auto* editor = dynamic_cast<PluginEditor*> (base);
+    REQUIRE (editor != nullptr);
+
+    // The field and the library, found as the user would: among the editor's children.
+    Celine::PresetButton* field = nullptr;
+    Celine::PresetLibraryPanel* library = nullptr;
+
+    for (auto* child : editor->getChildren())
+    {
+        if (auto* f = dynamic_cast<Celine::PresetButton*> (child))
+            field = f;
+        if (auto* l = dynamic_cast<Celine::PresetLibraryPanel*> (child))
+            library = l;
+    }
+
+    REQUIRE (field != nullptr);
+    REQUIRE (library != nullptr);
+    REQUIRE (field->onClick != nullptr);
+
+    field->onClick(); // open
+    REQUIRE (library->isVisible());
+    const int everything = library->getNumShownRows();
+    REQUIRE (everything > 1);
+
+    // A search that matches nothing but one factory preset...
+    library->setSearchText (SchematicModel::Examples::getNames()[0]);
+    REQUIRE (library->getNumShownRows() < everything);
+
+    field->onClick(); // the field toggles it shut
+    REQUIRE (! library->isVisible());
+
+    // ...is gone when it opens again.
+    field->onClick();
+    REQUIRE (library->isVisible());
+    CHECK (library->getNumShownRows() == everything);
+    CHECK (library->getRowLabel (0) == "New empty sheet");
+
+    plugin.editorBeingDeleted (base);
+    delete base;
+}
+
 TEST_CASE ("Engaging bypass recolours the button without reshaping it", "[toolbar][gui]")
 {
     // Bypass paints itself (it goes red), so check it keeps the same shape as IconButton:

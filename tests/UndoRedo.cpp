@@ -324,6 +324,50 @@ TEST_CASE ("Duplicate copies the selected wires with the parts", "[gui]")
     CHECK (sheet.findWire (wireB)->b == juce::Point<int> (9, 10));
 }
 
+TEST_CASE ("Duplicate keeps each part's turn and mirror", "[gui]")
+{
+    // Several parts, turned and mirrored differently. A copy is the same drawing moved
+    // by the offset, so every pin of every copy is its original's pin moved by it --
+    // which is also what keeps wires copied with them landing on their pins.
+    Schematic sheet;
+    const auto transistor = sheet.addElement (ElementType::Transistor, 4, 4);
+    const auto resistor = sheet.addElement (ElementType::Resistor, 12, 4);
+    const auto diode = sheet.addElement (ElementType::Diode, 20, 4);
+
+    sheet.findElement (transistor)->orientation = 1;
+    sheet.findElement (transistor)->mirrored = true;
+    sheet.findElement (resistor)->orientation = 3;
+    sheet.findElement (diode)->orientation = 2;
+    sheet.findElement (diode)->mirrored = true;
+
+    SchematicCanvas canvas { sheet };
+    canvas.setBounds (0, 0, 600, 400);
+    canvas.setSelection ({ transistor, resistor, diode }, {});
+
+    canvas.duplicateSelection();
+
+    const auto& copies = canvas.getSelection();
+    REQUIRE (copies.size() == 3);
+
+    const int originals[] = { transistor, resistor, diode };
+
+    for (size_t i = 0; i < copies.size(); ++i)
+    {
+        const auto* original = sheet.findElement (originals[i]);
+        const auto* copy = sheet.findElement (copies[i]);
+        REQUIRE (original != nullptr);
+        REQUIRE (copy != nullptr);
+        INFO (getElementInfo (original->type).name);
+
+        CHECK (copy->orientation == original->orientation);
+        CHECK (copy->mirrored == original->mirrored);
+
+        const juce::Point<int> delta (copy->x - original->x, copy->y - original->y);
+        for (int pin = 0; pin < original->getPinCount(); ++pin)
+            CHECK (copy->getPinPosition (pin) == original->getPinPosition (pin) + delta);
+    }
+}
+
 TEST_CASE ("Duplicate works on wires alone", "[gui]")
 {
     Schematic sheet;

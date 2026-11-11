@@ -150,6 +150,12 @@ public:
         isn't in the built circuit or its current can't be derived (see CurrentProbe). */
     bool readInspectedCurrent (float& current, float& power, float& peak) const noexcept;
 
+    /** Samples the live circuits have held since this processor was made: samples Newton
+        could not settle, each repeating the one before (see Circuit::process). Only ever
+        grows, across rebuilds too, so the editor can tell new ones from old by comparing
+        it with what it last saw. Written by the audio thread. */
+    juce::int64 getHeldSampleTotal() const noexcept { return heldSampleTotal.load (std::memory_order_relaxed); }
+
     /** Time span of a scope picture. */
     static constexpr double scopeWindowSeconds = 0.04;
 
@@ -411,6 +417,16 @@ private:
     std::atomic<float> inspectedPower { 0.0f };
     std::atomic<float> inspectedPeakCurrent { 0.0f };
     std::atomic<bool> inspectedLive { false };
+
+    /** See getHeldSampleTotal(). */
+    std::atomic<juce::int64> heldSampleTotal { 0 };
+
+    /** Adds what `circuit` held since `before`, its count at the start of the block. */
+    void addHeldSamples (const Circuit& circuit, int before) noexcept
+    {
+        if (const int held = circuit.getNonConvergenceCount() - before; held > 0)
+            heldSampleTotal.fetch_add (held, std::memory_order_relaxed);
+    }
 
     /** One reading from the inspected part. Called per sample. */
     void sampleInspectedCurrent (Circuit& circuit) noexcept;

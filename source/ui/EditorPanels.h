@@ -349,6 +349,10 @@ namespace Celine
         /** Replaces only the top line, keeping the build's messages below. */
         void setHeadline(juce::String text, bool isError);
 
+        /** The same, as a warning: drawn in the warning colour, and like a build warning
+            it keeps the console up until something replaces it. */
+        void setWarningHeadline(juce::String text);
+
         /** A row naming a part was clicked. */
         std::function<void(int elementId)> onMessageClicked;
 
@@ -384,6 +388,7 @@ namespace Celine
 
         juce::String status;
         bool statusIsError = false;
+        bool statusIsWarning = false;
         std::vector<SchematicModel::Diagnostic> messages;
         std::vector<Row> rows;
 

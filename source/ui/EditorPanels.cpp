@@ -1845,7 +1845,7 @@ namespace Celine
 
     bool MessageConsole::hasProblems() const
     {
-        if (statusIsError)
+        if (statusIsError || statusIsWarning)
             return true;
 
         return std::any_of(messages.begin(), messages.end(), [](const SchematicModel::Diagnostic& m)
@@ -1921,6 +1921,7 @@ namespace Celine
     {
         status = std::move(newStatus);
         statusIsError = isError;
+        statusIsWarning = false;
         messages = newMessages;
 
         layOutRows();
@@ -1932,6 +1933,17 @@ namespace Celine
     {
         status = std::move(text);
         statusIsError = isError;
+        statusIsWarning = false;
+        layOutRows();
+        repaint();
+        announce();
+    }
+
+    void MessageConsole::setWarningHeadline(juce::String text)
+    {
+        status = std::move(text);
+        statusIsError = false;
+        statusIsWarning = true;
         layOutRows();
         repaint();
         announce();
@@ -1966,7 +1978,10 @@ namespace Celine
 
         // The status line is the first row, beside the prompt glyph.
         if (status.isNotEmpty())
-            addRow(status, statusIsError ? Theme::error() : Theme::text().withAlpha(0.8f), -1);
+            addRow(status, statusIsError     ? Theme::error()
+                           : statusIsWarning ? Theme::warning()
+                                             : Theme::text().withAlpha(0.8f),
+                   -1);
 
         if (messages.empty() && status.isEmpty())
             addRow("Nothing to report.", Theme::text().withAlpha(0.35f), -1);

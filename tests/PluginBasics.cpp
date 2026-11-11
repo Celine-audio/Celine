@@ -2438,6 +2438,199 @@ TEST_CASE ("An SPDT gangs with a plain switch sharing its label", "[schematic]")
     CHECK (result.controls[0].contacts.size() == 3);
 }
 
+namespace
+{
+    /** Plays `seconds` of a 220 Hz sine through the plugin as it stands; returns the
+        output's peak. */
+    float playThrough (PluginProcessor& plugin, double seconds)
+    {
+        constexpr int blockSize = 256;
+        plugin.prepareToPlay (48000.0, blockSize);
+
+        juce::AudioBuffer<float> buffer (2, blockSize);
+        juce::MidiBuffer midi;
+        double phase = 0.0;
+        float peak = 0.0f;
+
+        for (int block = 0; block < juce::roundToInt (seconds * 48000.0 / blockSize); ++block)
+        {
+            for (int i = 0; i < blockSize; ++i)
+            {
+                const auto sample = 0.5f * (float) std::sin (phase);
+                phase += juce::MathConstants<double>::twoPi * 220.0 / 48000.0;
+                buffer.setSample (0, i, sample);
+                buffer.setSample (1, i, sample);
+            }
+
+            plugin.processBlock (buffer, midi);
+            peak = juce::jmax (peak, buffer.getMagnitude (0, 0, blockSize));
+        }
+
+        return peak;
+    }
+}
+
+TEST_CASE ("Every factory example runs without holding a sample", "[plugin]")
+{
+    // The console warns about held samples, so a factory sheet that held any would warn
+    // on its own the moment it played.
+    const auto names = SchematicModel::Examples::getNames();
+
+    for (int i = 0; i < names.size(); ++i)
+    {
+        INFO (names[i]);
+        PluginProcessor plugin;
+        SchematicModel::Examples::load (plugin.getSchematic(), i);
+        REQUIRE (plugin.rebuild().isValid());
+
+        CHECK (playThrough (plugin, 0.5) > 1.0e-4f); // it ran
+        CHECK (plugin.getHeldSampleTotal() == 0);
+    }
+}
+
+TEST_CASE ("Held samples reach the processor's count", "[plugin]")
+{
+    using namespace SchematicModel;
+
+    // An op-amp astable drawn on the sheet: positive feedback through a divider, an RC on
+    // the inverting input. The comparator's flip is a fold the solver cannot cross, so
+    // samples are held (see "A sample that does not converge is held" in CelineEngine.cpp)
+    // and the editor has something to warn about.
+    PluginProcessor plugin;
+    auto& sheet = plugin.getSchematic();
+    sheet.clear();
+
+    const auto opamp = sheet.addElement (ElementType::OpAmp, 0, 0);
+    sheet.findElement (opamp)->value = 15.0;  // Supply +
+    sheet.findElement (opamp)->valueB = -15.0; // Supply -
+
+    auto resistor = [&sheet] (int x, int y, double ohms)
+    {
+        const auto id = sheet.addElement (ElementType::Resistor, x, y); // pins (x, y-2), (x, y+2)
+        sheet.findElement (id)->value = ohms;
+        return id;
+    };
+
+    // Straight runs only, none crossing a pin it is not meant for. The op-amp's pins:
+    // in+ (-4,-2), in- (-4,2), out (4,0). Parts sitting on each other's pins connect.
+    sheet.addElement (ElementType::Input, -32, -22);       // pin (-30,-22)
+    resistor (-30, -20, 1.0e6);                             // input to in+
+    sheet.addWire ({ -30, -18 }, { -30, -2 });
+    sheet.addWire ({ -4, -2 }, { -40, -2 });                // the in+ bus
+
+    resistor (-36, 6, 1.0e4);                               // in+ to ground
+    sheet.addWire ({ -36, 4 }, { -36, -2 });
+    sheet.addElement (ElementType::Ground, -36, 10);        // pin (-36,8)
+
+    resistor (10, -10, 1.0e4);                              // out to in+
+    sheet.addWire ({ 4, 0 }, { 10, 0 });
+    sheet.addWire ({ 10, 0 }, { 10, -8 });
+    sheet.addWire ({ 10, -12 }, { 10, -16 });
+    sheet.addWire ({ 10, -16 }, { -12, -16 });
+    sheet.addWire ({ -12, -16 }, { -12, -2 });
+
+    sheet.addWire ({ -4, 2 }, { -8, 2 });                   // the in- bus
+    sheet.addWire ({ -8, 2 }, { -8, 14 });
+    const auto cap = sheet.addElement (ElementType::Capacitor, -8, 16); // in- to ground
+    sheet.findElement (cap)->value = 100.0e-9;
+    sheet.addElement (ElementType::Ground, -8, 20);         // pin (-8,18)
+
+    resistor (20, 10, 1.0e4);                               // out to in-
+    sheet.addWire ({ 10, 0 }, { 20, 0 });
+    sheet.addWire ({ 20, 0 }, { 20, 8 });
+    sheet.addWire ({ 20, 12 }, { -8, 12 });
+
+    sheet.addWire ({ 20, 0 }, { 30, 0 });
+    sheet.addElement (ElementType::Output, 32, 0);          // pin (30,0)
+
+    const auto built = plugin.rebuild();
+    juce::String report = built.error;
+
+    for (const auto& diagnostic : built.diagnostics)
+        report << "\n" << diagnostic.subject << ": " << diagnostic.text;
+
+    INFO (report);
+    REQUIRE (built.isValid());
+
+    playThrough (plugin, 0.5);
+    CHECK (plugin.getHeldSampleTotal() > 0);
+}
+
+TEST_CASE ("A warning headline keeps the console up and the build's messages under it", "[editor]")
+{
+    using namespace SchematicModel;
+
+    Celine::MessageConsole console;
+
+    Diagnostic note;
+    note.severity = Diagnostic::Severity::Info;
+    note.text = "Built.";
+    console.setMessages ("Rebuilt", false, { note });
+    REQUIRE (! console.hasProblems());
+
+    console.setWarningHeadline ("The circuit could not be solved on 12 samples.");
+    CHECK (console.isVisible());
+    CHECK (console.hasProblems());        // held up, not faded out
+    CHECK (! console.isWaitingToHide());
+
+    // An ordinary status line afterwards replaces it, and the console may fade again.
+    console.setHeadline ("Saved.", false);
+    CHECK (! console.hasProblems());
+}
+
+TEST_CASE ("A lever's middle is unlit only when nothing ganged on it connects there", "[schematic]")
+{
+    using namespace SchematicModel;
+
+    // Commons on the input, throws on the output through a load: every pin has a path.
+    const auto build = [] (std::vector<SwitchAction> actions)
+    {
+        Schematic sheet;
+        const auto input = sheet.addElement (ElementType::Input, -8, 0);
+        const auto output = sheet.addElement (ElementType::Output, 40, 0);
+        const auto ground = sheet.addElement (ElementType::Ground, 40, 12);
+        const auto load = sheet.addElement (ElementType::Resistor, 40, 6);
+        sheet.findElement (load)->value = 10000.0;
+
+        auto pin = [&sheet] (int id, int p) { return sheet.findElement (id)->getPinPosition (p); };
+        sheet.addWire (pin (output, 0), pin (load, 0));
+        sheet.addWire (pin (load, 1), pin (ground, 0));
+
+        int x = 0;
+
+        for (const auto action : actions)
+        {
+            const auto sw = sheet.addElement (ElementType::Spdt, x, 0);
+            sheet.findElement (sw)->label = "MODE";
+            sheet.findElement (sw)->switchAction = action;
+            sheet.addWire (pin (input, 0), pin (sw, 0));
+
+            for (int t = 1; t < sheet.findElement (sw)->getPinCount(); ++t)
+                sheet.addWire (pin (sw, t), pin (output, 0));
+
+            x += 12;
+        }
+
+        auto result = buildCircuits (sheet, 48000.0, 1);
+        INFO (result.error);
+        REQUIRE (result.isValid());
+        REQUIRE (result.controls.size() == 1);
+        return result.controls[0];
+    };
+
+    // Alone, an ON-OFF-ON's middle connects nothing.
+    CHECK (build ({ SwitchAction::OnOffOn }).offPosition == 1);
+    CHECK (build ({ SwitchAction::OnOnOn }).offPosition == -1);
+
+    // Ganged with an ON-ON-ON, the middle makes its throw B, so it is not off -- in either
+    // drawing order. It used to follow whichever part was drawn first.
+    CHECK (build ({ SwitchAction::OnOffOn, SwitchAction::OnOnOn }).offPosition == -1);
+    CHECK (build ({ SwitchAction::OnOnOn, SwitchAction::OnOffOn }).offPosition == -1);
+
+    // Two ON-OFF-ONs: both open in the middle.
+    CHECK (build ({ SwitchAction::OnOffOn, SwitchAction::OnOffOn }).offPosition == 1);
+}
+
 TEST_CASE ("A switch value lands on the same position in the circuit and on screen", "[schematic]")
 {
     using namespace SchematicModel;
@@ -3391,6 +3584,100 @@ TEST_CASE ("A rebuilt switch shows its throw straight away", "[editor]")
     });
 }
 
+
+TEST_CASE ("A new switch action keeps the throw the drawing shows", "[editor]")
+{
+    using namespace SchematicModel;
+
+    // An ON-ON-ON on throw B sits at 0.5. Changed to ON-ON in the inspector, the part is
+    // kept on B -- but 0.5 is throw A of an ON-ON. After Rebuild the strip and the
+    // circuit must be on B too, not on whatever the old number now means.
+    runWithinPluginEditor ([] (PluginProcessor& plugin)
+    {
+        auto& sheet = plugin.getSchematic();
+        sheet.clear();
+
+        const auto sw = sheet.addElement (ElementType::Spdt, 0, 0);
+        sheet.findElement (sw)->label = "Voice";
+        sheet.findElement (sw)->switchAction = SwitchAction::OnOnOn;
+        sheet.findElement (sw)->switchPosition = 1; // throw B
+        sheet.findElement (sw)->closed = false;
+
+        // A divider, input to output, joined by coincident pins; the switch's common hangs
+        // off the input and its throws are left open, so they may move when the action
+        // changes without breaking the build.
+        sheet.addElement (ElementType::Input, -20, 0);                    // pin at (-18, 0)
+        const auto feed = sheet.addElement (ElementType::Resistor, -18, 2); // (-18, 0)-(-18, 4)
+        sheet.addElement (ElementType::Output, -16, 4);                   // pin at (-18, 4)
+        const auto load = sheet.addElement (ElementType::Resistor, -18, 6); // (-18, 4)-(-18, 8)
+        sheet.addElement (ElementType::Ground, -18, 10);                  // pin at (-18, 8)
+        sheet.findElement (feed)->value = 10000.0;
+        sheet.findElement (load)->value = 10000.0;
+
+        const auto common = sheet.findElement (sw)->getPinPosition (0);
+        sheet.addWire ({ -18, 0 }, { -4, 0 });
+        sheet.addWire ({ -4, 0 }, { -4, common.y });
+        sheet.addWire ({ -4, common.y }, common);
+
+        {
+            const auto built = plugin.rebuild();
+            INFO (built.error);
+            REQUIRE (built.isValid());
+        }
+        REQUIRE (plugin.getLiveControls().size() == 1);
+
+        Celine::ControlStrip strip (plugin);
+        strip.refresh();
+
+        auto* parameter = plugin.apvts.getParameter (PluginProcessor::getControlParameterId (0));
+        REQUIRE (parameter != nullptr);
+        REQUIRE (Element::positionForValue (parameter->getValue(), 3) == 1);
+
+        // Through the inspector's own Action box, as a user would.
+        Celine::ElementInspector inspector;
+        inspector.setSize (Celine::Theme::inspectorWidth, 600);
+        inspector.setElement (sheet.findElement (sw));
+
+        std::function<juce::ComboBox* (juce::Component&)> findActionBox =
+            [&findActionBox] (juce::Component& c) -> juce::ComboBox*
+        {
+            for (auto* child : c.getChildren())
+            {
+                if (auto* box = dynamic_cast<juce::ComboBox*> (child); box != nullptr
+                    && box->getNumItems() == numSwitchActions && box->getItemText (0) == "ON-ON")
+                    return box;
+
+                if (auto* found = findActionBox (*child))
+                    return found;
+            }
+
+            return nullptr;
+        };
+
+        auto* actionBox = findActionBox (inspector);
+        REQUIRE (actionBox != nullptr);
+        actionBox->setSelectedId (static_cast<int> (SwitchAction::OnOn) + 1, juce::sendNotificationSync);
+
+        const auto* part = sheet.findElement (sw);
+        REQUIRE (part->switchAction == SwitchAction::OnOn);
+        REQUIRE (part->getThrowAt (part->switchPosition) == 1); // still drawn on B
+
+        REQUIRE (plugin.rebuild().isValid());
+        strip.refresh();
+
+        const auto controls = plugin.getLiveControls();
+        REQUIRE (controls.size() == 1);
+        const float value = parameter->getValue();
+
+        CHECK (Element::positionForValue (value, part->getSwitchPositions()) == part->switchPosition);
+
+        // And the circuit makes the throw the drawing shows: throw B's contact is the
+        // second, and it alone is closed at this value.
+        REQUIRE (controls[0].contacts.size() == 2);
+        CHECK (! controls[0].contacts[0].isClosedAt (value));
+        CHECK (controls[0].contacts[1].isClosedAt (value));
+    });
+}
 
 TEST_CASE ("A pot's wiper is drawn where its knob is", "[schematic]")
 {
