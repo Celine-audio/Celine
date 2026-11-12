@@ -11,8 +11,8 @@
 </p>
 
 <p align="center">
-  <b>A circuit simulator you play through.</b><br>
-  Draw a schematic, press Rebuild, and it is solved every sample, live.
+  <b>Realtime SPICE based circuit simulator.</b><br>
+  Your schematic, solved every sample, live.
 </p>
 
 <p align="center">
@@ -33,7 +33,7 @@
 </p>
 
 > [!WARNING]
-> **Turn your monitors down first.** A wrong value can be very loud, and nothing limits the output.
+> **Turn your monitors down first.** A wrong value can cause very loud audio levels.
 
 ## How it works
 
@@ -42,17 +42,17 @@
     <td align="center" width="33%">
       <img src="docs/readme/draw.svg" width="40" alt=""><br>
       <b>1 · Draw</b><br>
-      <sub>Place parts and wire them on the sheet. One key arms each part.</sub>
+      <sub>Place parts and wire them on the sheet.</sub>
     </td>
     <td align="center" width="33%">
       <img src="docs/readme/rebuild.svg" width="40" alt=""><br>
       <b>2 · Rebuild</b><br>
-      <sub>The engine turns the sheet into equations and solves them every sample. No curve fitting.</sub>
+      <sub>The engine computes the circuit's equations and solves them every sample.</sub>
     </td>
     <td align="center" width="33%">
       <img src="docs/readme/play.svg" width="40" alt=""><br>
       <b>3 · Play</b><br>
-      <sub>Every pot and switch becomes a knob along the bottom: automatable, no rebuild needed.</sub>
+      <sub>Every potentiometer and switch becomes controllable along the bottom, seamlessly.</sub>
     </td>
   </tr>
 </table>
@@ -78,15 +78,14 @@
   </tr>
 </table>
 
-Plus the LM386, zeners, Schottkys and LEDs, rectifier valves, and switches up to three throws.
-Every non-linear part is fitted to its maker's datasheet; valves follow
+Every non-linear part is fitted to its maker's datasheet; valves follow equations described in
 [Norman Koren](https://www.normankoren.com/Audio/index.html) and
-[Dempwolf & Zölzer](https://dafx.de/paper-archive/2011/Papers/76_e.pdf), Miller effect included.
+[Dempwolf & Zölzer](https://dafx.de/paper-archive/2011/Papers/76_e.pdf).
 
 <table>
-  <tr><td><img src="docs/readme/linked.svg" width="22" alt=""></td><td><b>Linked controls</b></td><td>Give pots or switches the same name and they share one knob.</td></tr>
-  <tr><td><img src="docs/readme/file.svg" width="22" alt=""></td><td><b>File playback</b></td><td>Feed the Input from an audio file to bench two versions of a sheet.</td></tr>
-  <tr><td><img src="docs/readme/oversampling.svg" width="22" alt=""></td><td><b>Oversampling</b></td><td>2× to 16×. Each step nearly doubles the CPU; 16× is for rendering.</td></tr>
+  <tr><td><img src="docs/readme/linked.svg" width="22" alt=""></td><td><b>Linked controls</b></td><td>Give pots or switches the same name and they share one control</td></tr>
+  <tr><td><img src="docs/readme/file.svg" width="22" alt=""></td><td><b>File playback</b></td><td>Feed the Input from an audio file to benchmark the sheet without needing live input.</td></tr>
+  <tr><td><img src="docs/readme/oversampling.svg" width="22" alt=""></td><td><b>Oversampling</b></td><td>2× to 16×.</td></tr>
   <tr><td><img src="docs/readme/levels.svg" width="22" alt=""></td><td><b>Calibrated levels</b></td><td>INPUT and OUTPUT can read in dBu, to match NAM captures.</td></tr>
   <tr><td><img src="docs/readme/presets.svg" width="22" alt=""></td><td><b>Presets</b></td><td><code>.celsch</code> files hold the drawing and the knob positions, in a searchable library.</td></tr>
 </table>
@@ -108,8 +107,6 @@ Every non-linear part is fitted to its maker's datasheet; valves follow
 | **macOS** 11+ | VST3 · AU · CLAP · LV2 · Standalone |
 | **Windows** | VST3 · CLAP · LV2 · Standalone (ASIO, WASAPI, DirectSound) |
 | **Linux** | VST3 · CLAP · LV2 · Standalone |
-
-AAX builds exist for macOS and Windows but are still awaiting Avid's approval.
 
 > [!NOTE]
 > The builds are not code-signed, so Gatekeeper and SmartScreen will warn on first run.
@@ -146,7 +143,7 @@ AAX builds exist for macOS and Windows but are still awaiting Avid's approval.
 ## Build
 
 Needs **CMake 3.25+** and a **C++23** compiler. The submodules are required (JUCE, the
-engine, the shared CMake modules and the CLAP wrapper live in them):
+engine, the shared CMake modules and the CLAP wrapper):
 
 ```bash
 git clone --recursive https://github.com/Celine-audio/Celine.git
@@ -155,9 +152,9 @@ cmake --build Builds
 ctest --test-dir Builds --output-on-failure
 ```
 
-Cloned without `--recursive`? Run `git submodule update --init --recursive`.
-Add `-G Ninja` if you have it. On macOS, `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"` builds a
-universal binary; keep the quotes, or the shell eats the semicolon.
+If you cloned without `--recursive`, run `git submodule update --init --recursive`.
+Add `-G Ninja` if available. On macOS, `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"` builds a
+universal binary.
 
 Built on [JUCE](https://juce.com) 9, with the build system derived from
 [Pamplejuce](https://github.com/sudara/pamplejuce) and CLAP from
