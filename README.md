@@ -83,7 +83,7 @@ Every non-linear part is fitted to its maker's datasheet; valves follow equation
 [Dempwolf & Zölzer](https://dafx.de/paper-archive/2011/Papers/76_e.pdf).
 
 <table>
-  <tr><td><img src="docs/readme/linked.svg" width="22" alt=""></td><td><b>Linked controls</b></td><td>Give pots or switches the same name and they share one control</td></tr>
+  <tr><td><img src="docs/readme/linked.svg" width="22" alt=""></td><td><b>Linked controls</b></td><td>Give pots or switches the same name and they share one control.</td></tr>
   <tr><td><img src="docs/readme/file.svg" width="22" alt=""></td><td><b>File playback</b></td><td>Feed the Input from an audio file to benchmark the sheet without needing live input.</td></tr>
   <tr><td><img src="docs/readme/oversampling.svg" width="22" alt=""></td><td><b>Oversampling</b></td><td>2× to 16×.</td></tr>
   <tr><td><img src="docs/readme/levels.svg" width="22" alt=""></td><td><b>Calibrated levels</b></td><td>INPUT and OUTPUT can read in dBu, to match NAM captures.</td></tr>
