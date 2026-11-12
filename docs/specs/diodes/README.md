@@ -10,7 +10,7 @@ digitised from the PDFs' vector paths, not read by eye.
 | `1N914.PDF` | 1N914 sheet | The 1N914 alias of the 1N4148 |
 | `1N5817-Vishay.PDF` | Vishay 1N5817-19, doc 88525 (2020) | 1N5817 forward curve (Fig. 3, 10 mA to 1 A) and capacitance (Fig. 5) |
 | `1N5817-Diodes.PDF` | Diodes Inc 1N5817-19, DS23001 (2023) | Second source: reads 0.15 V higher at 1 A |
-| `BZX55-Vishay.PDF` | Vishay BZX55 series, doc 85604 (2024) | Zener limits at 5 mA and 1 mA, for the 5.1 V and 9.1 V Zeners |
+| `BZX55-Vishay.PDF` | Vishay BZX55 series, doc 85604 (2024) | The Zeners (BZX55C3V9, C4V3, C5V1, C9V1): forward curve (Fig. 6, 25 °C, 1 µA to 10 mA), capacitance at 2 V reverse (Fig. 5, the whole 5-20 V curve; below 5 V its top, 175 pF, where it leaves the chart), breakdown against the table's limits at 5 mA and 1 mA. Fig. 7 (Z-current) is not used: its voltage axis is mislabelled |
 | `WP7113ID-Kingbright.PDF` | Kingbright WP7113ID, GaAsP red | Red LED forward curve |
 | `WP7113GD-Kingbright.PDF` | Kingbright WP7113GD, GaP green | Green LED forward curve |
 | `WP7113QBC-Kingbright.PDF` | Kingbright WP7113QBC/D, InGaN blue | Blue LED forward curve |
@@ -27,7 +27,7 @@ What the models were compared against in ngspice-47.
 |---|---|
 | `1N4148-Nexperia.lib` | Nexperia's own card. Within 3 mV of Vishay's curve to 10 mA, 56 mV high at 100 mA; its capacitance and transit time are the ones used |
 | `1N5817-Diodes.lib` | Diodes Inc's card. Fitted at amps: 36 mV at 1 mA, useless at pedal currents |
-| `BZT52-Diodes.lib` | Diodes Inc's BZT52C5V1 and C9V1, the SOD-123 Zeners: softer than the BZX55 limits |
+| `BZT52-Diodes.lib` | Diodes Inc's BZT52C5V1 and C9V1, the SOD-123 Zeners: softer than the BZX55 limits. Its forward transit time, 50.1 ns, is the Zeners' (the BZX55 sheet gives none) |
 
 ## Not here, and why
 

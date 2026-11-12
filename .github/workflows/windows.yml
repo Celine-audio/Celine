@@ -93,8 +93,8 @@ jobs:
       - name: Archive the plugins
         working-directory: ${{ env.ARTIFACTS_PATH }}
         run: |
-          # One archive holding every format built, rather than an installer --
-          # see linux.yml for why.
+          # One archive holding every format built, for anyone who would rather
+          # place the files by hand. The installer below is the usual way in.
           #
           # Everything under the artefacts directory goes in, minus what the
           # linker leaves beside the plugins: the static library they were built
@@ -110,3 +110,23 @@ jobs:
         with:
           name: ${{ env.ARTIFACT_NAME }}.zip
           path: "${{ env.ARTIFACTS_PATH }}/${{ env.ARTIFACT_NAME }}.zip"
+
+      # The installer: packaging/installer.iss, through Inno Setup. It reads
+      # PROJECT_NAME, PRODUCT_NAME and COMPANY_NAME from the environment (set from
+      # .env above) and the build from ..\Builds, and writes
+      # Builds/<product>-<version>-Windows-Setup.exe. Inno Setup ships on GitHub's
+      # Windows images; it is installed only if this one lacks it.
+      - name: Build the installer
+        run: |
+          ISCC="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+          if [ ! -f "$ISCC" ]; then
+            choco install innosetup --no-progress -y
+          fi
+          "$ISCC" packaging/installer.iss
+          ls -la "${{ env.BUILD_DIR }}"/*-Setup.exe
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ARTIFACT_NAME }}-Setup.exe
+          path: "${{ env.BUILD_DIR }}/${{ env.ARTIFACT_NAME }}-Setup.exe"

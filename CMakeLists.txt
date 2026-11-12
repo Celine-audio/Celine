@@ -46,7 +46,21 @@ include(PamplejuceLog)
 
 # JUCE and the CLAP wrapper are submodules: `git submodule update --init
 # --recursive` once after cloning. CI does it as part of actions/checkout.
-add_subdirectory(JUCE)
+#
+# JUCE is Celine's own fork (github.com/Celine-audio/JUCE). The submodule is what CI
+# and a release build against; to work on the fork, point CELINE_JUCE_DIR at a
+# checkout beside the plugins instead, as CELINE_UI_DIR does for the house kit below.
+set(CELINE_JUCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/JUCE" CACHE PATH "The JUCE checkout to build against")
+
+if (NOT EXISTS "${CELINE_JUCE_DIR}/CMakeLists.txt")
+    message(FATAL_ERROR "JUCE not found at ${CELINE_JUCE_DIR}. "
+                        "Run: git submodule update --init --recursive")
+endif ()
+
+# The binary directory is named, because a checkout outside this tree has no
+# default one -- and named JUCE, so a build against the submodule is laid out
+# exactly as it always was.
+add_subdirectory("${CELINE_JUCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/JUCE")
 add_subdirectory(modules/clap-juce-extensions EXCLUDE_FROM_ALL)
 
 # See `docs/CMake API.md` in the JUCE repo for all config options
@@ -93,6 +107,10 @@ juce_add_plugin("${PROJECT_NAME}"
 
         FORMATS "${FORMATS}"
 
+        # Linux only: without curl, JUCE's Linux networking speaks plain http, and the
+        # update check is https.
+        NEEDS_CURL TRUE
+
         PRODUCT_NAME "${PRODUCT_NAME}")
 
 # Lets the plugin targets and the Tests target share our code without running
@@ -135,6 +153,20 @@ endif ()
 include("${CELINE_UI_DIR}/CelineUI.cmake")
 target_link_libraries(SharedCode INTERFACE CelineUI)
 
+# The circuit simulator lives in its own repository too,
+# github.com/Celine-audio/CelineEngine, so it can be maintained on its own. The same rule
+# as the kit: the submodule is what CI and a release build against, and
+# CELINE_ENGINE_DIR points at a checkout beside the plugins to work on it.
+set(CELINE_ENGINE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/modules/CelineEngine" CACHE PATH "The CelineEngine checkout to build against")
+
+if (NOT EXISTS "${CELINE_ENGINE_DIR}/CelineEngine.cmake")
+    message(FATAL_ERROR "CelineEngine not found at ${CELINE_ENGINE_DIR}. "
+                        "Run: git submodule update --init --recursive")
+endif ()
+
+include("${CELINE_ENGINE_DIR}/CelineEngine.cmake")
+target_link_libraries(SharedCode INTERFACE CelineEngine)
+
 # Embeds everything in assets/ into the binary, but only if there is anything
 # there: juce_add_binary_data refuses an empty source list, and nothing is
 # embedded at the moment. Drop a file in assets/ and it comes back on its own.
@@ -151,10 +183,12 @@ include(XcodePrettify)
 target_compile_definitions(SharedCode
         INTERFACE
 
-        # Neither is used. Turning either on needs the matching NEEDS_* flag in
-        # the juce_add_plugin call above.
+        # Not used. Turning it on needs NEEDS_WEB_BROWSER in juce_add_plugin.
         JUCE_WEB_BROWSER=0
-        JUCE_USE_CURL=0
+
+        # Curl only on Linux, where the update check's https needs it (NEEDS_CURL
+        # above, and the link below so the Tests target gets it too).
+        JUCE_USE_CURL=$<IF:$<PLATFORM_ID:Linux>,1,0>
         JUCE_VST3_CAN_REPLACE_VST2=0
 
         # Only the Standalone windows build is affected.
@@ -183,6 +217,10 @@ target_link_libraries(SharedCode
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags)
+
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_libraries(SharedCode INTERFACE juce::pkgconfig_JUCE_CURL_LINUX_DEPS)
+endif ()
 
 if (AssetFiles)
     target_link_libraries(SharedCode INTERFACE Assets)

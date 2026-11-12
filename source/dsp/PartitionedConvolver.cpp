@@ -4,17 +4,8 @@
 
 namespace
 {
-    /** How many running totals the dot product below keeps.
-
-        Sixteen, which is four NEON vectors. Float addition is not associative, so a
-        reduction into one total is a dependency chain the compiler is forbidden to
-        reorder -- and therefore to vectorise -- without -ffast-math, which this build
-        does not use. Four totals is enough to vectorise, but leaves a single vector
-        accumulator whose next multiply-add waits on the last one: four cycles of
-        latency to do four cycles' worth of work, with three of the four units idle.
-
-        Four independent vectors keep them fed. Measured over a 256-tap head: 61 ns a
-        dot product with four totals, 17 ns with sixteen. */
+    /** Number of running totals in the dot product: 16 independent sums (four NEON
+        vectors) let the compiler vectorise without -ffast-math and keep the units busy. */
     constexpr int accumulators = 16;
 
     /** Dot product of two runs of floats. */
@@ -28,14 +19,14 @@ namespace
             for (int j = 0; j < accumulators; ++j)
                 sums[j] += a[k + j] * b[k + j];
 
-        // partitionSize is a multiple of the width above, so this never runs. Here so
-        // that a change to either does not silently drop values.
+        // Never runs while partitionSize is a multiple of `accumulators`; kept so a change to
+        // either doesn't drop values.
         auto remainder = 0.0f;
 
         for (; k < numValues; ++k)
             remainder += a[k] * b[k];
 
-        // Pairwise, which keeps the summation order fixed and the tree shallow.
+        // Pairwise reduction: fixed summation order, shallow tree.
         for (int width = accumulators / 2; width > 0; width /= 2)
             for (int j = 0; j < width; ++j)
                 sums[j] += sums[j + width];
@@ -43,17 +34,12 @@ namespace
         return sums[0] + remainder;
     }
 
-    /** acc += a * b, over a run of complex numbers.
-
-        Written out rather than left to std::complex's own operator*, which carries the
-        branch the standard requires for recovering an infinity from a NaN intermediate
-        -- correct, and unvectorisable. For finite operands the arithmetic below is the
-        same operations in the same order, so it agrees bit for bit; over a 257-bin run
-        it is 103 ns against 259. */
+    /** acc += a * b over complex numbers. Written out because std::complex's operator*
+        handles NaN/infinity cases and won't vectorise; same result for finite values. */
     void multiplyAccumulate (std::complex<float>* acc, const std::complex<float>* a,
                              const std::complex<float>* b, int count) noexcept
     {
-        // Layout-compatible with float[2] by [complex.numbers.general].
+        // Layout-compatible with float[2] ([complex.numbers.general]).
         auto* out = reinterpret_cast<float*> (acc);
         const auto* left = reinterpret_cast<const float*> (a);
         const auto* right = reinterpret_cast<const float*> (b);
@@ -73,13 +59,12 @@ void PartitionedConvolver::prepare (int channelCount, int maximumIrLength)
 {
     numChannels = juce::jmax (1, channelCount);
 
-    // The head takes the first partition; everything past it goes to the tail.
+    // The first partition is the head; the rest is the tail.
     const auto tailLength = juce::jmax (0, maximumIrLength - partitionSize);
     numPartitions = (tailLength + partitionSize - 1) / partitionSize;
 
-    // Overlap-save: a frame of partitionSize new samples is transformed together with
-    // the partitionSize before it, and the second half of the result is the part free
-    // of wrap-around.
+    // Overlap-save: each frame is transformed with the one before it; the second half of
+    // the result is free of wrap-around.
     fftSize = partitionSize * 2;
     fft = std::make_unique<juce::dsp::FFT> (juce::roundToInt (std::log2 ((double) fftSize)));
 
@@ -88,8 +73,8 @@ void PartitionedConvolver::prepare (int channelCount, int maximumIrLength)
 
     for (auto& channel : channels)
     {
-        // Twice the length, holding each sample in both halves, so the most recent
-        // partitionSize samples are always one contiguous run.
+        // Each sample is stored in both halves, so the latest partitionSize samples are
+        // contiguous.
         channel.ring.assign ((size_t) partitionSize * 2, 0.0f);
         channel.previous.assign ((size_t) partitionSize, 0.0f);
         channel.tailFifo.assign ((size_t) partitionSize, 0.0f);
@@ -152,40 +137,36 @@ void PartitionedConvolver::setImpulseResponse (const juce::AudioBuffer<float>& i
     if (fft == nullptr || ir.getNumChannels() <= 0)
         return;
 
-    // Held for the whole write rather than only the publish at the end, or a second
-    // call could fill the pending buffers while the audio thread swapped them out from
-    // under it. The audio thread only ever try-locks, so it never waits on this.
+    // Held for the whole write so a second call can't fill the pending buffers while the
+    // audio thread swaps them. The audio thread only try-locks.
     const juce::SpinLock::ScopedLockType sl (swapLock);
 
-    // What this response actually reaches, which is what the audio thread loops over
-    // once the walk to it has finished. Anything past it is still written -- as zeros,
-    // by tapAt below -- because that is what the old response fades out into.
+    // The partitions this response reaches; the rest are written as zeros, which the old
+    // response fades out to.
     const auto reachedTail = juce::jmax (0, ir.getNumSamples() - partitionSize);
     pendingPartitions = juce::jlimit (0, numPartitions,
                                       (reachedTail + partitionSize - 1) / partitionSize);
 
     for (int channel = 0; channel < numChannels; ++channel)
     {
-        // A mono impulse response is used for every channel.
+        // A mono response is used for every channel.
         const auto* taps = ir.getReadPointer (juce::jmin (channel, ir.getNumChannels() - 1));
         const auto numTaps = ir.getNumSamples();
 
         const auto tapAt = [&] (int index) { return index < numTaps ? taps[index] : 0.0f; };
 
-        // Head, time-reversed so the sliding dot product in process() reads forwards.
+        // Head, time-reversed so process() reads forwards.
         auto* head = headPending.data() + (size_t) (channel * partitionSize);
 
         for (int i = 0; i < partitionSize; ++i)
             head[i] = tapAt (partitionSize - 1 - i);
 
-        // Tail, starting one partition in: those are the taps the overlap-save
-        // engine's own one-frame delay lines up with.
+        // Tail, starting one partition in, matching the engine's one-frame delay.
         for (int partition = 0; partition < numPartitions; ++partition)
         {
             std::fill (designTime.begin(), designTime.end(), Complex {});
 
-            // Zero-padded to the full frame so the circular convolution behaves like
-            // a linear one.
+            // Zero-padded to the full frame so the circular convolution is linear.
             for (int i = 0; i < partitionSize; ++i)
                 designTime[(size_t) i] = Complex { tapAt (partitionSize + partition * partitionSize + i), 0.0f };
 
@@ -210,9 +191,8 @@ void PartitionedConvolver::processFrame (int channelIndex) noexcept
 
     auto& channel = channels[(size_t) channelIndex];
 
-    // [previous frame | this frame], the window overlap-save needs. "This frame" is
-    // the ring's first half, which is where convolveHead() has just finished laying
-    // down exactly these partitionSize samples in order.
+    // [previous frame | this frame]; this frame is the ring's first half, just written by
+    // convolveHead().
     for (int i = 0; i < partitionSize; ++i)
     {
         timeScratch[(size_t) i] = Complex { channel.previous[(size_t) i], 0.0f };
@@ -224,23 +204,21 @@ void PartitionedConvolver::processFrame (int channelIndex) noexcept
 
     fft->perform (timeScratch.data(), freqScratch.data(), false);
 
-    // Newest spectrum goes in at writeIndex; partition k pairs with the spectrum k
-    // frames older, which is what makes this a convolution across frames.
+    // The newest spectrum goes in at writeIndex; partition k pairs with the spectrum k
+    // frames older.
     std::copy (freqScratch.begin(), freqScratch.end(),
                channel.fdl.begin() + (std::ptrdiff_t) writeIndex * fftSize);
 
-    // A response short enough to fit in the head has no tail to sum. The transform
-    // above still had to happen -- it is this frame's entry in the history a longer
-    // response loaded later reads back through.
+    // A response that fits in the head has no tail. The transform above is still needed,
+    // for the history.
     if (activePartitions <= 0)
     {
         std::fill (channel.tailFifo.begin(), channel.tailFifo.end(), 0.0f);
         return;
     }
 
-    // Both operands are transforms of real sequences, so both are conjugate-symmetric
-    // and so is their product. Only the lower half is worth multiplying; the rest is
-    // filled in by reflection afterwards, which halves the work here.
+    // Real inputs give conjugate-symmetric spectra, so only the lower half is multiplied;
+    // the rest is mirrored afterwards.
     const auto half = fftSize / 2;
 
     std::fill (accumulator.begin(), accumulator.begin() + half + 1, Complex {});
@@ -249,9 +227,7 @@ void PartitionedConvolver::processFrame (int channelIndex) noexcept
 
     for (int partition = 0; partition < activePartitions; ++partition)
     {
-        // Modulo the *prepared* count, not the active one: the history is a ring the
-        // whole prepared length, and reading it as though it were shorter would pair
-        // this frame's spectrum with the wrong one.
+        // Modulo the prepared count: the history ring spans every prepared partition.
         const auto slot = (writeIndex - partition + numPartitions) % numPartitions;
         const auto* history = channel.fdl.data() + (size_t) (slot * fftSize);
         const auto* taps = filter + (size_t) (partition * fftSize);
@@ -264,7 +240,7 @@ void PartitionedConvolver::processFrame (int channelIndex) noexcept
 
     fft->perform (accumulator.data(), freqScratch.data(), true);
 
-    // The first half is contaminated by wrap-around; the second half is the answer.
+    // The first half has wrap-around; the second half is the output.
     for (int i = 0; i < partitionSize; ++i)
         channel.tailFifo[(size_t) i] = freqScratch[(size_t) (partitionSize + i)].real();
 }
@@ -274,7 +250,7 @@ void PartitionedConvolver::pickUpPendingFilter() noexcept
     if (! pendingReady.load())
         return;
 
-    // A try-lock, so a message thread mid-update costs nothing but a retry later.
+    // Try-lock: if the message thread is mid-update, pick up the filter later.
     const juce::SpinLock::ScopedTryLockType sl (swapLock);
 
     if (! sl.isLocked())
@@ -286,8 +262,7 @@ void PartitionedConvolver::pickUpPendingFilter() noexcept
         pendingDiscardsHistory = false;
     }
 
-    // Whatever the head fade has reached becomes the new starting point, or a swap
-    // arriving mid-walk would jump back to where the previous one began.
+    // Start from wherever the head fade has reached.
     settleHeadRamp();
 
     headTarget.swap (headPending);
@@ -297,18 +272,14 @@ void PartitionedConvolver::pickUpPendingFilter() noexcept
 
     if (applied)
     {
-        // The union of old and new for the duration of the walk: the partitions only
-        // the outgoing response reaches are still sounding it, and dropping them here
-        // rather than when the ramp lands would cut its tail off mid-fade.
+        // During the crossfade, cover both the old and new responses' partitions.
         activePartitions = juce::jmax (activePartitions, targetPartitions);
         rampFramesLeft = rampFrames;
         headRampLeft = headRampSamples;
         return;
     }
 
-    // The first filter arrives over silence: nothing to walk away from, and every
-    // reason to be exact from the first sample. Swapped rather than copied to keep it
-    // off the audio thread's budget.
+    // The first filter goes in directly: nothing to fade from.
     headActive.swap (headTarget);
     tailActive.swap (tailTarget);
     activePartitions = targetPartitions;
@@ -337,8 +308,8 @@ void PartitionedConvolver::advanceRamp() noexcept
 
     const auto step = 1.0f / (float) rampFramesLeft;
 
-    // The tail only -- the head is crossfaded per sample in convolveHead -- and only as
-    // far as either response reaches, since past that both operands are zero.
+    // Tail only (the head fades per sample in convolveHead), up to the longer of the two
+    // responses.
     for (int channel = 0; channel < numChannels; ++channel)
     {
         const auto first = (size_t) channel * (size_t) numPartitions * (size_t) fftSize;
@@ -350,8 +321,7 @@ void PartitionedConvolver::advanceRamp() noexcept
 
     --rampFramesLeft;
 
-    // Landed: everything the outgoing response reached and the incoming one does not
-    // has now been walked to silence, so it can stop being multiplied.
+    // Fade done: drop the partitions only the old response reached.
     if (rampFramesLeft == 0)
         activePartitions = targetPartitions;
 }
@@ -373,21 +343,19 @@ void PartitionedConvolver::convolveHead (int channelIndex, float* samples, int n
         const auto position = framePosition + i;
         const auto input = samples[i];
 
-        // Written to both halves, so the window below is always contiguous.
+        // Written to both halves, so the window is contiguous.
         ring[position] = input;
         ring[position + partitionSize] = input;
 
-        // The window runs oldest to newest and the taps are stored reversed to match,
-        // so a plain dot product is the convolution. This is the part that costs no
-        // latency.
+        // The window runs oldest to newest and the taps are reversed, so a dot product is the
+        // convolution.
         const auto* window = ring + position + 1;
 
         auto head = dotProduct (window, taps, partitionSize);
 
         if (crossfading)
         {
-            // Twice the arithmetic, over eight frames, in exchange for a filter that
-            // changes continuously rather than in eight audible steps.
+            // During a head fade both filters are convolved and blended per sample.
             const auto left = juce::jmax (0, rampLeftAtStart - i);
             const auto reached = 1.0f - (float) left / (float) headRampSamples;
 
@@ -403,9 +371,7 @@ void PartitionedConvolver::process (juce::AudioBuffer<float>& buffer) noexcept
     if (fft == nullptr || ! loaded.load())
         return;
 
-    // Before the first sample, not only at frame boundaries: the head is convolved
-    // as the samples arrive, so a filter that has been waiting since the last block
-    // has to be in place for this one's first sample rather than its 256th.
+    // Pick up a waiting filter before the first sample, since the head runs per sample.
     pickUpPendingFilter();
 
     const auto numSamples = buffer.getNumSamples();
@@ -413,12 +379,10 @@ void PartitionedConvolver::process (juce::AudioBuffer<float>& buffer) noexcept
 
     for (int start = 0; start < numSamples;)
     {
-        // Runs stop at frame boundaries. Inside one the coefficients cannot change and
-        // every channel walks the same positions, which is what lets the channel loop
-        // sit outside the sample loop.
+        // Runs stop at frame boundaries, where the coefficients may change.
         const auto run = juce::jmin (numSamples - start, partitionSize - framePosition);
 
-        // Captured before the channel loop so both channels blend identically.
+        // Captured once so every channel blends the same.
         const auto rampAtStart = headRampLeft;
 
         for (int ch = 0; ch < channelsToDo; ++ch)
@@ -428,8 +392,7 @@ void PartitionedConvolver::process (juce::AudioBuffer<float>& buffer) noexcept
         {
             headRampLeft = juce::jmax (0, headRampLeft - run);
 
-            // Copied element-wise rather than assigned, so no implementation of vector
-            // assignment can decide to reallocate on the audio thread.
+            // Element-wise copy: never reallocates on the audio thread.
             if (headRampLeft == 0)
                 std::copy (headTarget.begin(), headTarget.end(), headActive.begin());
         }
@@ -440,8 +403,7 @@ void PartitionedConvolver::process (juce::AudioBuffer<float>& buffer) noexcept
         if (framePosition < partitionSize)
             continue;
 
-        // A frame has completed: take any filter that has been waiting, step the walk
-        // towards it, and transform the frame the head has just finished laying down.
+        // Frame complete: pick up any waiting filter, advance the fade, transform the frame.
         framePosition = 0;
 
         pickUpPendingFilter();

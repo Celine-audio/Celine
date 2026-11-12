@@ -1,22 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- LED: two arrows leaving the junction.
-
-     Schematic symbol artwork. The convention, which replacements must follow:
-       * viewBox is -60 -60 120 120, and (0,0) is the part's CENTRE.
-       * 10 SVG units = 1 grid square, so a pin at grid (0,-2) is at (0,-20).
-         Pins are drawn by the canvas at the positions in Element.h, so artwork
-         that ignores this will have its terminals land in the wrong place.
-       * stroke-width 1.2 is the schematic's normal line weight. Heavier lines
-         are multiples of it (1.56 = 1.3x, 1.8 = 1.5x); the app re-strokes at
-         that ratio so lines stay visible when zoomed out.
-       * Colour is ignored - everything is recoloured by the app. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="-60 -60 120 120" width="120" height="120">
-  <path d="M 0 -20 L 0 -12" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
-  <path d="M 0 20 L 0 12" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
-  <path d="M -10 -6 L 10 -6 L 0 6 Z" fill="#000" stroke="none"/>
-  <path d="M -10 6 L 10 6" fill="none" stroke="#000" stroke-width="1.68" stroke-linecap="round"/>
-  <path d="M 12.5 -2 L 21 -10.5" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
-  <path d="M 21 -10.5 L 19.367 -6.194 L 16.694 -8.867 Z" fill="#000" stroke="none"/>
-  <path d="M 12.5 5 L 21 -3.5" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
-  <path d="M 21 -3.5 L 19.367 0.806 L 16.694 -1.867 Z" fill="#000" stroke="none"/>
+  <!-- Diode: leads, body and cathode bar -->
+  <path d="M 0 -20 L 0 -6" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 0 20 L 0 6" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M -9 -6 L 9 -6 L 0 6 Z" fill="#000" stroke="#000" stroke-width="1.6" stroke-linejoin="round"/>
+  <path d="M -10 6 L 10 6" fill="none" stroke="#000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Light: two arrows leaving the body side by side -->
+  <path d="M 12.7 -5.3 L 16.589 -1.411" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 19.064 1.064 L 15.352 -0.173 L 17.827 -2.648 Z" fill="#000" stroke="#000" stroke-width="1" stroke-linejoin="round"/>
+  <path d="M 9.518 -2.118 L 13.407 1.771" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 15.882 4.246 L 12.17 3.009 L 14.645 0.534 Z" fill="#000" stroke="#000" stroke-width="1" stroke-linejoin="round"/>
 </svg>

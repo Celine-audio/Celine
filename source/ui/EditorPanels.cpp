@@ -14,29 +14,100 @@ namespace Celine
     namespace
     {
 
-        /** Every type, in the order the palette lists them: terminals first,
-            because a drawing needs them and a blank sheet gives no clue that
-            ground is a part you place. */
+        /** Every type, in palette order after the wire. Each line here is one row of two. */
         constexpr ElementType paletteOrder[] = {
-            ElementType::Ground,        ElementType::Input,       ElementType::Output,     ElementType::Node,
-            ElementType::Resistor,      ElementType::Capacitor,   ElementType::Inductor,
-            ElementType::Potentiometer, ElementType::Switch,      ElementType::Spdt,      ElementType::VoltageSource,
-            ElementType::Transformer,   ElementType::CenterTapTransformer,
-            ElementType::Diode,         ElementType::Transistor,  ElementType::Jfet,       ElementType::Mosfet,
+            /* Wire */                  ElementType::Ground,
+            ElementType::Input,         ElementType::Output,
+            ElementType::Node,          ElementType::VoltageSource,
+            ElementType::Resistor,      ElementType::Potentiometer,
+            ElementType::Capacitor,     ElementType::Inductor,
+            ElementType::Switch,        ElementType::Spdt,
+            ElementType::Diode,         ElementType::VacuumDiode,
             ElementType::OpAmp,         ElementType::PowerAmp,
-            ElementType::Triode,        ElementType::Pentode,     ElementType::VacuumDiode,
-            ElementType::Text,          ElementType::Rectangle,
-            ElementType::Scope,
+            ElementType::Transistor,    ElementType::Jfet,
+            ElementType::Mosfet,        ElementType::Scope,
+            ElementType::Triode,        ElementType::Pentode,
+            ElementType::Transformer,   ElementType::CenterTapTransformer,
+            ElementType::Rectangle,     ElementType::Text,
         };
 
         constexpr int paletteCount = static_cast<int>(std::size(paletteOrder));
         static_assert(paletteCount == numElementTypes, "every element type should be reachable from the palette");
 
-        /** Item id for the "model this build hasn't got" entry in the model
-            dropdown. Well clear of the real ones, which are `modelIndex + 1`
-            and so run from 1 upwards. */
+        /** The panel's padding on all four sides, and the gap between its two columns. The
+            row gap is Theme::paletteRowHeight. */
+        constexpr int palettePad = 10;
+        constexpr int paletteColumnGap = 4;
+        constexpr int paletteEntryHeight = Theme::paletteRowHeight - 4;
+
+        /** The fold tab on the panel's right edge: width, height and corner radius. */
+        constexpr int paletteTabWidth = 14;
+        constexpr int paletteTabHeight = 44;
+        constexpr float paletteTabCornerRadius = 6.0f;
+
+        /** Space after the lettering, so the longest name doesn't touch the pill's end. */
+        constexpr int paletteTextTrailing = 10;
+
+        /** Item id of the missing-model entry in the model dropdown; real ids are
+            `modelIndex + 1`. */
         constexpr int missingModelItemId = 10000;
+
+        /** The largest size for the inspector's shortcut list; it shrinks until the longest
+            line fits. */
+        constexpr float hintFontHeight = 13.0f;
+
+        /** Draws a reading at the largest size, up to `largest`, at which it fits the box. */
+        void drawReading(juce::Graphics& g, const juce::String& text, juce::Rectangle<float> box,
+                         float largest)
+        {
+            float height = largest;
+
+            while (height > 8.0f
+                   && juce::GlyphArrangement::getStringWidth(Fonts::light(height), text) > box.getWidth() - 4.0f)
+                height -= 0.5f;
+
+            g.setFont(Fonts::light(height));
+            g.drawText(text, box, juce::Justification::centred, false);
+        }
     } // namespace
+
+    juce::String ElementInspector::formatReading(double value, const juce::String& unit)
+    {
+        struct Prefix
+        {
+            double scale;
+            const char* suffix;
+        };
+
+        static const Prefix prefixes[] = {
+            {1.0e12, "T"}, {1.0e9, "G"}, {1.0e6, "M"}, {1.0e3, "k"}, {1.0, ""},
+            {1.0e-3, "m"}, {1.0e-6, "u"}, {1.0e-9, "n"}, {1.0e-12, "p"},
+        };
+
+        if (! std::isfinite(value))
+            return "--" + unit;
+
+        // The largest prefix the value reaches once rounded to two decimals (0.999 V reads
+        // "1.00V"), and pico for anything smaller.
+        const auto* prefix = &prefixes[std::size(prefixes) - 1];
+
+        for (const auto& candidate : prefixes)
+        {
+            if (std::abs(value) >= candidate.scale * 0.995)
+            {
+                prefix = &candidate;
+                break;
+            }
+        }
+
+        const double scaled = value / prefix->scale;
+
+        // Rounds to nothing: plain zero, with no prefix or sign.
+        if (std::abs(scaled) < 0.005)
+            return "0.00" + unit;
+
+        return juce::String(scaled, 2) + prefix->suffix + unit;
+    }
 
     //==========================================================================
     // Palette
@@ -45,7 +116,7 @@ namespace Celine
     class ElementPalette::Entry : public juce::Button
     {
        public:
-        /** The wire row: no element type, and it draws its own symbol. */
+        /** The wire row: no element type, draws its own symbol. */
         Entry() : juce::Button("Wire"), isWire(true)
         {
             setTooltip("Draw wires (W)");
@@ -56,65 +127,135 @@ namespace Celine
         {
             setTooltip(getElementInfo(t).name);
 
-            // Arming a part must not move keyboard focus off the canvas. It used
-            // to: clicking a palette entry gave the button focus, so R and F
-            // then went to the button and the ghost would not turn.
+            // The canvas keeps keyboard focus, so R and F still reach it.
             setWantsKeyboardFocus(false);
         }
 
+        juce::String getLabel() const { return isWire ? "Wire" : getElementInfo(type).name; }
+
+        /** The name's width at a given size. */
+        float getNameWidth(float size) const
+        {
+            return juce::GlyphArrangement::getStringWidth(Fonts::light(size), getLabel());
+        }
+
+        /** The size every name is drawn at; see ElementPalette::getNameFontHeight. */
+        float fontHeight = Theme::paletteFontHeight;
+
         void paintButton(juce::Graphics& g, bool highlighted, bool down) override
         {
-            auto bounds = getLocalBounds().toFloat().reduced(2.0f);
+            auto bounds = getLocalBounds().toFloat();
 
-            // A pill per row, on the light panel. The mockup gives every row a
-            // filled pill rather than the hover-only tint this had, so the list
-            // reads as a stack of buttons at rest and not only under the mouse.
+            // A filled pill per entry.
             g.setColour(active            ? Theme::accent()
                         : down            ? Theme::pill().darker(0.12f)
                         : highlighted     ? Theme::pill().darker(0.05f)
                                           : Theme::pill());
-            g.fillRoundedRectangle(bounds, Theme::cornerRadius);
+            g.fillRoundedRectangle(bounds, Theme::paletteEntryCornerRadius);
 
-            // Ink is dark here: this is one of the two light surfaces, and
-            // Theme::text() on it is invisible -- which is exactly what the
-            // first pass of this repalette looked like.
+            // Dark ink: the palette is a light surface.
             const auto ink = active ? Theme::text() : Theme::textOnPanel();
 
-            // Symbol on the left, name beside it. The swatch is square on the
-            // row height, which is what sets how big the symbol is drawn.
+            // Symbol in a square on the left, name beside it.
             auto symbolArea = bounds.removeFromLeft(bounds.getHeight());
 
             if (isWire)
             {
-                // An elbow, which is what the wire tool actually draws.
+                // An elbow, as the wire tool draws.
                 const auto area = symbolArea.reduced(7.0f);
+                juce::Path elbow;
+                elbow.startNewSubPath(area.getX(), area.getBottom());
+                elbow.lineTo(area.getCentreX(), area.getBottom());
+                elbow.lineTo(area.getCentreX(), area.getY());
+                elbow.lineTo(area.getRight(), area.getY());
+
                 g.setColour(ink);
-                g.drawLine(area.getX(), area.getBottom(), area.getCentreX(), area.getBottom(), 1.5f);
-                g.drawLine(area.getCentreX(), area.getBottom(), area.getCentreX(), area.getY(), 1.5f);
-                g.drawLine(area.getCentreX(), area.getY(), area.getRight(), area.getY(), 1.5f);
+                g.strokePath(elbow, juce::PathStrokeType(SymbolPainter::previewLineWidth(symbolArea),
+                                                         juce::PathStrokeType::mitered,
+                                                         juce::PathStrokeType::rounded));
             }
             else
             {
                 SymbolPainter::drawPreview(g, type, symbolArea, ink);
             }
 
-            g.setColour(ink);
-            g.setFont(Fonts::light(15.0f));
-            g.drawText(isWire ? "Wire" : getElementInfo(type).name, bounds.reduced(6.0f, 0.0f),
-                       juce::Justification::centredLeft, true);
+            // Folded: the pill is just the symbol; the tooltip gives the name.
+            if (! iconOnly)
+            {
+                g.setColour(ink);
+                g.setFont(Fonts::light(fontHeight));
+                g.drawText(getLabel(), bounds, juce::Justification::centredLeft, true);
+            }
         }
 
         ElementType type{};
         bool isWire = false;
         bool active = false;
+        bool iconOnly = false;
+    };
+
+    /** The tab on the panel's edge that folds it to symbols and back. */
+    class ElementPalette::CollapseTab : public juce::Button
+    {
+       public:
+        CollapseTab() : juce::Button("Fold palette")
+        {
+            // The canvas keeps the keyboard.
+            setWantsKeyboardFocus(false);
+            setCollapsed(false);
+        }
+
+        void setCollapsed(bool isNowCollapsed)
+        {
+            collapsed = isNowCollapsed;
+            setTooltip(collapsed ? "Show the parts' names" : "Show the parts as symbols only");
+            repaint();
+        }
+
+        void paintButton(juce::Graphics& g, bool highlighted, bool down) override
+        {
+            const auto bounds = getLocalBounds().toFloat();
+
+            // Square where it meets the panel, rounded on the free side.
+            juce::Path shape;
+            shape.addRoundedRectangle(bounds.getX(), bounds.getY(), bounds.getWidth(), bounds.getHeight(),
+                                      paletteTabCornerRadius, paletteTabCornerRadius,
+                                      false, true, false, true);
+
+            // At rest the palette has already filled it, in one piece with the body (see
+            // ElementPalette::paint); filling it again here would bring the seam back.
+            if (down || highlighted)
+            {
+                g.setColour(down ? Theme::pill() : Theme::pill().brighter(0.4f));
+                g.fillPath(shape);
+            }
+
+            // A chevron pointing the way the panel will move.
+            const auto centre = bounds.getCentre();
+            const float half = 4.0f;
+            const float reach = 2.5f;
+            const float pointX = collapsed ? centre.x + reach : centre.x - reach;
+            const float backX = collapsed ? centre.x - reach : centre.x + reach;
+
+            juce::Path chevron;
+            chevron.startNewSubPath(backX, centre.y - half);
+            chevron.lineTo(pointX, centre.y);
+            chevron.lineTo(backX, centre.y + half);
+
+            g.setColour(Theme::textOnPanel());
+            g.strokePath(chevron, juce::PathStrokeType(1.5f, juce::PathStrokeType::curved,
+                                                       juce::PathStrokeType::rounded));
+        }
+
+       private:
+        bool collapsed = false;
     };
 
     //==========================================================================
 
     ElementPalette::ElementPalette()
     {
-        // Wire first, above the parts: it is the thing you reach for most, and
-        // it is the one row whose position never changes as parts are added.
+        // Wire first.
         {
             auto* wire = entries.add(new Entry());
             wire->onClick = [this] { if (onWireChosen) onWireChosen(); };
@@ -128,12 +269,30 @@ namespace Celine
             content.addAndMakeVisible(entry);
         }
 
-        // Vertical only: the entries are as wide as the panel, so a horizontal
-        // bar would only ever be dead space.
+        // One size for every name: the largest at which the longest fits its column.
+        nameFontHeight = fittingFontHeight();
+
+        for (auto* entry : entries)
+            entry->fontHeight = nameFontHeight;
+
+        // Vertical scrolling only.
         viewport.setViewedComponent(&content, false);
         viewport.setScrollBarsShown(true, false);
         viewport.setWantsKeyboardFocus(false);
         addAndMakeVisible(viewport);
+
+        tab = std::make_unique<CollapseTab>();
+        tab->onClick = [this]
+        {
+            setCollapsed(! collapsed);
+
+            if (onCollapsedChanged)
+                onCollapsedChanged();
+        };
+        addAndMakeVisible(*tab);
+
+        // Not opaque: rounded corners and the tab let the sheet show.
+        setOpaque(false);
     }
 
     ElementPalette::~ElementPalette() = default;
@@ -147,67 +306,266 @@ namespace Celine
         repaint();
     }
 
+    void ElementPalette::setCollapsed(bool shouldBeCollapsed)
+    {
+        if (collapsed == shouldBeCollapsed)
+            return;
+
+        collapsed = shouldBeCollapsed;
+        tab->setCollapsed(collapsed);
+
+        for (auto* entry : entries)
+        {
+            entry->iconOnly = collapsed;
+            entry->repaint();
+        }
+
+        resized();
+        repaint();
+    }
+
+    float ElementPalette::fittingFontHeight() const
+    {
+        // A name's room: the column less the symbol square and trailing space.
+        constexpr float room = static_cast<float>(Theme::paletteColumnWidth - paletteEntryHeight - paletteTextTrailing);
+
+        auto widest = [this](float height)
+        {
+            float width = 0.0f;
+
+            for (const auto* entry : entries)
+                width = juce::jmax(width, entry->getNameWidth(height));
+
+            return width;
+        };
+
+        // Text width isn't exactly proportional to size (hinting), so step down by half a
+        // point until the longest name fits.
+        float height = Theme::paletteFontHeight;
+        const float atFull = widest(height);
+
+        if (atFull > room)
+            height = std::floor(height * room / atFull * 2.0f) / 2.0f;
+
+        while (height > 6.0f && widest(height) > room)
+            height -= 0.5f;
+
+        return height;
+    }
+
+    std::vector<juce::Rectangle<int>> ElementPalette::layOutGrid() const
+    {
+        // Always two to a row: symbol squares when folded, fixed columns otherwise.
+        const int column = collapsed ? paletteEntryHeight : Theme::paletteColumnWidth;
+
+        std::vector<juce::Rectangle<int>> cells;
+        cells.reserve(static_cast<size_t>(entries.size()));
+
+        for (int i = 0; i < entries.size(); ++i)
+            cells.push_back({palettePad + (i % 2) * (column + paletteColumnGap),
+                             palettePad + (i / 2) * Theme::paletteRowHeight,
+                             column, paletteEntryHeight});
+
+        return cells;
+    }
+
+    int ElementPalette::listWidth() const
+    {
+        const int column = collapsed ? paletteEntryHeight : Theme::paletteColumnWidth;
+        return 2 * palettePad + 2 * column + paletteColumnGap;
+    }
+
+    int ElementPalette::listHeight() const
+    {
+        const auto cells = layOutGrid();
+        const int lastBottom = cells.empty() ? palettePad : cells.back().getBottom();
+        return lastBottom + palettePad;
+    }
+
+    juce::Point<int> ElementPalette::getPreferredSize(int maxHeight) const
+    {
+        const int height = listHeight();
+
+        if (height <= maxHeight)
+            return {listWidth() + paletteTabWidth, height};
+
+        // The scrollbar sits beside the rows.
+        return {listWidth() + viewport.getScrollBarThickness() + paletteTabWidth, juce::jmax(0, maxHeight)};
+    }
+
+    int ElementPalette::getFoldedBodyWidth() noexcept
+    {
+        return 2 * palettePad + 2 * paletteEntryHeight + paletteColumnGap;
+    }
+
+    int ElementPalette::getMaximumWidth() const
+    {
+        return 2 * palettePad + 2 * Theme::paletteColumnWidth + paletteColumnGap
+               + viewport.getScrollBarThickness() + paletteTabWidth;
+    }
+
+    bool ElementPalette::isScrolling() const
+    {
+        return listHeight() > getHeight();
+    }
+
+    juce::Rectangle<int> ElementPalette::getBodyBounds() const
+    {
+        return getLocalBounds().withTrimmedRight(paletteTabWidth);
+    }
+
+    bool ElementPalette::hitTest(int x, int y)
+    {
+        return getBodyBounds().contains(x, y) || tab->getBounds().contains(x, y);
+    }
+
     void ElementPalette::paint(juce::Graphics& g)
     {
-        g.fillAll(Theme::panel());
+        // The body and the tab at rest are one fill. Filled apart, as they used to be, their
+        // shared edge falls mid-pixel at a fractional display scale (125%, 150% on Windows),
+        // each side anti-aliases it to half coverage, and the sheet shows through as a dark
+        // seam between them. The tab's subpath reaches a pixel into the body so the two
+        // overlap rather than meet; one fill, non-zero winding, so the overlap is not doubled.
+        const auto body = getBodyBounds().toFloat();
+        const auto tabArea = tab->getBounds().toFloat().withLeft(body.getRight() - 1.0f);
+
+        juce::Path shape;
+        shape.addRoundedRectangle(body, Theme::paletteCornerRadius);
+        shape.addRoundedRectangle(tabArea.getX(), tabArea.getY(), tabArea.getWidth(), tabArea.getHeight(),
+                                  paletteTabCornerRadius, paletteTabCornerRadius,
+                                  false, true, false, true);
+
+        g.setColour(Theme::panel());
+        g.fillPath(shape);
     }
 
     void ElementPalette::resized()
     {
-        constexpr int rowHeight = Theme::paletteRowHeight;
+        const auto body = getBodyBounds();
 
-        viewport.setBounds(getLocalBounds().reduced(4));
+        viewport.setBounds(body);
+        content.setSize(listWidth(), listHeight());
 
-        // Decided here, not asked of the viewport. Whether a scrollbar takes
-        // width depends on the height we are about to set, but the viewport
-        // answers getMaximumVisibleWidth() for the list's *current* height. On
-        // the first layout that is zero, so it reports the full width, the bar
-        // then arrives on top of rows laid out without it, and their rounded
-        // right-hand ends sit clipped square underneath until the next resize.
-        // The inspector and the console work it out the same way.
-        const int listHeight = rowHeight * entries.size();
-        const bool scrolls = listHeight > viewport.getHeight();
-        content.setSize(scrolls ? viewport.getWidth() - viewport.getScrollBarThickness()
-                                : viewport.getWidth(),
-                        listHeight);
+        const auto cells = layOutGrid();
 
-        auto area = content.getLocalBounds();
+        for (int i = 0; i < entries.size(); ++i)
+            entries[i]->setBounds(cells[static_cast<size_t>(i)]);
 
-        for (auto* entry : entries)
-            entry->setBounds(area.removeFromTop(rowHeight));
+        // Vertically centred on the edge, or the whole height if the panel is shorter.
+        const int tabHeight = juce::jmin(paletteTabHeight, body.getHeight());
+        tab->setBounds(body.getRight(), body.getCentreY() - tabHeight / 2, paletteTabWidth, tabHeight);
     }
 
     //==========================================================================
     // Inspector
     //==========================================================================
 
-    std::array<juce::Label*, 14> ElementInspector::captionLabels()
+    std::array<juce::Label*, 15> ElementInspector::captionLabels()
     {
         return {&valueCaption, &valueCaptionB, &labelCaption, &modelCaption, &taperCaption,
                 &orderCaption, &knobCaption, &widthCaption, &heightCaption,
                 &scopeMinCaption, &scopeMaxCaption, &scopeSecondsCaption, &cabFileCaption,
-                &inputFileCaption};
+                &inputFileCaption, &actionCaption};
+    }
+
+    void ElementInspector::reshapeSwitch(SwitchAction action)
+    {
+        if (element == nullptr || element->type != ElementType::Spdt)
+            return;
+
+        // Keep the lever on the same throw in the new action (or the middle, if it was off
+        // and the new action has an off).
+        const int wasOn = element->getThrowAt(element->switchPosition);
+
+        element->switchAction = action;
+
+        const int top = element->getSwitchPositions() - 1;
+        int position = top;
+
+        for (int k = 0; k <= top; ++k)
+            if (element->getThrowAt(k) == wasOn)
+                position = k;
+
+        element->switchPosition = position;
+        element->closed = position == top;
+
+        headerSubtitle = headerSubtitleFor(*element);
+        repaint();
+
+        if (onEdited)
+            onEdited();
     }
 
     void ElementInspector::applyColours()
     {
-        titleLabel.setColour(juce::Label::textColourId, Theme::text());
+        // The card is a light surface: dark ink, fields one step off the card.
+        const auto ink = Theme::textOnPanel();
+        const auto well = Theme::pill().withMultipliedAlpha(0.7f);
 
         for (auto* caption : captionLabels())
-            caption->setColour(juce::Label::textColourId, Theme::text().withAlpha(0.65f));
+            caption->setColour(juce::Label::textColourId, ink.withAlpha(0.55f));
 
-        scopeAutoButton.setColour(juce::ToggleButton::textColourId, Theme::text());
-        fileInputButton.setColour(juce::ToggleButton::textColourId, Theme::text());
-        loopButton.setColour(juce::ToggleButton::textColourId, Theme::text());
+        for (auto* editor : {&valueEditor, &valueEditorB, &labelEditor, &orderEditor, &knobEditor,
+                             &widthEditor, &heightEditor, &scopeMinEditor, &scopeMaxEditor,
+                             &scopeSecondsEditor})
+        {
+            editor->setColour(juce::TextEditor::backgroundColourId, well);
+            editor->setColour(juce::TextEditor::textColourId, ink);
+            editor->setColour(juce::TextEditor::highlightColourId, Theme::accent().withAlpha(0.3f));
+            editor->setColour(juce::TextEditor::highlightedTextColourId, ink);
+            editor->setColour(juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
+            editor->setColour(juce::TextEditor::focusedOutlineColourId, Theme::accent());
+            editor->setColour(juce::CaretComponent::caretColourId, ink);
+            editor->applyColourToAllText(ink);
+        }
 
-        // Play lights while the file runs, which is the one thing about the
-        // transport you want to see from across the room.
+        // Value fields still at zero go red, box and lettering.
+        markUnsetFields();
+
+        for (auto* box : {&modelBox, &taperBox, &actionBox})
+        {
+            box->setColour(juce::ComboBox::backgroundColourId, well);
+            box->setColour(juce::ComboBox::textColourId, ink);
+            box->setColour(juce::ComboBox::arrowColourId, ink.withAlpha(0.5f));
+            box->setColour(juce::ComboBox::outlineColourId, ink);
+        }
+
+        for (auto* button : {&cabFileButton, &inputFileButton, &playButton, &stopButton})
+        {
+            button->setColour(juce::TextButton::buttonColourId, well);
+            button->setColour(juce::TextButton::textColourOffId, ink);
+        }
+
+        // Play lights while the file runs.
         playButton.setColour(juce::TextButton::buttonOnColourId, Theme::accent());
-        playButton.setColour(juce::TextButton::textColourOnId, Theme::textOnPanel());
-        polarisedButton.setColour(juce::ToggleButton::textColourId, Theme::text());
-        modelDescription.setColour(juce::Label::textColourId, Theme::text().withAlpha(0.6f));
-        hintLabel.setColour(juce::Label::textColourId, Theme::text().withAlpha(0.5f));
-        deleteButton.setColour(juce::TextButton::buttonColourId, Theme::discard());
+        playButton.setColour(juce::TextButton::textColourOnId, Theme::panel());
+
+        for (auto* toggle : {&polarisedButton, &cabButton, &scopeAutoButton, &fileInputButton, &loopButton})
+            toggle->setColour(juce::ToggleButton::textColourId, ink);
+
+        modelDescription.setColour(juce::Label::textColourId, Theme::captionUnset());
+        hintLabel.setColour(juce::Label::textColourId, ink.withAlpha(0.6f));
+
+        viewport.getVerticalScrollBar().setColour(juce::ScrollBar::thumbColourId, ink.withAlpha(0.25f));
+        repaint();
+    }
+
+    void ElementInspector::markUnsetFields()
+    {
+        const auto mark = [](juce::TextEditor& editor, bool unset)
+        {
+            const auto ink = unset ? Theme::captionUnset() : Theme::textOnPanel();
+            editor.setColour(juce::TextEditor::textColourId, ink);
+            editor.applyColourToAllText(ink);
+            editor.setColour(juce::TextEditor::outlineColourId,
+                             unset ? Theme::captionUnset().withAlpha(0.6f) : juce::Colours::transparentBlack);
+            editor.repaint();
+        };
+
+        const bool numeric = element != nullptr && element->hasNumericValue();
+        mark(valueEditor, numeric && element->value <= 0.0);
+        mark(valueEditorB, numeric && element->hasSecondValue() && ! element->isSecondValueRail()
+                               && element->valueB <= 0.0);
     }
 
     ElementInspector::ElementInspector()
@@ -217,14 +575,29 @@ namespace Celine
         viewport.setWantsKeyboardFocus(false);
         addAndMakeVisible(viewport);
 
-        titleLabel.setFont(Fonts::light(17.0f));
-        content.addAndMakeVisible(titleLabel);
-
+        // Small-capital captions, flush with the field's left edge.
         for (auto* caption : captionLabels())
         {
-            caption->setFont(Fonts::light(12.0f));
+            caption->setFont(Fonts::bold(11.0f).withExtraKerningFactor(0.08f));
+            caption->setBorderSize(juce::BorderSize<int>(0));
             content.addAndMakeVisible(caption);
         }
+
+        for (auto* editor : {&valueEditor, &valueEditorB, &labelEditor, &orderEditor, &knobEditor,
+                             &widthEditor, &heightEditor, &scopeMinEditor, &scopeMaxEditor,
+                             &scopeSecondsEditor})
+        {
+            editor->setFont(Fonts::light(14.0f));
+            editor->setIndents(10, 0);
+            editor->setJustification(juce::Justification::centredLeft);
+            editor->getProperties().set(inspectorFieldProperty, true);
+        }
+
+        for (juce::Component* c : std::initializer_list<juce::Component*>{
+                 &modelBox, &taperBox, &actionBox, &polarisedButton, &cabButton, &scopeAutoButton,
+                 &fileInputButton, &loopButton})
+            c->getProperties().set(inspectorFieldProperty, true);
+
 
         scopeMinCaption.setText("Volts, bottom", juce::dontSendNotification);
         scopeMaxCaption.setText("Volts, top", juce::dontSendNotification);
@@ -245,9 +618,19 @@ namespace Celine
         labelCaption.setText("Label", juce::dontSendNotification);
         modelCaption.setText("Model", juce::dontSendNotification);
         taperCaption.setText("Taper", juce::dontSendNotification);
+        actionCaption.setText("Action", juce::dontSendNotification);
 
-        // Committing on Enter and on focus loss both matter: people type a value
-        // and then click straight onto the canvas.
+        for (const auto& name : getSwitchActionNames())
+            actionBox.addItem(name, actionBox.getNumItems() + 1);
+
+        actionBox.onChange = [this]
+        {
+            if (element != nullptr && actionBox.getSelectedId() > 0)
+                reshapeSwitch(static_cast<SwitchAction>(actionBox.getSelectedId() - 1));
+        };
+        content.addAndMakeVisible(actionBox);
+
+        // Commit on Enter and on focus loss.
         valueEditor.onReturnKey = [this] { commitValue(); };
         valueEditor.onFocusLost = [this] { commitValue(); };
         content.addAndMakeVisible(valueEditor);
@@ -291,20 +674,19 @@ namespace Celine
 
         modelBox.onChange = [this]
         {
-            // The missing-model entry is disabled, so nothing can select it and
-            // its id never arrives here.
+            // The missing-model entry is disabled, so its id never arrives here.
             if (element != nullptr && modelBox.getSelectedId() > 0
                   && modelBox.getSelectedId() != missingModelItemId)
             {
                 element->modelIndex = modelBox.getSelectedId() - 1;
 
-                // Choosing a model is the gesture that settles an unresolved
-                // one, whether that means accepting the substitute or picking
-                // something else. Either way the sheet stops asking for a model
-                // this build hasn't got.
+                // Choosing any model clears the unresolved one.
                 element->unresolvedModelId.clear();
-                modelDescription.setText(getModelDescription(element->type, element->modelIndex),
-                                         juce::dontSendNotification);
+                headerSubtitle = headerSubtitleFor(*element);
+                modelDescription.setText({}, juce::dontSendNotification);
+                showFieldsFor();
+                contentChanged();
+                repaint();
 
                 if (onEdited)
                     onEdited();
@@ -313,6 +695,7 @@ namespace Celine
         content.addAndMakeVisible(modelBox);
 
         modelDescription.setFont(Fonts::light(12.0f));
+        modelDescription.setBorderSize(juce::BorderSize<int>(0));
         modelDescription.setJustificationType(juce::Justification::topLeft);
         content.addAndMakeVisible(modelDescription);
 
@@ -345,8 +728,8 @@ namespace Celine
         };
         content.addAndMakeVisible(polarisedButton);
 
-        // The cabinet. Announced through its own callback, which is what keeps
-        // the Rebuild button out of it -- see ElementInspector::onCabChanged.
+        // The cabinet has its own callback, so it doesn't light Rebuild (see
+        // ElementInspector::onCabChanged).
         cabButton.onClick = [this]
         {
             if (element == nullptr || element->type != ElementType::Output)
@@ -367,9 +750,8 @@ namespace Celine
         content.addAndMakeVisible(cabFileCaption);
         content.addAndMakeVisible(cabFileButton);
 
-        // The file player. Every button goes straight to the player and then
-        // re-reads it, so what the panel shows is what the player says rather
-        // than what was clicked.
+        // The file player. Buttons act on the player, then re-read it, so the panel shows
+        // the player's state.
         fileInputButton.getProperties().set(pillSwitchProperty, true);
         loopButton.getProperties().set(pillSwitchProperty, true);
 
@@ -419,18 +801,12 @@ namespace Celine
                  &fileInputButton, &inputFileButton, &loopButton, &playButton, &stopButton, &transportView})
             content.addAndMakeVisible(c);
 
-        rotateButton.onClick = [this] { if (onRotateRequested) onRotateRequested(); };
-        content.addAndMakeVisible(rotateButton);
-
-        flipButton.onClick = [this] { if (onFlipRequested) onFlipRequested(); };
-        content.addAndMakeVisible(flipButton);
-
-        deleteButton.onClick = [this] { if (onDeleteRequested) onDeleteRequested(); };
-        content.addAndMakeVisible(deleteButton);
-
-        hintLabel.setFont(Fonts::light(13.0f));
+        hintLabel.setFont(Fonts::light(hintFontHeight));
         hintLabel.setJustificationType(juce::Justification::topLeft);
         content.addAndMakeVisible(hintLabel);
+
+        // A rounded card: the sheet shows at the corners.
+        setOpaque(false);
 
         applyColours();
         setElement(nullptr);
@@ -439,19 +815,60 @@ namespace Celine
     void ElementInspector::setElement(Element* newElement)
     {
         element = newElement;
+
+        // Before announcing the size, so the layout knows whether the card is shown.
+        setVisible(element != nullptr || shortcutsShown);
         rebuildForElement();
-        resized();
+        contentChanged();
         repaint();
+    }
+
+    void ElementInspector::setShortcutsShown(bool shouldShow)
+    {
+        if (shortcutsShown == shouldShow)
+            return;
+
+        shortcutsShown = shouldShow;
+        setVisible(element != nullptr || shortcutsShown);
+        contentChanged();
+    }
+
+    void ElementInspector::contentChanged()
+    {
+        resized();
+
+        if (onPreferredSizeChanged)
+            onPreferredSizeChanged();
+    }
+
+    juce::String ElementInspector::headerSubtitleFor(const Element& part)
+    {
+        // A switch is named as sold: "DPDT, ON-OFF-ON".
+        if (part.type == ElementType::Spdt)
+            return part.getSwitchKindName() + ", "
+                   + getSwitchActionNames()[static_cast<int>(part.switchAction)];
+
+        // No description for a box (its models are colours). A missing model is described
+        // under the model box instead, in red.
+        if (! part.hasModelChoice() || part.type == ElementType::Rectangle
+            || part.unresolvedModelId.isNotEmpty())
+            return {};
+
+        return getModelDescription(part.type, part.modelIndex);
     }
 
     void ElementInspector::showNothingSelected()
     {
-        titleLabel.setText("Nothing Selected", juce::dontSendNotification);
+        headerTitle = "Nothing selected";
+        headerSubtitle = "Keyboard and mouse shortcuts";
+        headerHasSymbol = false;
         hintLabel.setText(  "S  select tool\n"
                             "X  delete tool\n"
                             "F  fit to screen\n\n"
                             "W  wire\n"
-                            "G  ground\n\n"
+                            "G  ground\n"
+                            "I  input\n"
+                            "O  output\n\n"
                             "R  resistor\n"
                             "C  capacitor\n"
                             "L  inductor\n"
@@ -463,18 +880,15 @@ namespace Celine
                             "Delete  removes the selection.\n\n"
                             "Right-drag to move the canvas.\n"
                             "Scroll to adjust zoom.\n"
-                            "Middle-click to copy an element.\n",
+                            "Middle-click to copy an element.",
                             juce::dontSendNotification);
+
+        fitHintToWidth();
     }
 
-    /** Fills the model dropdown, grouped as the table groups it and sorted by
-        name inside each group. The item id stays `index + 1` however the display
-        is reordered, so this is a view over the table rather than an ordering of
-        it.
-
-        compareNatural because these are part numbers: it reads digit runs as
-        numbers, so 1N914 sorts before 1N4148. Group order is left as the table
-        authors it. */
+    /** Fills the model dropdown, grouped as the table groups it and sorted naturally
+        (1N914 before 1N4148) within each group. Item ids stay `index + 1`. Group order is
+        the table's. */
     void ElementInspector::populateModelBox(const Element& part)
     {
         const auto choices = getModelChoices(part.type);
@@ -505,31 +919,32 @@ namespace Celine
             }
         }
 
-        // A model this build could not find gets its own greyed entry at the
-        // top. The console said so at load, but console lines scroll away and
-        // the inspector does not. Disabled because there is nothing to select.
+        // A model this build couldn't find gets a greyed, disabled entry at the top.
         if (part.unresolvedModelId.isNotEmpty())
         {
             modelBox.addItem(part.unresolvedModelId + " (missing)", missingModelItemId);
             modelBox.setItemEnabled(missingModelItemId, false);
             modelBox.setSelectedId(missingModelItemId, juce::dontSendNotification);
-            modelDescription.setText("Not in this build. The part is using "
-                                         + choices[0] + " instead.",
+            modelDescription.setText("Saved as \"" + part.unresolvedModelId + "\", a model this build "
+                                         "doesn't have. The part is using " + choices[0] + " instead.",
                                      juce::dontSendNotification);
         }
         else
         {
             modelBox.setSelectedId(part.modelIndex + 1, juce::dontSendNotification);
-            modelDescription.setText(getModelDescription(part.type, part.modelIndex),
-                                     juce::dontSendNotification);
+            modelDescription.setText({}, juce::dontSendNotification);
         }
     }
 
     void ElementInspector::fillFieldsFrom(const Element& part)
     {
         const auto& info = getElementInfo(part.type);
-        titleLabel.setText(info.name, juce::dontSendNotification);
+        headerTitle = info.name;
+        headerSubtitle = headerSubtitleFor(part);
+        headerHasSymbol = part.getPinCount() > 0 || part.type == ElementType::Rectangle;
+        headerType = part.type;
         hintLabel.setText({}, juce::dontSendNotification);
+        modelDescription.setText({}, juce::dontSendNotification);
 
         if (part.hasNumericValue())
         {
@@ -550,10 +965,11 @@ namespace Celine
             populateModelBox(part);
 
         taperBox.setSelectedId(static_cast<int>(part.taper) + 1, juce::dontSendNotification);
+        actionBox.setSelectedId(static_cast<int>(part.switchAction) + 1, juce::dontSendNotification);
         polarisedButton.setToggleState(part.polarised, juce::dontSendNotification);
     }
 
-    /** Which fields this part has, and the values of the ones it has. */
+    /** Which fields this part has, and their values. */
     void ElementInspector::showFieldsFor()
     {
         const bool has = element != nullptr;
@@ -584,9 +1000,7 @@ namespace Celine
         {
             cabButton.setToggleState(element->cabEnabled, juce::dontSendNotification);
 
-            // Named, not "Browse". And a file that has gone says so here as well
-            // as in the console, because this is where you are looking when you
-            // wonder why the cab made no difference.
+            // Shows the file's name, and says so if the file is missing.
             const juce::File file(element->cabFile);
 
             cabFileButton.setButtonText(element->cabFile.isEmpty() ? "Choose..."
@@ -601,9 +1015,7 @@ namespace Celine
         scopeSecondsCaption.setVisible(isScope);
         scopeSecondsEditor.setVisible(isScope);
 
-        // The two range boxes only when they do something. Left visible but
-        // dead while auto-scaling, they invite you to type a range and then
-        // ignore it, which is a worse way to learn what the checkbox does.
+        // The range boxes only show when auto-scale is off.
         const bool manual = isScope && ! element->scopeAutoScale;
         scopeMinCaption.setVisible(manual);
         scopeMinEditor.setVisible(manual);
@@ -621,9 +1033,7 @@ namespace Celine
                                        juce::dontSendNotification);
         }
 
-        // Only for parts that can have a reading at all. Showing an empty
-        // CURRENT box on a part whose current is not derivable would read as a
-        // circuit fault rather than as a limit of the readout.
+        // Only parts that can have a reading; current only for resistors.
         currentView.setVisible(has && element->type == ElementType::Resistor);
 
         if (onInspectedElementChanged)
@@ -647,9 +1057,7 @@ namespace Celine
 
         if (isBox)
         {
-            // What the box will actually be, not what was typed: the size is
-            // clamped, so a 1 has to come back as the minimum rather than sit
-            // there looking accepted.
+            // Show the clamped size, not what was typed.
             const auto box = element->getRectangleBounds();
             widthEditor.setText(juce::String(box.getWidth()), juce::dontSendNotification);
             heightEditor.setText(juce::String(box.getHeight()), juce::dontSendNotification);
@@ -666,15 +1074,18 @@ namespace Celine
         valueEditor.setVisible(numeric);
         valueCaptionB.setVisible(twoValues);
         valueEditorB.setVisible(twoValues);
-        // A group box's models are colours, and calling that "Model" would be
-        // asking which sort of rectangle it is.
+        // A group box's models are colours.
         modelCaption.setText(isBox ? "Colour" : "Model", juce::dontSendNotification);
         modelCaption.setVisible(models);
         modelBox.setVisible(models);
 
-        // A part with one model and nothing to say about it gets no line.
+        // No line when there is nothing to say.
         modelDescription.setVisible(models && modelDescription.getText().isNotEmpty());
         taperCaption.setVisible(isPot);
+
+        const bool isChangeover = has && element->type == ElementType::Spdt;
+        actionCaption.setVisible(isChangeover);
+        actionBox.setVisible(isChangeover);
         taperBox.setVisible(isPot);
         labelCaption.setText(has && element->type == ElementType::Text     ? "Text"
                              : isBox                                      ? "Title"
@@ -684,15 +1095,15 @@ namespace Celine
         labelEditor.setVisible(has);
         polarisedButton.setVisible(has && element->type == ElementType::Capacitor);
 
-        // A switch has no throw control here. Its position is a *live* one --
-        // it moves the running circuit without a rebuild -- so it belongs with
-        // the other live controls in the strip along the bottom, and having it
-        // in two places meant two things to keep in step for no gain.
-        const bool orientable = has && element->getPinCount() > 0;
-        rotateButton.setVisible(orientable);
-        flipButton.setVisible(orientable);
-        deleteButton.setVisible(has);
+        // Switch position, rotate, flip and delete are not here: the switch is in the
+        // control strip, the rest in the toolbar.
         hintLabel.setVisible(! has);
+
+        // Captions in small capitals, applied here once.
+        for (auto* caption : captionLabels())
+            caption->setText(caption->getText().toUpperCase(), juce::dontSendNotification);
+
+        markUnsetFields();
     }
 
     void ElementInspector::rebuildForElement()
@@ -723,8 +1134,7 @@ namespace Celine
         const auto status = have ? filePlayer->getStatus() : InputFilePlayer::Status{};
         const bool loaded = status.length > 0;
 
-        // Only what the transport draws: a stopped file, or none, costs no
-        // repaint at all.
+        // Repaint only when the transport display changes.
         const bool transportMoved = status.position != fileStatus.position
                                  || status.length != fileStatus.length
                                  || status.loading != fileStatus.loading
@@ -733,8 +1143,7 @@ namespace Celine
 
         fileStatus = status;
 
-        // All of these are no-ops when nothing changed, which is what lets this
-        // run on every timer tick.
+        // These are no-ops when nothing changed, so they can run every tick.
         fileInputButton.setToggleState(status.fileMode, juce::dontSendNotification);
         loopButton.setToggleState(status.looping, juce::dontSendNotification);
         playButton.setToggleState(status.playing, juce::dontSendNotification);
@@ -745,8 +1154,7 @@ namespace Celine
         playButton.setEnabled(loaded);
         stopButton.setEnabled(loaded);
 
-        // Named, not "Browse", for the cabinet's reason: a file you cannot
-        // identify without opening a dialog is one you will load twice.
+        // Shows the file's name.
         inputFileButton.setButtonText(status.file == juce::File{} ? juce::String("Choose...")
                                                                    : status.file.getFileName());
 
@@ -760,8 +1168,7 @@ namespace Celine
 
         const auto& status = owner.fileStatus;
 
-        // Minutes, seconds and a tenth: enough to find the bar a take goes
-        // wrong in, and steady enough to read while it counts.
+        // Minutes, seconds and tenths.
         const auto clock = [&status](juce::int64 samples)
         {
             const double seconds = status.sampleRate > 0.0 ? (double) samples / status.sampleRate : 0.0;
@@ -780,12 +1187,12 @@ namespace Celine
             text = clock(status.position) + " / " + clock(status.length)
                  + (status.fileMode ? juce::String() : juce::String("   (live input)"));
 
-        g.setColour(Theme::comment());
+        g.setColour(Theme::textOnPanel().withAlpha(0.6f));
         g.setFont(Fonts::light(12.0f));
         g.drawText(text, bounds.removeFromTop(16.0f), juce::Justification::centredLeft, false);
 
         auto track = bounds.withSizeKeepingCentre(bounds.getWidth(), 4.0f);
-        g.setColour(Theme::track());
+        g.setColour(Theme::pill().darker(0.12f));
         g.fillRoundedRectangle(track, 2.0f);
 
         if (status.length > 0)
@@ -800,11 +1207,17 @@ namespace Celine
     {
         auto bounds = getLocalBounds().toFloat();
 
+        // A well behind the readings, like the fields.
+        g.setColour(Theme::pill().withMultipliedAlpha(0.7f));
+        g.fillRoundedRectangle(bounds, Theme::cornerRadius);
+        bounds = bounds.reduced(4.0f, 6.0f);
+
         float amps = 0.0f, watts = 0.0f, peak = 0.0f;
         const bool got = owner.currentReader && owner.currentReader(amps, watts, peak);
 
-        g.setColour(Theme::comment());
-        g.setFont(Fonts::light(11.0f));
+        const auto dim = Theme::textOnPanel().withAlpha(0.5f);
+        g.setColour(dim);
+        g.setFont(Fonts::light(12.0f));
 
         if (! got)
         {
@@ -813,36 +1226,27 @@ namespace Celine
             return;
         }
 
-        // Mean current, what it dissipates, and the largest current in the
-        // window: mean power says whether a part is inside its rating, peak
-        // current whether a stage is being driven into grid conduction.
+        // Mean current, power, and peak current over the window.
         auto cell = [&](juce::Rectangle<float> box, const juce::String& caption,
                         const juce::String& value, juce::Colour colour)
         {
-            g.setColour(Theme::comment());
-            g.setFont(Fonts::light(11.0f));
+            g.setColour(dim);
+            g.setFont(Fonts::bold(10.0f).withExtraKerningFactor(0.08f));
             g.drawText(caption, box.removeFromTop(13.0f), juce::Justification::centred, false);
 
             g.setColour(colour);
-            g.setFont(Fonts::light(15.0f));
-            g.drawText(value, box, juce::Justification::centred, false);
+            drawReading(g, value, box, 15.0f);
         };
 
         const auto third = bounds.getWidth() / 3.0f;
+        const auto ink = Theme::textOnPanel();
 
-        cell(bounds.removeFromLeft(third), "CURRENT",
-             SymbolPainter::formatValue(amps, "A"), Theme::captionValue());
-        cell(bounds.removeFromLeft(third), "POWER",
-             SymbolPainter::formatValue(watts, "W"), Theme::captionValue());
-        cell(bounds, "PEAK",
-             SymbolPainter::formatValue(peak, "A"), Theme::captionValue());
+        cell(bounds.removeFromLeft(third), "CURRENT", ElementInspector::formatReading(amps, "A"), ink);
+        cell(bounds.removeFromLeft(third), "POWER", ElementInspector::formatReading(watts, "W"), ink);
+        cell(bounds, "PEAK", ElementInspector::formatReading(peak, "A"), ink);
     }
 
-    /** A round number at or below `rough`, from the 1-2-5 sequence.
-
-        Gridlines want to land on numbers a person would have chosen -- 2 V, 50
-        mV -- because the point of a labelled axis is reading a value off it by
-        eye, and thirds of an arbitrary span cannot be added up in your head. */
+    /** A round number at or below `rough`, from the 1-2-5 sequence. */
     static double niceStep(double rough)
     {
         if (rough <= 0.0)
@@ -871,9 +1275,7 @@ namespace Celine
 
         g.setFont(Fonts::light(10.0f));
 
-        // Volts up the side. At most five lines: past that they crowd into each
-        // other in a panel this size and the numbers stop being readable, which
-        // costs more than the resolution gains.
+        // Volts up the side, at most five lines.
         const double step = niceStep(span / 4.0);
         const double first = std::ceil(scale.lowest / step) * step;
 
@@ -885,9 +1287,8 @@ namespace Celine
             if (y < plot.getY() || y > plot.getBottom())
                 continue;
 
-            // Ground gets a brighter line, recognised by tolerance: the levels
-            // accumulate by repeated addition, so the one that should be zero is
-            // a few ulps off and an equality test would miss it.
+            // Ground gets a brighter line. Compared with a tolerance: the levels are summed and
+            // zero may be a few ulps off.
             const bool isGround = std::abs(v) < step * 1.0e-6;
             g.setColour(Theme::line().withAlpha(isGround ? 0.5f : 0.16f));
             g.drawHorizontalLine(juce::roundToInt(y), plot.getX(), plot.getRight());
@@ -898,9 +1299,7 @@ namespace Celine
                        juce::Justification::centredRight, false);
         }
 
-        // Time along the bottom, counted back from now. The newest column is at
-        // the right -- see drawScopeTrace -- so zero belongs at that end and the
-        // numbers run negative leftwards, which is what "how long ago" means.
+        // Time along the bottom, newest at the right (zero), negative leftwards.
         if (reading.windowSeconds > 0.0f)
         {
             g.setColour(Theme::comment());
@@ -935,10 +1334,7 @@ namespace Celine
 
         auto readout = bounds.removeFromBottom(34.0f);
 
-        // Room for the axes down the left and along the bottom. A graph with no
-        // scale on it says "something happened"; the whole reason to put a
-        // scope on a sheet is to find out how much of it, and at a plate that
-        // is the difference between a healthy stage and one about to clip.
+        // Room for the axes down the left and along the bottom.
         auto plot = bounds.reduced(6.0f);
         auto gutter = plot.removeFromLeft(42.0f);
         auto timeAxis = plot.removeFromBottom(14.0f);
@@ -958,8 +1354,7 @@ namespace Celine
 
         drawScopeAxes(g, plot, gutter, timeAxis, scale, reading);
 
-        // Two numbers, side by side and captioned: which one you are reading
-        // matters, and a bare pair of voltages does not say.
+        // Two captioned numbers side by side.
         const auto half = readout.getWidth() * 0.5f;
 
         auto cell = [&](juce::Rectangle<float> box, const juce::String& caption,
@@ -970,18 +1365,14 @@ namespace Celine
             g.drawText(caption, box.removeFromTop(13.0f), juce::Justification::centred, false);
 
             g.setColour(Theme::captionValue());
-            g.setFont(Fonts::light(15.0f));
-            g.drawText(value, box, juce::Justification::centred, false);
+            drawReading(g, value, box, 15.0f);
         };
 
-        cell(readout.removeFromLeft(half), "DC",
-             SymbolPainter::formatValue(reading.dcAverage, "V"));
-        cell(readout, "PEAK-PEAK", SymbolPainter::formatValue(reading.peakToPeak, "V"));
+        cell(readout.removeFromLeft(half), "DC", formatReading(reading.dcAverage, "V"));
+        cell(readout, "PEAK-PEAK", formatReading(reading.peakToPeak, "V"));
     }
 
-    /** What the value box shows for a part. One place, so the box the value is
-        typed into and the box it is echoed back into cannot disagree -- which,
-        for a pot, would mean the taper letter appearing only after an edit. */
+    /** What the value box shows for a part; used for both typing and echoing back. */
     juce::String ElementInspector::valueTextFor(const Element& e)
     {
         if (e.type == ElementType::Potentiometer)
@@ -990,8 +1381,8 @@ namespace Celine
         return SymbolPainter::formatValue(e.value, getElementInfo(e.type).unit);
     }
 
-    /** The same for the second box. A rail is a voltage and says so, sign and
-        all; a turns count is a bare number. */
+    /** The same for the second box: a rail shows a signed voltage, a turns count a bare
+        number. */
     juce::String ElementInspector::secondValueText(const Element& e)
     {
         return SymbolPainter::formatValue(e.valueB, e.isSecondValueRail() ? getElementInfo(e.type).unit : "");
@@ -1007,9 +1398,8 @@ namespace Celine
 
         if (element->type == ElementType::Potentiometer)
         {
-            // "A250K" sets the taper and the track in one go, which is how a pot
-            // is named out loud and now the shortest way to say it here too. A
-            // bare "250k" still means only the resistance -- see parsePotValue.
+            // "A250K" sets taper and resistance together; a bare "250k" only the resistance (see
+            // parsePotValue).
             auto taper = element->taper;
             bool taperGiven = false;
 
@@ -1034,8 +1424,7 @@ namespace Celine
 
         if (element->hasSecondValue() && SymbolPainter::parseValue(valueEditorB.getText(), parsed))
         {
-            // A rail takes zero -- ground -- and whatever sign was typed; a
-            // count of turns has to be more than none.
+            // A rail accepts zero and either sign; a turns count must be positive.
             if (element->isSecondValueRail())
             {
                 element->valueB = Element::railBelowGround(parsed);
@@ -1051,12 +1440,13 @@ namespace Celine
         if (changed && onEdited)
             onEdited();
 
-        // Either way, show what the values actually are now -- so a rejected
-        // entry visibly snaps back rather than sitting there looking accepted.
+        // Show the actual values, so a rejected entry snaps back.
         valueEditor.setText(valueTextFor(*element), juce::dontSendNotification);
 
         if (element->hasSecondValue())
             valueEditorB.setText(secondValueText(*element), juce::dontSendNotification);
+
+        markUnsetFields();
     }
 
     void ElementInspector::commitScopeAxes()
@@ -1069,19 +1459,14 @@ namespace Celine
 
         double parsed = 0.0;
 
-        // Negative volts are ordinary here, unlike everywhere else a value is
-        // typed: the bottom of a scope's window is usually below ground. So
-        // these accept what parseValue returns rather than insisting it be
-        // positive, which is the check every other field makes.
+        // Negative volts are allowed here.
         if (SymbolPainter::parseValue(scopeMinEditor.getText(), parsed))
             element->scopeMin = parsed;
 
         if (SymbolPainter::parseValue(scopeMaxEditor.getText(), parsed))
             element->scopeMax = parsed;
 
-        // An inverted or empty range would divide by zero in the renderer and
-        // draw a line of infinities, so it is refused here rather than guarded
-        // for at every place that draws.
+        // Refuse an inverted or empty range (the renderer would divide by zero).
         if (! (element->scopeMax > element->scopeMin))
         {
             element->scopeMin = -5.0;
@@ -1091,21 +1476,16 @@ namespace Celine
         if (SymbolPainter::parseValue(scopeSecondsEditor.getText(), parsed))
             element->scopeSeconds = juce::jlimit(0.001, 2.0, parsed);
 
-        // The time base is the one setting here the audio thread reads, since
-        // it decides how many samples go into a column. Everything else on this
-        // panel is read by the renderer alone and needs nothing.
+        // The time base is the only setting here the audio thread reads.
         if (onScopeTimebaseChanged)
             onScopeTimebaseChanged();
 
-        // Showing or hiding the range boxes changes the panel's shape, so it is
-        // laid out again -- but only when the checkbox actually moved, or every
-        // commit would rebuild the fields under the cursor. rebuildForElement()
-        // decides what is visible and resized() where it goes, which is the
-        // pairing setElement() uses.
+        // Toggling auto-scale shows or hides the range boxes, so re-lay out, only when it
+        // changed.
         if (wasAuto != element->scopeAutoScale)
         {
             rebuildForElement();
-            resized();
+            contentChanged();
             repaint();
         }
         else
@@ -1123,8 +1503,7 @@ namespace Celine
         if (element == nullptr)
             return;
 
-        // Any integer, negative included -- putting a control first is easier
-        // said as -1 than by renumbering everything after it.
+        // Any integer, negative included.
         element->controlOrder = orderEditor.getText().trim().getIntValue();
         orderEditor.setText(juce::String(element->controlOrder), juce::dontSendNotification);
 
@@ -1137,8 +1516,7 @@ namespace Celine
         if (element == nullptr)
             return;
 
-        // Clamped rather than refused: there is no wrong knob position, only
-        // one past an end, and a pot at 110% is a typo with an obvious meaning.
+        // Clamped rather than refused.
         element->setControlPosition(static_cast<float>(knobEditor.getText().trim().getIntValue()) * 0.01f);
         knobEditor.setText(juce::String(juce::roundToInt(element->controlPosition * 100.0)),
                            juce::dontSendNotification);
@@ -1152,10 +1530,7 @@ namespace Celine
         if (element == nullptr || element->type != ElementType::Rectangle)
             return;
 
-        // Plain integers in grid squares, not engineering notation: a box is
-        // measured in the same units the sheet is drawn on, and "4k7" squares
-        // means nothing. getRectangleBounds does the clamping, so a 0 or a
-        // negative simply comes back as the minimum.
+        // Plain integers in grid squares; getRectangleBounds clamps to the minimum.
         element->width = widthEditor.getText().trim().getIntValue();
         element->height = heightEditor.getText().trim().getIntValue();
 
@@ -1170,147 +1545,256 @@ namespace Celine
             onEdited();
     }
 
+    namespace
+    {
+        /** Padding between the card's edge and the fields, all four sides. */
+        constexpr int inspectorPad = 14;
+
+        /** The heading: symbol tile, name and model, and the rule under it. */
+        constexpr int headerHeight = 60;
+        constexpr int headerTile = 36;
+
+        /** A field, its caption above it, and the gap to the next. */
+        constexpr int fieldHeight = 32;
+        constexpr int captionHeight = 13;
+        constexpr int captionGap = 6;
+        constexpr int fieldGap = 14;
+
+        /** A Label's own border either side of its text. */
+        constexpr int labelBorderX = 5;
+        constexpr int labelBorderY = 1;
+
+    } // namespace
+
+    juce::Rectangle<int> ElementInspector::getHeaderBounds() const
+    {
+        return getLocalBounds().removeFromTop(headerHeight);
+    }
+
     void ElementInspector::paint(juce::Graphics& g)
     {
-        g.fillAll(Theme::chrome());
+        // The light card, no outline.
+        const auto card = getLocalBounds().toFloat();
+        g.setColour(Theme::panel());
+        g.fillRoundedRectangle(card, Theme::inspectorCornerRadius);
+
+        const auto ink = Theme::textOnPanel();
+        auto header = getHeaderBounds().reduced(inspectorPad, 0).toFloat();
+
+        if (headerHasSymbol)
+        {
+            const auto tile = header.removeFromLeft((float) headerTile)
+                                  .withSizeKeepingCentre((float) headerTile, (float) headerTile);
+            g.setColour(Theme::pill());
+            g.fillRoundedRectangle(tile, 8.0f);
+            SymbolPainter::drawPreview(g, headerType, tile, ink);
+            header.removeFromLeft(12.0f);
+        }
+
+        const bool twoLines = headerSubtitle.isNotEmpty();
+        auto titleArea = header.withSizeKeepingCentre(header.getWidth(), twoLines ? 38.0f : 22.0f);
+
+        g.setColour(ink);
+        g.setFont(Fonts::bold(16.5f));
+        g.drawText(headerTitle, titleArea.removeFromTop(21.0f), juce::Justification::centredLeft, true);
+
+        if (twoLines)
+        {
+            g.setColour(ink.withAlpha(0.6f));
+            g.setFont(Fonts::light(12.5f));
+            g.drawFittedText(headerSubtitle, titleArea.toNearestInt(), juce::Justification::centredLeft, 1, 0.9f);
+        }
+
+        // The rule under the heading, edge to edge.
+        g.setColour(ink.withAlpha(0.08f));
+        g.fillRect(card.getX(), (float) headerHeight - 1.0f, card.getWidth(), 1.0f);
+    }
+
+    int ElementInspector::hintWidth() const
+    {
+        const auto font = hintLabel.getFont();
+        float widest = 0.0f;
+
+        for (const auto& line : juce::StringArray::fromLines(hintLabel.getText()))
+            widest = juce::jmax(widest, juce::GlyphArrangement::getStringWidth(font, line));
+
+        return juce::roundToInt(std::ceil(widest)) + 2 * labelBorderX;
+    }
+
+    int ElementInspector::hintHeight() const
+    {
+        // One row per line; the card is sized so nothing wraps.
+        const auto lines = juce::StringArray::fromLines(hintLabel.getText()).size();
+        return juce::roundToInt(std::ceil(static_cast<float>(lines) * hintLabel.getFont().getHeight()))
+               + 2 * labelBorderY + 2;
+    }
+
+    int ElementInspector::contentWidth() const
+    {
+        // A fixed width, so the card doesn't move with the selection.
+        return Theme::inspectorWidth - 2 * inspectorPad;
+    }
+
+    void ElementInspector::fitHintToWidth()
+    {
+        // A hint line's room: the field column less a scrollbar's width, so the text doesn't
+        // wrap when the list scrolls.
+        const int room = contentWidth() - viewport.getScrollBarThickness();
+
+        // The largest size, in half-point steps, at which the longest line fits (measured,
+        // since hinting isn't proportional).
+        float height = hintFontHeight;
+        hintLabel.setFont(Fonts::light(height));
+
+        while (height > 8.0f && hintWidth() > room)
+        {
+            height -= 0.5f;
+            hintLabel.setFont(Fonts::light(height));
+        }
+    }
+
+    juce::Point<int> ElementInspector::getPreferredSize()
+    {
+        const int width = contentWidth();
+        const int height = layOutFields(width);
+
+        // Measuring laid the fields out in a scratch area; put them back.
+        resized();
+
+        return {width + 2 * inspectorPad, headerHeight + height + 2 * inspectorPad};
     }
 
     int ElementInspector::layOutFields(int width)
     {
-        // Laid out into a deliberately tall area, because Rectangle::removeFromTop
-        // clamps once it runs out -- so measuring inside the visible height can
-        // never report more than that height, which is precisely the number we
-        // are trying to find. Without this the panel silently clips instead of
-        // growing a scrollbar.
+        // Laid out in a tall area, because removeFromTop clamps and could never report more
+        // than the visible height.
         constexpr int roomToMeasureIn = 4000;
         content.setSize(width, roomToMeasureIn);
 
-        auto area = content.getLocalBounds().reduced(8);
+        auto area = content.getLocalBounds();
+        bool first = true;
 
-        titleLabel.setBounds(area.removeFromTop(22));
-        area.removeFromTop(6);
+        // The gap goes before each row, so the last leaves none.
+        const auto next = [&](int height)
+        {
+            if (! first)
+                area.removeFromTop(fieldGap);
 
-        auto field = [&](juce::Component& caption, juce::Component& control)
+            first = false;
+            return area.removeFromTop(height);
+        };
+
+        const auto field = [&](juce::Component& caption, juce::Component& control)
         {
             if (! control.isVisible())
                 return;
 
-            caption.setBounds(area.removeFromTop(14));
-            control.setBounds(area.removeFromTop(24));
-            area.removeFromTop(6);
+            auto cell = next(captionHeight + captionGap + fieldHeight);
+            caption.setBounds(cell.removeFromTop(captionHeight));
+            cell.removeFromTop(captionGap);
+            control.setBounds(cell);
         };
 
-        field(valueCaption, valueEditor);
-        field(valueCaptionB, valueEditorB);
+        // Two fields side by side.
+        const auto pair = [&](juce::Component& captionA, juce::Component& controlA,
+                              juce::Component& captionB, juce::Component& controlB)
+        {
+            if (! controlA.isVisible() && ! controlB.isVisible())
+                return;
+
+            auto cell = next(captionHeight + captionGap + fieldHeight);
+            auto left = cell.removeFromLeft((cell.getWidth() - 12) / 2);
+            cell.removeFromLeft(12);
+
+            for (auto [caption, control, box] : {std::tuple{&captionA, &controlA, left},
+                                                  std::tuple{&captionB, &controlB, cell}})
+            {
+                if (! control->isVisible())
+                    continue;
+
+                caption->setBounds(box.removeFromTop(captionHeight));
+                box.removeFromTop(captionGap);
+                control->setBounds(box);
+            }
+        };
+
+        const auto row = [&](juce::Component& c, int height)
+        {
+            if (c.isVisible())
+                c.setBounds(next(height));
+        };
+
+        // Label, then model, then value.
+        field(labelCaption, labelEditor);
         field(modelCaption, modelBox);
 
         if (modelDescription.isVisible())
         {
-            modelDescription.setBounds(area.removeFromTop(46));
-            area.removeFromTop(4);
+            // As many lines as the note wraps to at this width.
+            const auto font = modelDescription.getFont();
+            juce::AttributedString text;
+            text.append(modelDescription.getText(), font);
+            juce::TextLayout layout;
+            layout.createLayout(text, static_cast<float>(area.getWidth()));
+
+            const int lines = juce::jmax(1, layout.getNumLines());
+            area.removeFromTop(6);
+            modelDescription.setBounds(area.removeFromTop(
+                juce::roundToInt(std::ceil(static_cast<float>(lines) * font.getHeight())) + 2));
         }
 
+        pair(widthCaption, widthEditor, heightCaption, heightEditor);
+        field(valueCaption, valueEditor);
+        field(valueCaptionB, valueEditorB);
         field(taperCaption, taperBox);
-        field(orderCaption, orderEditor);
+        field(actionCaption, actionBox);
         field(knobCaption, knobEditor);
-        field(widthCaption, widthEditor);
-        field(heightCaption, heightEditor);
-        field(labelCaption, labelEditor);
+        row(polarisedButton, 24);
+        field(orderCaption, orderEditor);
 
-        for (auto* toggle : {&polarisedButton, &cabButton})
-            if (toggle->isVisible())
-            {
-                toggle->setBounds(area.removeFromTop(24));
-                area.removeFromTop(4);
-            }
-
-        // Directly under its switch, because the two are one control: the file
-        // is what the switch switches in.
+        // Directly under its switch: the file is what the switch switches in.
+        row(cabButton, 24);
         field(cabFileCaption, cabFileButton);
 
-        // The file player, in the order you use it: live or file, which file,
-        // how it repeats, then the transport and where it has got to.
-        if (fileInputButton.isVisible())
-        {
-            fileInputButton.setBounds(area.removeFromTop(24));
-            area.removeFromTop(4);
-        }
-
+        // The file player, in order of use: live or file, which file, repeat, transport,
+        // position.
+        row(fileInputButton, 24);
         field(inputFileCaption, inputFileButton);
 
         if (loopButton.isVisible())
         {
-            loopButton.setBounds(area.removeFromTop(24));
-            area.removeFromTop(4);
+            row(loopButton, 24);
 
-            auto row = area.removeFromTop(26);
-            playButton.setBounds(row.removeFromLeft(row.getWidth() / 2 - 3));
-            stopButton.setBounds(row.removeFromRight(row.getWidth() - 3));
-            area.removeFromTop(6);
+            auto buttons = next(fieldHeight);
+            playButton.setBounds(buttons.removeFromLeft(buttons.getWidth() / 2 - 4));
+            stopButton.setBounds(buttons.removeFromRight(buttons.getWidth() - 8));
 
-            transportView.setBounds(area.removeFromTop(30));
-            area.removeFromTop(6);
+            row(transportView, 30);
         }
 
-        // The scope's picture, given real room -- it is the whole of what the
-        // part is for, and a trace two centimetres wide tells you nothing.
-        if (scopeView.isVisible())
-        {
-            scopeView.setBounds(area.removeFromTop(150));
-            area.removeFromTop(6);
-        }
+        // The scope's picture, given real room.
+        row(scopeView, 150);
+        row(scopeAutoButton, 24);
 
-        if (scopeAutoButton.isVisible())
-        {
-            scopeAutoButton.setBounds(area.removeFromTop(24));
-            area.removeFromTop(6);
-        }
-
-        // Top above bottom, the way they sit on the graph. Reading a pair of
-        // bounds in the opposite order to the axis they describe is a small
-        // thing that goes wrong every single time you use it.
-        field(scopeMaxCaption, scopeMaxEditor);
-        field(scopeMinCaption, scopeMinEditor);
+        // Top beside bottom.
+        pair(scopeMaxCaption, scopeMaxEditor, scopeMinCaption, scopeMinEditor);
         field(scopeSecondsCaption, scopeSecondsEditor);
 
-        if (currentView.isVisible())
-        {
-            currentView.setBounds(area.removeFromTop(34));
-            area.removeFromTop(6);
-        }
+        row(currentView, 52);
 
-        if (rotateButton.isVisible())
-        {
-            auto row = area.removeFromTop(26);
-            rotateButton.setBounds(row.removeFromLeft(row.getWidth() / 2 - 3));
-            flipButton.setBounds(row.removeFromRight(row.getWidth() - 3));
-            area.removeFromTop(4);
-        }
-
-        // On its own visibility, not rotate's: Delete shows for anything
-        // selected, rotate and flip only for something with pins.
-        if (deleteButton.isVisible())
-            deleteButton.setBounds(area.removeFromTop(26));
-
-        // The hint only shows when nothing is selected, so it never competes
-        // with the fields for room -- it just wants enough to read.
+        // The hint only shows when nothing is selected; as tall as its lines.
         if (hintLabel.isVisible())
-        {
-            const int wanted = juce::jmax(200, viewport.getHeight() - area.getY() - 8);
-            hintLabel.setBounds(area.removeFromTop(wanted));
-        }
+            hintLabel.setBounds(next(hintHeight()));
 
-        return area.getY() + 8;
+        return area.getY();
     }
 
     void ElementInspector::resized()
     {
-        viewport.setBounds(getLocalBounds());
+        viewport.setBounds(getLocalBounds().withTrimmedTop(headerHeight).reduced(inspectorPad));
 
-        // Same two-pass as the console: a scrollbar takes width, and whether one
-        // is needed depends on the height. Field heights here don't depend on
-        // width, so the first pass only has to decide, and the second lays out
-        // at the width that will actually be there.
+        // Two passes: whether a scrollbar is needed depends on height. Field heights don't
+        // depend on width, so the second pass lays out at the final width.
         const int full = juce::jmax(80, viewport.getWidth());
         int width = full;
         int used = layOutFields(width);
@@ -1333,13 +1817,31 @@ namespace Celine
 
         constexpr int rowPadding = 5;
 
-        /** The left gutter the prompt glyph sits in, and how big the glyph is
-            drawn in it. The rows start after it, so the icon is beside the first
-            message rather than above it -- which is what lets the panel be named
-            without a heading spending a row on saying so. */
-        constexpr int gutterWidth = 57;
-        constexpr int promptSize = 22;
-        constexpr int promptTop = 12;
+        /** The left gutter holding the prompt glyph, and the glyph's size. Rows start after
+            it. */
+        constexpr int gutterWidth = 60;
+        constexpr int promptLeft = 16;
+        constexpr int promptSize = 26;
+        constexpr int promptTop = 7;
+
+        /** The rows' list inside the pill; one message gives a 43 px pill. */
+        constexpr int listTop = 7;
+        constexpr int listBottom = 4;
+        constexpr int listRight = 11;
+
+        /** Narrowest a message column may be. */
+        constexpr int minimumTextWidth = 120;
+
+        static_assert(MessageConsole::minimumWidth == gutterWidth + 2 * rowPadding + listRight + minimumTextWidth,
+                      "the console's published minimum must be what it actually lays out at");
+
+        /** How often to re-check while the pointer rests on the console. */
+        constexpr int hoverRecheckMs = 1000;
+
+        /** Fade-out duration. */
+        constexpr int fadeOutMs = 400;
+
+        juce::Font consoleFont() { return Fonts::light(13.5f); }
     } // namespace
 
     MessageConsole::MessageConsole()
@@ -1349,7 +1851,78 @@ namespace Celine
         viewport.setWantsKeyboardFocus(false);
         addAndMakeVisible(viewport);
 
+        // A rounded, translucent pill.
+        setOpaque(false);
+
+        // Hidden until there is something to say.
+        setVisible(false);
+
         applyColours();
+    }
+
+    bool MessageConsole::hasProblems() const
+    {
+        if (statusIsError || statusIsWarning)
+            return true;
+
+        return std::any_of(messages.begin(), messages.end(), [](const SchematicModel::Diagnostic& m)
+                           { return m.severity == SchematicModel::Diagnostic::Severity::Error
+                                    || m.severity == SchematicModel::Diagnostic::Severity::Warning; });
+    }
+
+    void MessageConsole::announce()
+    {
+        // A fade still running would hide the console when it ends, over this message.
+        juce::Desktop::getInstance().getAnimator().cancelAnimation(this, false);
+        setAlpha(1.0f);
+        setVisible(true);
+
+        // Errors and warnings keep the console up until replaced; anything else fades.
+        if (hasProblems())
+            stopTimer();
+        else
+            startTimer(hideDelayMs);
+
+        if (onPreferredSizeChanged)
+            onPreferredSizeChanged();
+    }
+
+    void MessageConsole::timerCallback()
+    {
+        // Stay up while the pointer is over it.
+        if (isMouseOverOrDragging(true))
+        {
+            startTimer(hoverRecheckMs);
+            return;
+        }
+
+        stopTimer();
+
+        // Fades a stand-in and hides this immediately.
+        juce::Desktop::getInstance().getAnimator().fadeOut(this, fadeOutMs);
+    }
+
+    juce::Point<int> MessageConsole::getPreferredSize(int maxWidth)
+    {
+        // Every row on one line, to find the widest.
+        measureRows(1 << 16);
+
+        float widest = 0.0f;
+
+        for (const auto& row : rows)
+            widest = juce::jmax(widest, juce::GlyphArrangement::getStringWidth(consoleFont(), row.text));
+
+        const int chrome = gutterWidth + 2 * rowPadding + listRight;
+
+        // A couple of pixels' slack so the last word doesn't wrap when laid out again.
+        const int natural = juce::roundToInt(std::ceil(widest)) + 2;
+        const int textWidth = juce::jmax(minimumTextWidth, juce::jmin(natural, maxWidth - chrome));
+        const int listHeight = measureRows(textWidth);
+
+        // Measuring replaced the rows; lay them out for the actual size.
+        layOutRows();
+
+        return {textWidth + chrome, listTop + listHeight + listBottom};
     }
 
     void MessageConsole::applyColours()
@@ -1365,31 +1938,43 @@ namespace Celine
     {
         status = std::move(newStatus);
         statusIsError = isError;
+        statusIsWarning = false;
         messages = newMessages;
 
         layOutRows();
         repaint();
+        announce();
     }
 
     void MessageConsole::setHeadline(juce::String text, bool isError)
     {
         status = std::move(text);
         statusIsError = isError;
+        statusIsWarning = false;
         layOutRows();
         repaint();
+        announce();
+    }
+
+    void MessageConsole::setWarningHeadline(juce::String text)
+    {
+        status = std::move(text);
+        statusIsError = false;
+        statusIsWarning = true;
+        layOutRows();
+        repaint();
+        announce();
     }
 
     int MessageConsole::measureRows(int width)
     {
         rows.clear();
 
-        const juce::Font font(Fonts::light(13.5f));
+        const juce::Font font(consoleFont());
         int y = rowPadding;
 
-        // Measures a row and advances down the list. Everything goes through
-        // here, including the status line and the empty-state text, so nothing
-        // can end up in a box shorter than the words it holds -- which is what
-        // clipped "Nothing to report." to half its height.
+        // Measures a row and advances down the list. Everything goes through here, so no box
+        // is shorter than its text.
         auto addRow = [&](juce::String text, juce::Colour colour, int elementId)
         {
             juce::AttributedString wrapped;
@@ -1408,10 +1993,12 @@ namespace Celine
             rows.push_back(std::move(row));
         };
 
-        // The status line is the first row, beside the prompt glyph -- so the
-        // most recent thing the build had to say is the thing next to the icon.
+        // The status line is the first row, beside the prompt glyph.
         if (status.isNotEmpty())
-            addRow(status, statusIsError ? Theme::error() : Theme::text().withAlpha(0.8f), -1);
+            addRow(status, statusIsError     ? Theme::error()
+                           : statusIsWarning ? Theme::warning()
+                                             : Theme::text().withAlpha(0.8f),
+                   -1);
 
         if (messages.empty() && status.isEmpty())
             addRow("Nothing to report.", Theme::text().withAlpha(0.35f), -1);
@@ -1423,8 +2010,7 @@ namespace Celine
                 : message.severity == SchematicModel::Diagnostic::Severity::Warning ? Theme::warning()
                                                                                     : Theme::notice();
 
-            // "R4 (35,-67)  Pin 2 touches nothing else." -- the part first,
-            // because that is what you are looking for.
+            // "R4 (35,-67)  Pin 2 touches nothing else.": the part first.
             juce::String line;
 
             if (message.subject.isNotEmpty())
@@ -1444,11 +2030,8 @@ namespace Celine
 
     void MessageConsole::layOutRows()
     {
-        // Two passes, because whether a scrollbar is needed depends on the
-        // wrapped height, which depends on the width, which depends on whether
-        // there is a scrollbar. Measure assuming there isn't; if that overflows,
-        // measure again in what is actually left. Without the second pass the
-        // scrollbar appears and quietly eats the last word of every line.
+        // Two passes: measure without a scrollbar; if that overflows, measure again in the
+        // width that is left.
         const int full = juce::jmax(60, viewport.getWidth() - 2 * rowPadding);
         int width = full;
         int total = measureRows(width);
@@ -1465,18 +2048,23 @@ namespace Celine
 
     void MessageConsole::resized()
     {
-        viewport.setBounds(getLocalBounds().withTrimmedLeft(gutterWidth).withTrimmedTop(promptTop
-                                                                                       - rowPadding));
+        viewport.setBounds(getLocalBounds()
+                               .withTrimmedLeft(gutterWidth)
+                               .withTrimmedTop(listTop)
+                               .withTrimmedBottom(listBottom)
+                               .withTrimmedRight(listRight));
         layOutRows();
     }
 
     void MessageConsole::paint(juce::Graphics& g)
     {
-        g.fillAll(Theme::consoleBackground());
+        // The darkest ground at 80% opacity.
+        g.setColour(Theme::consoleBackground().withMultipliedAlpha(0.8f));
+        g.fillRoundedRectangle(getLocalBounds().toFloat(), Theme::consoleCornerRadius);
 
         if (promptIcon != nullptr)
             promptIcon->drawWithin(g,
-                                   juce::Rectangle<float>(static_cast<float>(rowPadding * 3),
+                                   juce::Rectangle<float>(static_cast<float>(promptLeft),
                                                           static_cast<float>(promptTop),
                                                           static_cast<float>(promptSize),
                                                           static_cast<float>(promptSize)),
@@ -1487,7 +2075,7 @@ namespace Celine
 
     void MessageConsole::Rows::paint(juce::Graphics& g)
     {
-        g.setFont(Fonts::light(13.5f));
+        g.setFont(consoleFont());
 
         for (const auto& row : owner.rows)
         {

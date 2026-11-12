@@ -10,11 +10,8 @@ using namespace Celine;
 
 TEST_CASE ("Every part resolves to artwork that exists", "[artwork][gui]")
 {
-    // The failure this guards against is silent and looks like a bug in the
-    // drawing rather than a missing file: a part whose asset cannot be found
-    // draws as nothing but its pins. It happened once already, to every file
-    // with a hyphen in its name, because the C++ identifier JUCE derives from
-    // "capacitor-polarised.svg" drops the hyphen rather than replacing it.
+    // A missing asset silently draws a part as just its pins. Hyphenated names are the
+    // risk: JUCE's derived identifier drops the hyphen.
     for (const auto& name : getAllSymbolAssetNames())
     {
         Element probe;
@@ -22,8 +19,7 @@ TEST_CASE ("Every part resolves to artwork that exists", "[artwork][gui]")
 
         INFO ("asset " << name);
 
-        // Reached through an element so the lookup under test is the same one
-        // the canvas uses, not a private back door.
+        // Through an element, so this tests the canvas's own lookup.
         const SymbolArtwork* artwork = nullptr;
 
         for (int i = 0; i < numElementTypes && artwork == nullptr; ++i)
@@ -39,11 +35,19 @@ TEST_CASE ("Every part resolves to artwork that exists", "[artwork][gui]")
                     probe.polarised = flag;
                     probe.closed = flag;
 
-                    if (getSymbolAssetName (probe) == name)
-                    {
-                        artwork = getSymbolArtwork (probe);
+                    // A changeover's drawing follows its action and lever.
+                    for (int action = 0; action < numSwitchActions && artwork == nullptr; ++action)
+                        for (int position = 0; position < 3 && artwork == nullptr; ++position)
+                        {
+                            probe.switchAction = static_cast<SwitchAction> (action);
+                            probe.switchPosition = position;
+
+                            if (getSymbolAssetName (probe) == name)
+                                artwork = getSymbolArtwork (probe);
+                        }
+
+                    if (artwork != nullptr)
                         break;
-                    }
                 }
 
                 if (artwork != nullptr)
@@ -67,10 +71,7 @@ TEST_CASE ("Every element type draws something", "[artwork][gui]")
 
         INFO (getElementInfo (type).name);
 
-        // Text is its own text, Rectangle a dragged frame, and Node a tag as
-        // wide as the name written inside it -- so none of the three has
-        // artwork, and none may accidentally acquire a name that resolves to
-        // nothing.
+        // Text, Rectangle and Node have no artwork, and no name may resolve to nothing.
         if (type == ElementType::Text || type == ElementType::Rectangle
             || type == ElementType::Node)
         {
@@ -89,11 +90,8 @@ TEST_CASE ("Every element type draws something", "[artwork][gui]")
 
 TEST_CASE ("Artwork is authored at the schematic's scale", "[artwork][gui]")
 {
-    // Geometry comes back in grid squares, so a file drawn to some other
-    // convention -- a plain 24x24 icon, say -- lands a fifth of the size with
-    // its terminals nowhere near the pins. That reads as "the symbols look
-    // wrong" rather than as "this file is in the wrong units", so it is worth a
-    // check that says which file and why.
+    // Geometry is in grid squares, so a file drawn to another convention lands the wrong
+    // size with misplaced terminals. Says which file.
     for (int i = 0; i < numElementTypes; ++i)
     {
         Element element;
@@ -104,11 +102,8 @@ TEST_CASE ("Artwork is authored at the schematic's scale", "[artwork][gui]")
         if (artwork == nullptr)
             continue;
 
-        // Min and max by hand rather than Rectangle::getUnion, for exactly the
-        // reason Schematic::getElementBounds spells out: a horizontal line has
-        // zero height, JUCE counts a zero-sized rectangle as empty, and getUnion
-        // returns the *other* operand when either side is empty. A symbol made
-        // only of straight lines therefore unions down to nothing at all.
+        // Min and max by hand: Rectangle::getUnion drops zero-height lines (see
+        // Schematic::getElementBounds).
         float minX = 0.0f, minY = 0.0f, maxX = 0.0f, maxY = 0.0f;
         bool first = true;
 
@@ -128,17 +123,14 @@ TEST_CASE ("Artwork is authored at the schematic's scale", "[artwork][gui]")
 
         INFO (getSymbolAssetName (element) << ".svg spans " << bounds.toString() << " grid squares");
 
-        // Big enough to see, and inside the sheet's idea of one part. The
-        // widest thing here is a pentode at six squares from its centre.
+        // Visible, and within one part's reach (a pentode spans six squares from its centre).
         CHECK (juce::jmax (bounds.getWidth(), bounds.getHeight()) >= 1.0f);
         CHECK (bounds.getX() >= -8.0f);
         CHECK (bounds.getY() >= -8.0f);
         CHECK (bounds.getRight() <= 8.0f);
         CHECK (bounds.getBottom() <= 8.0f);
 
-        // Centred on the part, not tucked into a corner of the viewBox -- that
-        // is the other way a foreign file goes wrong, and it puts every pin off
-        // the symbol.
+        // Centred on the part.
         CHECK (std::abs (bounds.getCentreX()) <= 3.0f);
         CHECK (std::abs (bounds.getCentreY()) <= 3.0f);
     }
@@ -146,9 +138,8 @@ TEST_CASE ("Artwork is authored at the schematic's scale", "[artwork][gui]")
 
 TEST_CASE ("Stroke weights survive the round trip through SVG", "[artwork][gui]")
 {
-    // The schematic's line weight is a multiplier on the canvas's own stroke,
-    // not a width baked into the file -- that is what keeps lines visible when
-    // the sheet is zoomed out. A capacitor's plates are the 1.3x case.
+    // Line weight is a multiplier on the canvas stroke: 1.2 is normal, so a capacitor's
+    // 1.6 plates read 1.6 / 1.2.
     Element capacitor;
     capacitor.type = ElementType::Capacitor;
 
@@ -164,13 +155,13 @@ TEST_CASE ("Stroke weights survive the round trip through SVG", "[artwork][gui]"
             continue;
 
         sawNormal = sawNormal || std::abs (shape.strokeScale - 1.0f) < 0.02f;
-        sawHeavy = sawHeavy || std::abs (shape.strokeScale - 1.3f) < 0.02f;
+        sawHeavy = sawHeavy || std::abs (shape.strokeScale - 1.6f / 1.2f) < 0.02f;
     }
 
     CHECK (sawNormal);
     CHECK (sawHeavy);
 
-    // And a filled shape reads as filled rather than as a hairline stroke.
+    // A filled shape reads as filled.
     Element diode;
     diode.type = ElementType::Diode;
 
@@ -188,15 +179,9 @@ TEST_CASE ("Stroke weights survive the round trip through SVG", "[artwork][gui]"
 
 TEST_CASE ("Every part's palette swatch fits inside its row", "[artwork][gui]")
 {
-    // The palette draws each symbol clipped to a square swatch, so a symbol
-    // scaled too large is not an error -- it is silently sliced, and what you see
-    // is a valve with no top to its envelope or a transformer missing its outer
-    // windings. That shipped once, because the scale was a single number picked
-    // to look right against the parts that happened to be checked.
-    //
-    // Ink on the swatch's border is the signature of it, so that is what this
-    // looks for: render every type into a swatch the size of a palette row and
-    // insist the outermost ring of pixels is untouched.
+    // The palette clips each symbol to a square swatch, so an oversized symbol is silently
+    // cut off. Render every type into a palette-sized swatch and require its outer ring of
+    // pixels to be empty.
     constexpr int swatch = Theme::paletteRowHeight - 4;
 
     for (int i = 0; i < numElementTypes; ++i)
@@ -235,8 +220,7 @@ TEST_CASE ("Every part's palette swatch fits inside its row", "[artwork][gui]")
 
         CHECK (onBorder == 0);
 
-        // And it has to have drawn *something*: a swatch that fits because it is
-        // empty would pass the check above and tell you nothing.
+        // And something must have been drawn.
         int total = 0;
 
         for (int y = 0; y < swatch; ++y)
@@ -249,17 +233,9 @@ TEST_CASE ("Every part's palette swatch fits inside its row", "[artwork][gui]")
 
 TEST_CASE ("The VST Compatible Logo is embedded and findable", "[artwork][gui]")
 {
-    // Steinberg's usage guidelines ask for this logo in a product's About box,
-    // so it is a compliance asset rather than decoration -- and the way it is
-    // looked up is the one that fails quietly. Assets::drawable() matches on the
-    // *original filename*, not on the identifier JUCE derives from it, and a
-    // miss returns null: the About box would simply draw nothing, with the
-    // trademark attribution it carries going with it.
-    //
-    // Not tinted anywhere, unlike every other drawable here. It is someone
-    // else's registered mark and is shown as supplied.
-    // All four format marks, for the same reason: the About box shows them, and
-    // one that fails to load takes a trademark attribution down with it.
+    // The About box's format marks (Steinberg's guidelines require the VST logo there).
+    // Assets::drawable() matches on the original filename and returns null on a miss.
+    // The VST logo is shown as supplied, never tinted.
     for (const auto* name : { "vst-compatible.png", "format-au.svg",
                               "format-clap.png", "format-lv2.svg" })
     {
@@ -279,10 +255,8 @@ TEST_CASE ("The VST Compatible Logo is embedded and findable", "[artwork][gui]")
 
 TEST_CASE ("A diode's symbol follows its heading, not its name", "[artwork][gui]")
 {
-    // Part numbers say nothing about the junction -- a 1N5817 and a BAT41 are
-    // both Schottkys -- so the dropdown heading decides. Zener, Schottky and
-    // LED each have a drawing of their own; silicon and germanium share the
-    // plain one.
+    // The dropdown group picks the diode drawing: Zener, Schottky and LED have their own,
+    // silicon and germanium share the plain one.
     const auto artworkFor = [] (int model)
     {
         Element diode;
@@ -319,4 +293,48 @@ TEST_CASE ("A diode's symbol follows its heading, not its name", "[artwork][gui]
     const std::set<const SymbolArtwork*> distinct { byGroup["Silicon"], byGroup["Schottky"],
                                                     byGroup["LED"], byGroup["Zener"] };
     CHECK (distinct.size() == 4);
+}
+
+TEST_CASE ("Every symbol is drawn as authored, from its ink", "[artwork]")
+{
+    // Every file becomes ink covering what its paths cover (give or take stroke caps),
+    // with its viewBox in grid units, centred on the part.
+
+    Element resistor;
+    resistor.type = ElementType::Resistor;
+    const auto* artwork = getSymbolArtwork (resistor);
+    REQUIRE (artwork != nullptr);
+    CHECK (artwork->viewBox == juce::Rectangle<float> (-6.0f, -6.0f, 12.0f, 12.0f));
+    CHECK (! artwork->isEmpty());
+    REQUIRE (! artwork->ink.empty());
+
+    // The body's 0.07 fill-opacity becomes a faint run; the outline stays solid.
+    bool faint = false, solid = false;
+    for (const auto& run : artwork->ink)
+    {
+        faint = faint || (run.alpha > 0.05f && run.alpha < 0.1f);
+        solid = solid || juce::approximatelyEqual (run.alpha, 1.0f);
+    }
+    CHECK (faint);
+    CHECK (solid);
+
+    for (int t = 0; t <= (int) ElementType::PowerAmp; ++t)
+    {
+        Element e;
+        e.type = (ElementType) t;
+        const auto* art = getSymbolArtwork (e);
+
+        if (art == nullptr)
+            continue;
+
+        INFO (getSymbolAssetName (e));
+        REQUIRE (! art->ink.empty());
+
+        juce::Rectangle<float> ink;
+        for (const auto& run : art->ink)
+            ink = ink.getUnion (run.path.getBounds());
+
+        CHECK (ink.expanded (0.2f).contains (art->bounds.reduced (0.2f)));
+        CHECK (art->bounds.expanded (0.2f).contains (ink));
+    }
 }

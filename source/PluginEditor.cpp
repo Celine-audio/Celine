@@ -1,14 +1,12 @@
 #include "PluginEditor.h"
 
-// Included unconditionally rather than behind JucePlugin_Build_Standalone,
-// which is not the discriminator it looks like: it is defined for every target
-// built from a FORMATS list containing Standalone, the test runner included.
-// getInstance() returns null when no standalone holder exists, which is the
-// answer a host wants anyway.
+// Unconditional: JucePlugin_Build_Standalone is also defined for the test runner, and
+// getInstance() returns null outside a standalone anyway.
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
 #include "Schematic/ExampleSchematics.h"
+#include "UpdateCheck.h"
 
 #include <CelineUI/EmbeddedAssets.h>
 #include <CelineUI/AboutPanel.h>
@@ -16,9 +14,89 @@
 
 namespace
 {
-    /** One character, not three full stops. The house sets it in the menus, and a
-        run of periods is a different glyph at a different width. */
+    /** A single ellipsis character, not three full stops. */
     const juce::String ellipsis = juce::String::fromUTF8 ("\xe2\x80\xa6");
+
+    /** A themed message with a row of buttons (juce::AlertWindow ignores the palette). The
+        first button is the accented choice. Each reports its index through onChoice; the
+        caller closes the window. */
+    class ChoicePrompt : public juce::Component
+    {
+       public:
+        ChoicePrompt (PluginLookAndFeel& lnf, const juce::String& text, const juce::StringArray& choices)
+        {
+            setLookAndFeel (&lnf);
+
+            message.setText (text, juce::dontSendNotification);
+            message.setFont (Celine::Fonts::light (14.0f));
+            message.setColour (juce::Label::textColourId, Celine::Theme::text());
+            message.setJustificationType (juce::Justification::topLeft);
+            addAndMakeVisible (message);
+
+            for (int i = 0; i < choices.size(); ++i)
+            {
+                auto* button = buttons.add (new juce::TextButton (choices[i]));
+
+                if (i == 0)
+                {
+                    button->setColour (juce::TextButton::buttonColourId, Celine::Theme::accent());
+                    button->setColour (juce::TextButton::textColourOffId, Celine::Theme::text());
+                }
+
+                button->onClick = [this, i] { if (onChoice) onChoice (i); };
+                addAndMakeVisible (button);
+            }
+
+            // Wide enough for the buttons side by side, tall enough for the wrapped text.
+            int rowWidth = 0;
+
+            for (auto* button : buttons)
+            {
+                button->changeWidthToFitText (buttonHeight);
+                button->setSize (juce::jmax (button->getWidth() + 16, 96), buttonHeight);
+                rowWidth += button->getWidth() + buttonGap;
+            }
+
+            const int width = juce::jmax (360, rowWidth - buttonGap + 2 * margin);
+
+            juce::AttributedString wrapped;
+            wrapped.append (text, message.getFont());
+            juce::TextLayout layout;
+            layout.createLayout (wrapped, static_cast<float> (width - 2 * margin - 10));
+
+            setSize (width, 2 * margin + juce::roundToInt (layout.getHeight()) + 14 + 14 + buttonHeight);
+        }
+
+        ~ChoicePrompt() override { setLookAndFeel (nullptr); }
+
+        void paint (juce::Graphics& g) override { g.fillAll (Celine::Theme::chrome()); }
+
+        void resized() override
+        {
+            auto area = getLocalBounds().reduced (margin);
+            auto row = area.removeFromBottom (buttonHeight);
+
+            // Right to left, so the first choice sits leftmost.
+            for (int i = buttons.size(); --i >= 0;)
+            {
+                buttons[i]->setBounds (row.removeFromRight (buttons[i]->getWidth()));
+                row.removeFromRight (buttonGap);
+            }
+
+            area.removeFromBottom (14);
+            message.setBounds (area);
+        }
+
+        std::function<void (int choice)> onChoice;
+
+       private:
+        static constexpr int margin = 18;
+        static constexpr int buttonHeight = 32;
+        static constexpr int buttonGap = 8;
+
+        juce::Label message;
+        juce::OwnedArray<juce::TextButton> buttons;
+    };
 }
 
 
@@ -28,26 +106,18 @@ PluginEditor::PluginEditor (PluginProcessor& p)
 {
     setLookAndFeel (&lookAndFeel);
 
-    // A tooltip paints a rounded panel, so it must not be opaque -- an opaque component
-    // has to fill every pixel it owns, and the four corners outside the rounding are
-    // exactly the ones it does not paint; left opaque they came out as square spikes of
-    // whatever was in the buffer. TooltipWindow sets the flag in its constructor and
-    // offers no way to ask otherwise. Safe because this one is parented to the editor
-    // rather than put on the desktop, so what shows through the corners is this window.
+    // Not opaque: the tooltip's rounded corners aren't painted, and an opaque component
+    // must fill every pixel.
     tooltips.setOpaque (false);
 
-    // The palette is one per process, so a colour changed in any window moves every
-    // window in the session -- which is what somebody picking a colour expects.
+    // One palette per process: a colour change reaches every window.
     Celine::Theme::palette().addChangeListener (this);
 
-    // Once, here, rather than on a timer: another instance may have saved a theme since
-    // this module last looked, and a window opening is the moment that can matter. The
-    // disk is not touched again unless somebody asks it to be.
+    // Pick up a theme another instance may have saved.
     Celine::Theme::palette().refreshFromDisk();
 
-    // Standalone only: JUCE's own Options menu and Audio/MIDI dialog are never
-    // our children, so they resolve against the *default* look and feel -- which
-    // inside a DAW belongs to the host.
+    // Standalone only: JUCE's Options menu and Audio/MIDI dialog use the default look and
+    // feel, which in a DAW is the host's.
     if (processorRef.wrapperType == juce::AudioProcessor::wrapperType_Standalone)
         juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
 
@@ -55,19 +125,16 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     buildPanels();
     buildBottomBand();
 
-    // After the children exist and before the window is sized: applyColours reaches
-    // into them, and resized() runs off the back of setSize further down.
+    // After the children exist (applyColours reaches into them), before setSize triggers
+    // resized().
     applyColours();
 
-    // A rebuilt editor catches up with what is already loaded. Without this the sheet
-    // came back and the field above it did not, which reads as the preset having been
-    // lost rather than as the window having been reopened.
+    // Show the preset already loaded.
     lastCircuitFile = processorRef.presetFile;
     showPresetFromProcessor();
 
-    // A preset load or a host restoring a session replaces the drawing under us.
-    // Bounced through the message thread, since some hosts restore state from
-    // another one.
+    // A preset load or session restore replaces the drawing. Bounced to the message
+    // thread, since some hosts restore state from another one.
     processorRef.onSchematicReplaced = [safe = juce::Component::SafePointer<PluginEditor> (this)]
     {
         juce::MessageManager::callAsync ([safe]
@@ -77,35 +144,34 @@ PluginEditor::PluginEditor (PluginProcessor& p)
         });
     };
 
-    // The plugin may have been playing, and being automated, with no editor
-    // attached, so the parameters have moved on and the drawing has not heard.
-    // Settle that before the strip is built, or the refresh below snaps an
-    // automated knob back.
+    // Parameters may have moved (automation) with no editor open; sync the drawing before
+    // building the strip.
     processorRef.adoptControlPositions();
 
     controlStrip.refresh();
     updateToolButtons();
 
-    // The baseline: undo must not rewind past what the editor opened onto.
+    // The baseline: undo stops here.
     history.reset (processorRef.getSchematic().toValueTree());
+
+    // Samples held before this window opened were never in front of anyone; report only
+    // new ones.
+    reportedHeldSamples = processorRef.getHeldSampleTotal();
     updateActionButtons();
 
     setResizable (true, true);
+    minimumWidth = narrowestWindow();
     const int minWidth = minimumWidth;
     const int minHeight = minimumHeight;
 
-    // Read before setResizeLimits, not after. That call constrains the bounds it
-    // finds -- still 0x0 here -- up to the minimum, and that fires resized(), which
-    // writes the size back to the processor. Reading afterwards returns the minimum
-    // it has just written, so the window opened at its smallest size every time and
-    // the size you left it at was never restored.
+    // Read before setResizeLimits: that call fires resized(), which overwrites the stored
+    // size with the minimum.
     const auto storedWidth = processorRef.editorWidth.load();
     const auto storedHeight = processorRef.editorHeight.load();
 
     setResizeLimits (minWidth, minHeight, 4000, 3000);
 
-    // Clamped rather than trusted: a size from a state blob written by an older
-    // build, or on a bigger screen, must not produce a window you cannot use.
+    // Clamped, so a stored size from another screen stays usable.
     setSize (juce::jlimit (minWidth, 4000, storedWidth),
              juce::jlimit (minHeight, 3000, storedHeight));
 
@@ -115,8 +181,7 @@ PluginEditor::PluginEditor (PluginProcessor& p)
             safe->canvas.zoomToFit();
     });
 
-    // The first-run question is not asked from here: it waits for the timer to
-    // see a window genuinely on screen. See offerPresetFolderOnFirstRun.
+    // The first-run question is asked from the timer (see offerPresetFolderOnFirstRun).
     startTimerHz (15);
 }
 
@@ -125,10 +190,8 @@ void PluginEditor::buildToolbar()
     settingsButton = std::make_unique<Celine::IconButton> (
         "Settings", Celine::Assets::drawable ("gear-solid-full.svg"));
 
-    // Assets are looked up by *filename*. Asking for the C++ identifier JUCE
-    // derives instead fails silently -- it strips hyphens rather than replacing
-    // them, so the lookup returns null and the button draws as an empty
-    // rectangle. See EmbeddedAssets.h.
+    // Assets are looked up by filename, not the JUCE identifier (which drops hyphens). See
+    // EmbeddedAssets.h.
     {
         struct Spec { Action action; const char* name; const char* file; std::function<void()> click; };
 
@@ -172,16 +235,11 @@ void PluginEditor::buildToolbar()
         }
     }
 
-    // The house mark is loaded and tinted in applyColours, not here: tinting is
-    // destructive, so a theme change has to start again from the artwork.
-
     // Undo and redo share one housing, painted by the editor behind them.
     actionButton (Action::Undo).setDrawsFrame (false);
     actionButton (Action::Redo).setDrawsFrame (false);
 
-    // None of these may hold the keyboard: the canvas needs it for the part and
-    // tool shortcuts, and a toolbar button that takes focus on click silently
-    // disables them until the next click on the sheet.
+    // None of these take keyboard focus; the canvas needs it for shortcuts.
     for (auto* button : std::initializer_list<juce::Button*> {
              &presetsButton, settingsButton.get(), &rebuildButton })
     {
@@ -197,22 +255,52 @@ void PluginEditor::buildToolbar()
     loadButton->onClick       = [this] { browseForCircuit (false); };
     importButton->onClick     = [this] { browseForImport(); };
     presetsButton.setTooltip ("Preset selection list");
-    presetsButton.onClick     = [this] { showPresetsMenu(); };
+    presetsButton.onClick     = [this] { showPresetLibrary(); };
+
+    // Made after the field, so it lies over it. Frameless, inside the field's fill.
+    presetFolderButton = std::make_unique<Celine::IconButton> (
+        "Choose the preset folder", Celine::Assets::drawable ("folder-open-solid-full.svg"));
+    presetFolderButton->setDrawsFrame (false);
+    presetFolderButton->setWantsKeyboardFocus (false);
+    presetFolderButton->setTooltip ("Choose the folder your presets are kept in. Right-click the library to reveal it.");
+    presetFolderButton->onClick = [this] { choosePresetFolder(); };
+    addAndMakeVisible (*presetFolderButton);
+
+    // The library drops down from the field; hidden until asked for (see
+    // showPresetLibrary).
+    presetLibrary.onDismiss = [this] { closePresetLibrary(); };
+    presetLibrary.onNewSheet = [this] { closePresetLibrary(); startNewSheet(); };
+    presetLibrary.onFactoryPresetChosen = [this] (int index) { closePresetLibrary(); loadFactoryPreset (index); };
+    presetLibrary.onPresetChosen = [this] (const juce::File& file) { closePresetLibrary(); loadPresetFile (file); };
+
+    // The library stays up and re-lists once a folder is chosen (see choosePresetFolder).
+    presetLibrary.onChooseFolder = [this] { choosePresetFolder(); };
+
+    presetLibrary.onPreferredHeightChanged = [this] { if (isPresetLibraryShowing()) placePresetLibrary(); };
+    libraryDismisser.onClick = [this] { closePresetLibrary(); };
+
+    addChildComponent (libraryDismisser);
+    addChildComponent (presetLibrary);
     settingsButton->onClick   = [this] { showSettingsMenu(); };
     rebuildButton.setTooltip ("Sends the current schematic to the audio engine");
     rebuildButton.onClick     = [this] { rebuildCircuit(); };
 
-    // The canvas changes tool on its own -- placing a part drops it back to
-    // Select -- so the toolbar follows the canvas rather than the reverse.
+    // The canvas changes tool on its own (placing returns to Select); the toolbar follows.
     canvas.onToolChanged = [this] { updateToolButtons(); };
 }
 
 void PluginEditor::buildPanels()
 {
-    addAndMakeVisible (palette);
+    // The sheet first, so the floating panels are in front. The console starts hidden.
     addAndMakeVisible (canvas);
+    addChildComponent (console);
     addAndMakeVisible (inspector);
-    addAndMakeVisible (console);
+    addAndMakeVisible (palette);
+
+    // Both size themselves to their contents.
+    inspector.onPreferredSizeChanged = [this] { layOutFloatingPanels(); };
+    inspector.setShortcutsShown (inspectorShortcutsShown());
+    console.onPreferredSizeChanged = [this] { layOutFloatingPanels(); };
 
     // Clicking a message selects the part it names.
     console.onMessageClicked = [this] (int elementId)
@@ -224,6 +312,14 @@ void PluginEditor::buildPanels()
     palette.onTypeChosen = [this] (SchematicModel::ElementType type) { canvas.setPendingType (type); };
     palette.onWireChosen = [this] { canvas.setTool (Celine::SchematicCanvas::Tool::Wire); };
 
+    // Restore the fold state; folding changes the width, so re-lay out.
+    palette.setCollapsed (processorRef.paletteCollapsed);
+    palette.onCollapsedChanged = [this]
+    {
+        processorRef.paletteCollapsed = palette.isCollapsed();
+        layOutFloatingPanels();
+    };
+
     canvas.onSchematicChanged = [this]
     {
         recordUndoState();
@@ -231,11 +327,10 @@ void PluginEditor::buildPanels()
         inspector.setElement (canvas.getSelectedElement());
     };
 
-    // The end of a drag, so the next one starts a fresh undo step.
+    // The end of a drag: the next one starts a fresh undo step.
     canvas.onGestureEnd = [this] { gestureRecorded = false; };
 
-    // Fetched on demand rather than pushed: the canvas draws a schematic and
-    // knows nothing about audio, so it asks for a snapshot of some numbers.
+    // The canvas asks for a snapshot; it knows nothing about audio.
     canvas.scopeReader = [this] (int elementId, Celine::ScopeReading& out)
     { return readScopeTrace (elementId, out); };
 
@@ -254,17 +349,14 @@ void PluginEditor::buildPanels()
     inspector.onInspectedElementChanged = [this] (int elementId)
     { processorRef.setInspectedElement (elementId); };
 
-    // Retiming a probe needs no rebuild -- the circuit has not changed -- but it
-    // does change how many samples go into a column, which the audio thread has
-    // to be told about.
+    // No rebuild needed, but the audio thread's samples-per-column changes.
     inspector.onScopeTimebaseChanged = [this] { processorRef.refreshScopeTiming(); };
     inspector.scopeReader = canvas.scopeReader;
 
     inspector.onEdited = [this] { recordUndoState(); markPending(); canvas.repaint(); };
 
-    // A pot's position and a switch's throw are the two things the inspector can
-    // change that the running circuit already follows, so they reach the strip
-    // now rather than lighting Rebuild for a change you can already hear.
+    // Pot position and switch throw are live: update the strip instead of lighting
+    // Rebuild.
     inspector.onControlEdited = [this]
     {
         if (const auto* element = canvas.getSelectedElement())
@@ -280,22 +372,20 @@ void PluginEditor::buildPanels()
     inspector.filePlayer = &processorRef.getInputFilePlayer();
     inspector.onInputFileRequested = [this] { browseForInputFile(); };
     reportedInputFileLoads = processorRef.getInputFilePlayer().getStatus().loadsFinished;
-    inspector.onRotateRequested = [this] { canvas.rotate(); };
-    inspector.onFlipRequested = [this] { canvas.flip(); };
-    inspector.onDeleteRequested = [this] { canvas.deleteSelection(); };
 }
 
 void PluginEditor::buildBottomBand()
 {
-    inputSlider.setTooltip ("Input level");
-    outputSlider.setTooltip ("Output level");
+    // First, so the knobs and captions are in front of their bars.
+    addAndMakeVisible (inputBar);
+    addAndMakeVisible (outputBar);
 
+    // Tooltips are set with the readouts (see applyLevelReadouts).
     for (auto* slider : { &inputSlider, &outputSlider })
     {
         slider->setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
 
-        // Drawn differently from the drawn circuit's own knobs, which share this
-        // band; deaf to the wheel, as those are.
+        // Drawn differently from the circuit's knobs; ignores the wheel.
         slider->getProperties().set (digitalGainProperty, true);
         slider->setScrollWheelEnabled (false);
 
@@ -315,14 +405,16 @@ void PluginEditor::buildBottomBand()
 
     addAndMakeVisible (controlStrip);
 
-    // The strip owns the widgets and the parameters; what a moved control means
-    // for the drawing is the editor's business, since it owns the sheet.
+    // A different number of controls changes the bar's width.
+    controlStrip.onContentChanged = [this] { resized(); };
+
+    // The strip owns widgets and parameters; the editor updates the drawing.
     controlStrip.onControlMoved = [this] (const std::vector<int>& ids, float position)
     { writeControlPositionToSchematic (ids, position); };
 
     for (auto* label : { &inputLabel, &outputLabel, &channelModeLabel })
     {
-        label->setFont (Celine::Fonts::light (15.0f));
+        label->setFont (Celine::Fonts::light (Celine::Theme::bandCaptionFontHeight));
         label->setJustificationType (juce::Justification::centred);
         addAndMakeVisible (label);
     }
@@ -330,11 +422,8 @@ void PluginEditor::buildBottomBand()
     inputAttachment  = std::make_unique<SliderAttachment> (processorRef.apvts, "input",  inputSlider);
     outputAttachment = std::make_unique<SliderAttachment> (processorRef.apvts, "output", outputSlider);
 
-    // After the attachments, which install the parameters' own text ("3.0", no
-    // unit) and would replace these. Typed back with or without the "dB".
-    for (auto* slider : { &inputSlider, &outputSlider })
-        Celine::ControlStrip::showValueBelow (*slider, Celine::ControlStrip::formatDecibels,
-                                              [] (const juce::String& text) { return text.getDoubleValue(); });
+    // After the attachments, which would otherwise replace this text.
+    applyLevelReadouts();
     bypassAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
         processorRef.apvts, "bypass", *bypassButton);
     channelModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
@@ -347,11 +436,17 @@ PluginEditor::~PluginEditor()
 
     Celine::Theme::palette().removeChangeListener (this);
 
-    // Before the children go: a component holding a dangling LookAndFeel is a
-    // crash on the way out.
+    // A first-run or update question still up goes with the window. It is a desktop
+    // window of its own, so nothing else would close it, and its contents draw with
+    // this editor's look and feel, which is about to be destroyed. The modal manager
+    // sees the deletion and does not delete it again.
+    if (openPrompt != nullptr)
+        delete openPrompt.getComponent();
+
+    // Before the children go, so none holds a dangling LookAndFeel.
     setLookAndFeel (nullptr);
 
-    // Only if we were the ones holding it.
+    // Only if we set it.
     if (&juce::LookAndFeel::getDefaultLookAndFeel() == &lookAndFeel)
         juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
 }
@@ -364,14 +459,12 @@ void PluginEditor::schematicChangedExternally()
     inspector.setElement (nullptr);
     controlStrip.refresh();
 
-    // Whatever loadPresetFile() left for us, or nothing at all when the drawing
-    // was replaced by something with no file behind it -- a host restoring its
-    // session, usually. Consumed either way, so the next replacement starts
-    // from a clean slate rather than inheriting this one's name.
+    // The file set by loadPresetFile(), or none (e.g. a host restoring its session).
+    // Consumed either way.
     setLoadedPreset (presetBeingLoaded);
     presetBeingLoaded = juce::File{};
 
-    // A new document, so the old history no longer describes anything reachable.
+    // A new document: reset the history.
     history.reset (processorRef.getSchematic().toValueTree());
     updateActionButtons();
 
@@ -379,11 +472,7 @@ void PluginEditor::schematicChangedExternally()
     refreshRebuildButtonColour();
     setStatus ("Loaded.", false);
 
-    // At the moment the import lands, not as a line in the build's notes. This
-    // callback is the one point every route in passes through -- Load, the
-    // preset menu, a host restoring its session -- so it fires once per
-    // document. A dialog rather than the console because it is a fact about the
-    // *file*: what is on screen may not be what was drawn.
+    // Every load route passes through here, so this fires once per document.
     if (processorRef.wasDocumentFromNewerBuild())
     {
         juce::NativeMessageBox::showAsync (
@@ -408,17 +497,14 @@ void PluginEditor::updateToolButtons()
     selectToolButton->setActive (tool == Tool::Select);
     deleteToolButton->setActive (tool == Tool::Delete);
 
-    // Placing and wiring are both shown by the palette rather than the toolbar,
-    // and the canvas is the authority on both -- either can be armed from the
-    // keyboard as well as by clicking, so the highlight follows the canvas.
+    // Both placing and wiring are shown by the palette; the canvas is the authority.
     const auto armed = canvas.getPendingType();
     palette.setActive (tool == Tool::Place ? &armed : nullptr, tool == Tool::Wire);
 }
 
 void PluginEditor::setLoadedPreset (const juce::File& file)
 {
-    // A file means a preset; File{} means the sheet came from somewhere with no
-    // file behind it -- an example, a cleared sheet, or a host session.
+    // File{} means no file behind the sheet (an example, a cleared sheet, a host session).
     lastCircuitFile = file;
 
     processorRef.presetFile = file;
@@ -432,8 +518,7 @@ void PluginEditor::setLoadedPreset (const juce::File& file)
 
 void PluginEditor::setLoadedFactoryPreset (const juce::String& name)
 {
-    // No file behind it, so Save must not think it can overwrite anything --
-    // lastCircuitFile stays where it was and the dialog opens where it did.
+    // No file: Save must not overwrite anything, so lastCircuitFile is kept.
     processorRef.presetName = name;
     processorRef.presetIsFactory = true;
     processorRef.presetModified = false;
@@ -455,12 +540,11 @@ void PluginEditor::showPresetFromProcessor()
 
 void PluginEditor::recordUndoState()
 {
-    // Called *after* the edit, so the history holds the state just reached and
-    // the one before it is whatever it held already. See SchematicHistory.
+    // Called after the edit; the history holds the state just reached (see
+    // SchematicHistory).
     auto now = processorRef.getSchematic().toValueTree();
 
-    // A drag is one step: the canvas says when the gesture ends, so the run of
-    // notifications between mouseDown and mouseUp collapses into one record.
+    // A drag is one undo step: notifications until the gesture ends are collapsed.
     if (canvas.isMidGesture())
     {
         if (gestureRecorded)
@@ -486,15 +570,10 @@ void PluginEditor::undo()
 
     processorRef.getSchematic().restoreFromValueTree (state);
 
-    // Undo is for the drawing, not the knobs: a snapshot carries every pot
-    // position, so restoring one would rewind those behind the automation lane's
-    // back -- and only on the drawing, the parameters being the live truth.
-    // Seeding back off the parameters is what keeps them where they were.
+    // Undo restores the drawing, not the knobs: re-seed the positions from the parameters.
     processorRef.adoptControlPositions();
 
-    // The drawing changed but the running circuit has not: undoing is an edit
-    // like any other, so it lights Rebuild rather than silently rebuilding and
-    // interrupting whatever is playing.
+    // Undo is an edit: it lights Rebuild rather than rebuilding.
     canvas.refresh();
     inspector.setElement (canvas.getSelectedElement());
     markPending();
@@ -511,7 +590,7 @@ void PluginEditor::redo()
 
     processorRef.getSchematic().restoreFromValueTree (state);
 
-    // As in undo: the sheet comes back, the knobs stay put.
+    // As in undo: the knobs stay put.
     processorRef.adoptControlPositions();
 
     canvas.refresh();
@@ -527,21 +606,22 @@ void PluginEditor::updateActionButtons()
     actionButton (Action::Redo).setEnabled (history.canRedo());
 
     const bool hasSelection = ! canvas.getSelection().empty();
+    const bool placing = canvas.getTool() == Celine::SchematicCanvas::Tool::Place;
 
-    for (const auto action : { Action::Mirror, Action::Flip, Action::Copy, Action::Rotate })
-        actionButton (action).setEnabled (hasSelection
-                                         || canvas.getTool() == Celine::SchematicCanvas::Tool::Place);
+    for (const auto action : { Action::Mirror, Action::Flip, Action::Rotate })
+        actionButton (action).setEnabled (hasSelection || placing);
 
-    // setEnabled repaints the button it is called on, but the undo/redo housing
-    // is painted by the editor, so nothing above would bring it up to date.
+    // Duplicate also copies wires; the other three only act on parts.
+    actionButton (Action::Copy).setEnabled (hasSelection || ! canvas.getSelectedWires().empty() || placing);
+
+    // The housing is painted by the editor, so repaint it too.
     repaint (undoRedoHousing);
 }
 
 void PluginEditor::markPending()
 {
-    // The drawing no longer matches the file it came from. Tracked separately
-    // from pendingRebuild, which is about what you can *hear* -- a rebuilt sheet
-    // still differs from the preset on disk until it is saved.
+    // The sheet no longer matches its file. Separate from pendingRebuild, which is about
+    // what is heard.
     markPresetModified();
 
     if (pendingRebuild)
@@ -559,8 +639,7 @@ void PluginEditor::rebuildCircuit()
 
     if (! result.isValid())
     {
-        // The previous circuit is still running, and the reason is already the
-        // first diagnostic, so the status line does not repeat it.
+        // The previous circuit keeps running; the reason is the first diagnostic.
         console.setMessages ("Build failed", true, result.diagnostics);
         return;
     }
@@ -587,8 +666,7 @@ void PluginEditor::writeControlPositionToSchematic (const std::vector<int>& elem
 {
     bool moved = false;
 
-    // Every part on the shaft: a ganged pair turns as one, and both wipers
-    // redraw.
+    // Every part on the shaft.
     for (const auto elementId : elementIds)
     {
         auto* element = processorRef.getSchematic().findElement (elementId);
@@ -604,46 +682,81 @@ void PluginEditor::writeControlPositionToSchematic (const std::vector<int>& elem
     if (! moved)
         return;
 
-    // A switch draws itself open or closed, so the sheet redraws when one is
-    // thrown from the strip.
+    // Switches draw their state, so redraw the sheet.
     canvas.repaint();
 
-    // And the inspector is showing one of these parts' fields if it happens to
-    // be selected, so it would otherwise sit there contradicting the strip.
+    // Update the inspector if it is showing one of these parts.
     if (auto* selected = canvas.getSelectedElement(); selected != nullptr
         && std::find (elementIds.begin(), elementIds.end(), selected->id) != elementIds.end())
         inspector.setElement (selected);
 }
 
+void PluginEditor::reportHeldSamples()
+{
+    // A sample the circuit cannot settle is held: the one before it is repeated (see
+    // Circuit::process). A few are inaudible; a run of them is a part of the circuit's
+    // travel the solver cannot follow, and can click or stick. Nothing else says so, so the
+    // console does -- at most once a second, saying how many since the last report, and
+    // as a warning, which keeps it up until something else replaces it.
+    const auto total = processorRef.getHeldSampleTotal();
+
+    if (total <= reportedHeldSamples)
+        return;
+
+    const auto now = juce::Time::getMillisecondCounter();
+
+    if (lastHeldReportMs != 0 && now - lastHeldReportMs < 1000)
+        return;
+
+    const auto fresh = total - reportedHeldSamples;
+    reportedHeldSamples = total;
+    lastHeldReportMs = now;
+
+    console.setWarningHeadline (
+        "The circuit could not be solved on " + juce::String (fresh)
+        + (fresh == 1 ? " sample" : " samples")
+        + ", they were repeated to protect the audio thread. This is an engine limitation or a schematic issue. Please report it.");
+}
+
 void PluginEditor::timerCallback()
 {
-    // Backstop: the real attempt happens in parentHierarchyChanged, before the
-    // window is shown. This catches being parented to something that was not
-    // yet the window.
+    // Backstop for parentHierarchyChanged, in case the window wasn't there yet.
     adoptNativeTitleBar();
 
-    if (! presetFolderChecked && isShowing())
+    reportHeldSamples();
+
+    // First-run questions and update notices, only with the window on screen, one dialog
+    // at a time.
+    if (isShowing() && openPrompt == nullptr)
     {
-        presetFolderChecked = true;
-        offerPresetFolderOnFirstRun();
+        if (! presetFolderChecked)
+        {
+            presetFolderChecked = true;
+            offerPresetFolderOnFirstRun();
+        }
+        else if (! updateQuestionChecked)
+        {
+            updateQuestionChecked = true;
+            offerUpdateChecksOnFirstRun();
+            startUpdateCheckIfEnabled();
+        }
+        else if (const auto release = UpdateCheck::Session::takeUpdateToAnnounce())
+        {
+            announceUpdate (release->version);
+        }
     }
 
-    // Keep switch buttons showing what the parameter actually says, since they
-    // have no attachment to do it for them.
+    // Switch buttons have no attachment; keep them in step with the parameter.
     controlStrip.syncToggles();
 
-    // The circuit the last Rebuild faded out, once it has: the audio thread can
-    // say the fade is over but cannot free it.
+    // Free the circuit the last Rebuild faded out (the audio thread can't).
     processorRef.releaseFadedCircuits();
 
-    // A live trace has to be asked for again to move -- and only when there is
-    // one, or the editor repaints the whole sheet several times a second for
-    // nothing.
+    // Repaint for live traces, only when there is a scope.
     if (processorRef.getSchematic().countElementsOfType (SchematicModel::ElementType::Scope) > 0)
         canvas.repaint();
 
-    // Not gated on that: they are small, they decline in a line when nothing is
-    // selected, and a part's current is live on sheets with no scope at all.
+    // Always: readouts are cheap and current is live without a scope.
     inspector.repaintReadouts();
     reportInputFileLoads();
 }
@@ -651,7 +764,7 @@ void PluginEditor::timerCallback()
 //==============================================================================
 void PluginEditor::setStatus (const juce::String& message, bool isError)
 {
-    // One place for everything the plugin has to say.
+    // Everything the plugin has to say goes to the console.
     console.setHeadline (message, isError);
 }
 
@@ -662,10 +775,8 @@ bool PluginEditor::readScopeTrace (int elementId, Celine::ScopeReading& out) con
     if (trace == nullptr)
         return false;
 
-    // Copied out rather than pointed at: a renderer holding a pointer would see
-    // a column change between drawing the line into it and the line out of it.
-    // The index is read first, with acquire ordering, so every column it claims
-    // is complete has actually been written.
+    // Copied, not pointed at, so the renderer sees consistent columns. The index is read
+    // first with acquire ordering.
     out.writeColumn = trace->writeColumn.load (std::memory_order_acquire);
 
     for (int c = 0; c < Celine::ScopeReading::columns; ++c)
@@ -678,9 +789,7 @@ bool PluginEditor::readScopeTrace (int elementId, Celine::ScopeReading& out) con
     out.peakToPeak = trace->peakToPeak.load (std::memory_order_relaxed);
     out.live = trace->live.load (std::memory_order_relaxed);
 
-    // The axes come off the *drawing*, not off the trace: they are a way of
-    // looking at the circuit rather than anything the circuit did, so they
-    // change the moment they are typed and never wait for a rebuild.
+    // Axes come from the drawing, so they update without a rebuild.
     out.windowSeconds = static_cast<float> (PluginProcessor::scopeWindowSeconds);
 
     if (const auto* element = processorRef.getSchematic().findElement (elementId))
@@ -718,10 +827,8 @@ bool PluginEditor::importSchematicFile (const juce::File& file)
 {
     const auto xml = juce::XmlDocument::parse (file);
 
-    // Refused exactly the way every other route in refuses -- see
-    // loadPresetFile. A file with the right suffix that isn't ours has to leave
-    // the drawing alone rather than merge half of itself into it, which unlike a
-    // failed *load* would leave the sheet in a state nobody drew.
+    // Refused like every other route in (see loadPresetFile); a foreign file leaves the
+    // sheet alone.
     const auto document = xml != nullptr ? juce::ValueTree::fromXml (*xml) : juce::ValueTree{};
     const auto drawing = document.getChildWithName ("SCHEMATIC");
 
@@ -742,13 +849,11 @@ bool PluginEditor::importSchematicFile (const juce::File& file)
 
     auto& sheet = processorRef.getSchematic();
 
-    // Counted before the merge so the warning below can talk about what the
-    // import *brought*, rather than about what the sheet now has.
+    // Counted before merging, so the warning describes what the import brought.
     const int inputsBefore = sheet.countElementsOfType (SchematicModel::ElementType::Input);
     const int outputsBefore = sheet.countElementsOfType (SchematicModel::ElementType::Output);
 
-    // Clear to the right of everything already drawn: most sheets are near the
-    // origin, and landing two of those on each other is unreadable.
+    // Placed to the right of the existing drawing.
     constexpr int gapInSquares = 4;
 
     const auto existing = sheet.getContentBounds();
@@ -761,7 +866,7 @@ bool PluginEditor::importSchematicFile (const juce::File& file)
 
     const auto merged = sheet.merge (incoming, delta);
 
-    // Selected as one block, so the next drag puts it where it belongs.
+    // Selected as one block, ready to drag.
     canvas.refresh();
     canvas.setSelection (merged.elementIds, merged.wireIds);
     inspector.setElement (canvas.getSelectedElement());
@@ -781,11 +886,8 @@ bool PluginEditor::importSchematicFile (const juce::File& file)
 
     message << " from " << file.getFileName() << ".";
 
-    // The one thing an import can quietly get wrong. A terminal *names its net*,
-    // so a second Input does not sit downstream of the first -- it is the same
-    // node, and the two circuits end up side by side across one input rather
-    // than one feeding the other. Ground is the exception and the reason this is
-    // a warning rather than a rule: grounds are *meant* to merge.
+    // A terminal names its net, so a second Input merges with the first. Grounds are meant
+    // to merge, hence a warning rather than a refusal.
     juce::StringArray duplicated;
 
     if (inputsBefore > 0
@@ -826,11 +928,8 @@ void PluginEditor::browseForCabinetFile()
         if (file == juce::File{})
             return; // cancelled
 
-        // Asked for again rather than captured. The dialog is asynchronous, and
-        // between opening it and answering it the selection can have moved, the
-        // sheet can have been replaced by a preset load, or the part can have
-        // been deleted -- a captured Element* would be a pointer into any of
-        // those.
+        // Looked up again: the dialog is asynchronous and the selection or sheet may have
+        // changed.
         auto* selected = canvas.getSelectedElement();
 
         if (selected == nullptr || selected->type != SchematicModel::ElementType::Output)
@@ -839,9 +938,7 @@ void PluginEditor::browseForCabinetFile()
         lastCabinetFile = file;
         selected->cabFile = file.getFullPathName();
 
-        // Choosing a file is a clear enough statement of intent to arm the
-        // switch: nobody goes looking for an impulse response in order to leave
-        // it switched out.
+        // Choosing a file enables the cabinet.
         selected->cabEnabled = true;
 
         inspector.setElement (selected);
@@ -872,11 +969,7 @@ void PluginEditor::browseForInputFile()
         if (file == juce::File{})
             return; // cancelled
 
-        // Choosing a file arms file input, as choosing an impulse response arms
-        // the cab: nobody goes looking for a take in order to keep listening to
-        // the guitar. It plays when Play is pressed, not before -- and it arms
-        // only once the file has read, so one that fails does not leave the
-        // circuit listening to nothing.
+        // Choosing a file arms file input once it has loaded; it plays when Play is pressed.
         processorRef.getInputFilePlayer().load (file, true);
 
         setStatus ("Loading " + file.getFileName() + "...", false);
@@ -901,9 +994,7 @@ void PluginEditor::reportInputFileLoads()
     auto message = "Loaded " + status.file.getFileName() + ": "
                  + juce::String ((double) status.length / juce::jmax (1.0, status.sampleRate), 1) + " s";
 
-    // Said, because resampling is the one thing between the file and the
-    // circuit, and a bench that compares two takes wants to know whether
-    // either went through it.
+    // Report resampling.
     if (! juce::exactlyEqual (status.sourceRate, status.sampleRate))
         message << ", resampled from " << juce::String (status.sourceRate / 1000.0, 1)
                 << " to " << juce::String (status.sampleRate / 1000.0, 1) << " kHz";
@@ -916,37 +1007,31 @@ void PluginEditor::reportInputFileLoads()
 
 void PluginEditor::applyCabinetChange()
 {
-    // Undoable, because the file and the switch live on the part and travel in
-    // the document -- but emphatically *not* pending, because nothing about a
-    // cabinet reaches the matrix. Pressing Rebuild would rebuild a circuit that
-    // has not changed.
+    // Undoable (it is in the document) but no rebuild: the cabinet isn't in the matrix.
     recordUndoState();
     markPresetModified();
 
     const auto problem = processorRef.refreshCabinet();
 
-    // Never an error. A missing impulse response is a normal thing to happen to
-    // a sheet that has travelled between machines -- the drawing is fine, the
-    // setting is kept, and the signal goes through without it.
+    // Not an error: the setting is kept and the signal passes without it.
     setStatus (problem, false);
 }
 
 void PluginEditor::browseForCircuit (bool saving)
 {
-    // The two dialogs differ only in title, flags and what to do with the
-    // answer. Two copies would be two places for "where does it open" to drift.
+    // One dialog for both; they differ only in title, flags and result handling.
     fileChooser = std::make_unique<juce::FileChooser> (
         saving ? "Save circuit" : "Load circuit",
         lastCircuitFile != juce::File{} ? lastCircuitFile
                                        : juce::File::getSpecialLocation (juce::File::userDocumentsDirectory),
         juce::String ("*") + PluginProcessor::circuitFileExtension);
 
-    const auto flags = juce::FileBrowserComponent::canSelectFiles
+    const auto chooserFlags = juce::FileBrowserComponent::canSelectFiles
                      | (saving ? juce::FileBrowserComponent::saveMode
                                      | juce::FileBrowserComponent::warnAboutOverwriting
                                : juce::FileBrowserComponent::openMode);
 
-    fileChooser->launchAsync (flags, [this, saving] (const juce::FileChooser& chooser)
+    fileChooser->launchAsync (chooserFlags, [this, saving] (const juce::FileChooser& chooser)
     {
         auto file = chooser.getResult();
 
@@ -966,7 +1051,7 @@ void PluginEditor::browseForCircuit (bool saving)
 
         if (xml != nullptr && xml->writeTo (file))
         {
-            // Saving is how an edited sheet becomes a preset again.
+            // Saving makes an edited sheet a preset again.
             setLoadedPreset (file);
             setStatus ("Saved to " + file.getFileName(), false);
         }
@@ -981,145 +1066,106 @@ bool PluginEditor::loadPresetFile (const juce::File& file)
 {
     const auto xml = juce::XmlDocument::parse (file);
 
-    // Set before restoreDocument, because that is what queues the callback that
-    // reads it.
+    // Set before restoreDocument, which queues the callback that reads it.
     presetBeingLoaded = file;
 
-    // A file that isn't ours must leave the running circuit alone rather than
-    // half-load and take the sound with it. That goes for a preset picked off
-    // the menu as much as one picked out of a dialog -- a folder is just a
-    // folder, and anything at all can be sitting in it with the right suffix.
+    // A foreign file leaves the running circuit alone, whichever route it came by.
     if (xml == nullptr || ! processorRef.restoreDocument (juce::ValueTree::fromXml (*xml)))
     {
-        // Nothing was replaced, so no callback is coming to consume this.
+        // Nothing was replaced, so no callback will consume this.
         presetBeingLoaded = juce::File{};
         setStatus (file.getFileName() + " isn't a circuit file.", true);
         return false;
     }
 
-    // After restoreDocument, not before: schematicChangedExternally() fires from
-    // in there and clears the name, since it can't tell a preset load from a
-    // host restoring a session. This puts the name back for the case that does
-    // have a file behind it.
+    // After restoreDocument: schematicChangedExternally() clears the name, so put it back.
     setLoadedPreset (file);
 
-    // restoreDocument() rebuilt and announced itself, so the canvas and the
-    // control strip have already caught up.
+    // restoreDocument() has already updated the canvas and the strip.
     setStatus ("Loaded " + file.getFileName(), false);
     return true;
 }
 
 //==============================================================================
-namespace
+void PluginEditor::showPresetLibrary()
 {
-    // Three id ranges in one menu, kept well apart so a folder with a lot of
-    // presets in it can never collide with a command.
-    constexpr int userPresetBaseId = 1;
-    constexpr int factoryPresetBaseId = 50000;
-    constexpr int choosePresetFolderId = 100001;
-    constexpr int revealPresetFolderId = 100002;
-    constexpr int clearSheetId = 100003;
-} // namespace
+    // The field toggles the library.
+    if (isPresetLibraryShowing())
+    {
+        closePresetLibrary();
+        return;
+    }
 
-void PluginEditor::showPresetsMenu()
+    // Every opening starts from the whole list: a search left from last time hid New
+    // and everything that did not match, which looked like presets gone missing.
+    // Cleared here rather than on closing, so every way the library is put away is
+    // covered.
+    presetLibrary.setSearchText ({});
+
+    // Re-read every time: files may have changed on disk.
+    refreshPresetLibrary();
+
+    libraryDismisser.setBounds (getLocalBounds());
+    libraryDismisser.setVisible (true);
+    libraryDismisser.toFront (false);
+
+    placePresetLibrary();
+    presetLibrary.setVisible (true);
+    presetLibrary.toFront (false);
+
+    // Keep the folder icon on top.
+    presetFolderButton->toFront (false);
+
+    // Typing searches straight away.
+    presetLibrary.focusSearch();
+}
+
+void PluginEditor::closePresetLibrary()
 {
-    juce::PopupMenu menu;
+    if (! isPresetLibraryShowing())
+        return;
 
-    // Factory first: on a fresh install it is the only thing in here.
-    const auto factory = SchematicModel::Examples::getNames();
+    presetLibrary.setVisible (false);
+    libraryDismisser.setVisible (false);
 
-    menu.addSeparator();
-    menu.addItem (clearSheetId, "New (empty sheet)");
+    // Give the keyboard back to the sheet.
+    if (canvas.isShowing())
+        canvas.grabKeyboardFocus();
+}
 
-    menu.addSectionHeader ("Factory presets");
+void PluginEditor::placePresetLibrary()
+{
+    constexpr int edge = 8;
 
-    for (int i = 0; i < factory.size(); ++i)
-        menu.addItem (juce::PopupMenu::Item (factory[i])
-                          .setID (factoryPresetBaseId + i)
-                          .setTicked (presetsButton.isFactoryPreset()
-                                      && factory[i] == presetsButton.getPresetName()));
+    // Exactly the field's width; long names are cut with an ellipsis.
+    const auto field = presetsButton.getBounds();
 
-    // Read fresh every time: a preset folder is an ordinary folder that files
-    // get dropped into behind our back.
-    const auto files = presets.getPresets();
-    const bool haveFolder = presets.hasDirectory();
+    presetLibrary.setFieldArea (field.withZeroOrigin());
 
-    menu.addSectionHeader ("User presets");
+    const int height = juce::jmin (presetLibrary.getPreferredHeight(), getHeight() - field.getY() - edge);
 
-    if (! haveFolder)
-    {
-        menu.addItem (juce::PopupMenu::Item ("No preset folder chosen yet").setEnabled (false));
-    }
-    else if (files.isEmpty())
-    {
-        menu.addItem (juce::PopupMenu::Item ("Nothing in " + presets.getDirectory().getFileName())
-                          .setEnabled (false));
-    }
-    else
-    {
-        for (int i = 0; i < files.size(); ++i)
-        {
-            const auto name = files[i].getFileNameWithoutExtension();
+    presetLibrary.setBounds (field.withHeight (height));
+    libraryDismisser.setBounds (getLocalBounds());
+}
 
-            // Ticked, so the menu agrees with the button.
-            menu.addItem (juce::PopupMenu::Item (name)
-                              .setID (userPresetBaseId + i)
-                              .setTicked (! presetsButton.isFactoryPreset()
-                                          && name == presetsButton.getPresetName()));
-        }
-    }
+void PluginEditor::refreshPresetLibrary()
+{
+    presetLibrary.setFactoryPresets (SchematicModel::Examples::getNames());
+    presetLibrary.setFolder (presets.hasDirectory() ? presets.getDirectory() : juce::File{});
 
-    menu.addSeparator();
-    menu.addItem (choosePresetFolderId, haveFolder ? "Change preset folder..." : "Choose preset folder...");
+    // Mark the loaded preset.
+    presetLibrary.setCurrentPreset (presetsButton.isFactoryPreset() ? juce::File{} : processorRef.presetFile,
+                                    presetsButton.isFactoryPreset() ? presetsButton.getPresetName() : juce::String());
+}
 
-    if (haveFolder)
-        menu.addItem (revealPresetFolderId, "Reveal preset folder");
-
-    // Menus inherit a look and feel from nothing: withTargetComponent says only
-    // *where* to open, and a PopupMenu is a parentless desktop window, so
-    // untold it resolves against the default -- the host's, inside a DAW.
-    menu.setLookAndFeel (&lookAndFeel);
-
-    // The listing goes into the callback by value: the menu is async, and the
-    // folder can change under it between opening and choosing.
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (presetsButton),
-                        [this, files, factory] (int choice)
-    {
-        if (choice == 0)
-            return; // dismissed
-
-        if (choice == choosePresetFolderId)
-        {
-            choosePresetFolder();
-            return;
-        }
-
-        if (choice == revealPresetFolderId)
-        {
-            presets.getDirectory().revealToUser();
-            return;
-        }
-
-        if (choice == clearSheetId)
-        {
-            processorRef.getSchematic().clear();
-            setLoadedPreset ({});
-            canvas.refresh();
-            canvas.zoomToFit();
-            inspector.setElement (nullptr);
-            rebuildCircuit();
-            return;
-        }
-
-        if (juce::isPositiveAndBelow (choice - factoryPresetBaseId, factory.size()))
-        {
-            loadFactoryPreset (choice - factoryPresetBaseId);
-            return;
-        }
-
-        if (juce::isPositiveAndBelow (choice - userPresetBaseId, files.size()))
-            loadPresetFile (files[choice - userPresetBaseId]);
-    });
+void PluginEditor::startNewSheet()
+{
+    processorRef.getSchematic().clear();
+    setLoadedPreset ({});
+    canvas.refresh();
+    canvas.zoomToFit();
+    inspector.setElement (nullptr);
+    rebuildCircuit();
 }
 
 void PluginEditor::loadFactoryPreset (int index)
@@ -1136,9 +1182,8 @@ void PluginEditor::loadFactoryPreset (int index)
     inspector.setElement (nullptr);
     rebuildCircuit();
 
-    // After rebuildCircuit, which does not touch the preset name, and after the
-    // canvas refresh -- neither of which goes through restoreDocument, so no
-    // async callback is coming to overwrite this.
+    // After rebuildCircuit and the canvas refresh; neither goes through restoreDocument,
+    // so no callback will overwrite this.
     setLoadedFactoryPreset (names[index]);
     setStatus ("Loaded " + names[index], false);
 }
@@ -1156,9 +1201,16 @@ void PluginEditor::choosePresetFolder()
             const auto folder = chooser.getResult();
 
             if (folder == juce::File{} || ! folder.isDirectory())
-                return; // cancelled, or a folder that went away while we asked
+                return; // cancelled, or the folder went away
 
             presets.setDirectory (folder);
+
+            // If the library is up, list the new folder now.
+            if (isPresetLibraryShowing())
+            {
+                refreshPresetLibrary();
+                placePresetLibrary();
+            }
 
             const auto count = presets.getPresets().size();
             setStatus ("Preset folder: " + folder.getFullPathName() + "  --  "
@@ -1169,8 +1221,7 @@ void PluginEditor::choosePresetFolder()
 
 void PluginEditor::parentHierarchyChanged()
 {
-    // As early as possible: the window exists but is not on screen, so the
-    // native frame is there from the first paint.
+    // Before the window is shown, so the native frame is there from the first paint.
     adoptNativeTitleBar();
 }
 
@@ -1179,9 +1230,7 @@ void PluginEditor::adoptNativeTitleBar()
     if (nativeTitleBarChecked)
         return;
 
-    // Only the standalone build owns its window; in a DAW the top-level window
-    // is the host's. Hence the wrapper check rather than "is there a
-    // DocumentWindow above me", which in a host there often is.
+    // Only the standalone owns its window; in a DAW it is the host's.
     if (processorRef.wrapperType != juce::AudioProcessor::wrapperType_Standalone)
     {
         nativeTitleBarChecked = true;
@@ -1190,21 +1239,33 @@ void PluginEditor::adoptNativeTitleBar()
 
     auto* window = dynamic_cast<juce::DocumentWindow*> (getTopLevelComponent());
 
-    // Not parented yet. Deliberately does *not* latch here, so the next call --
-    // from the timer, if the hierarchy callback came too early -- gets another
-    // go rather than leaving the window JUCE-framed forever.
+    // Not parented yet. Doesn't latch, so the timer can try again.
     if (window == nullptr)
         return;
 
     nativeTitleBarChecked = true;
 
-    // Asked rather than assumed: the window outlives the editor, so this has to
-    // cope with arriving at one that is already native.
+    // JUCE's standalone window asks for minimise and close only, and a native frame
+    // gets exactly the buttons asked for: on Windows that is no maximise box, so the
+    // window could not be maximised by button, title-bar double-click or Win+Up. macOS
+    // was unaffected, since any resizable window there gets the green full-screen button.
+    // The style is read when the peer is made, so it has to be set before going native,
+    // and a window that already is native has to be put back on the desktop to see it.
+    constexpr int buttons = juce::DocumentWindow::minimiseButton
+                          | juce::DocumentWindow::maximiseButton
+                          | juce::DocumentWindow::closeButton;
+    const auto stylesBefore = window->getDesktopWindowStyleFlags();
+    window->setTitleBarButtonsRequired (buttons, false);
+    const bool buttonsChanged = window->getDesktopWindowStyleFlags() != stylesBefore;
+
+    // The window outlives the editor and may already be native.
     if (! window->isUsingNativeTitleBar())
         window->setUsingNativeTitleBar (true);
+    else if (buttonsChanged && window->isOnDesktop())
+        window->addToDesktop();
 
-    // Going native collapses JUCE's Options button, so the Settings menu asks
-    // StandalonePluginHolder for the audio device dialog directly.
+    // Native title bars drop JUCE's Options button; the Settings menu opens the audio
+    // dialog instead.
 }
 
 void PluginEditor::offerPresetFolderOnFirstRun()
@@ -1212,18 +1273,14 @@ void PluginEditor::offerPresetFolderOnFirstRun()
     if (presets.hasDirectory() || presets.hasBeenOffered())
         return;
 
-    // Only ever asked with a window in front of a person: editors get built
-    // where nobody is looking -- the VST3 manifest helper, the test harness --
-    // and the answer is remembered, so either would answer on the user's
-    // behalf.
+    // Only asked with a window on screen: editors are also built by the VST3 manifest
+    // helper and the tests, and the answer is remembered.
     jassert (isShowing());
 
-    // Marked when the question goes up, not when it comes back: closing the
-    // dialog without choosing is an answer.
+    // Marked when asked: closing the dialog counts as an answer.
     presets.markOffered();
 
-    // Built rather than asked for: juce::AlertWindow is drawn by the platform's
-    // look and feel and follows none of the palette.
+    // Themed (juce::AlertWindow ignores the palette).
     class FolderPrompt : public juce::Component
     {
        public:
@@ -1282,15 +1339,14 @@ void PluginEditor::offerPresetFolderOnFirstRun()
     auto* raw = prompt.get();
     options.content.setOwned (prompt.release());
 
-    // Async, because a plugin must never spin a modal loop inside its host.
+    // Async: never run a modal loop inside a host.
     auto* window = options.launchAsync();
+    openPrompt = window;
 
     const juce::Component::SafePointer<PluginEditor> safe (this);
 
-    // exitModalState and nothing else: launchAsync sets deleteWhenDismissed, so
-    // the window deletes itself once the queue unwinds and deleting it here too
-    // is a double free. SafePointer for the same reason -- between the click and
-    // the callback it may already have gone.
+    // exitModalState only: the window deletes itself (deleteWhenDismissed). SafePointer,
+    // since it may be gone by the callback.
     const juce::Component::SafePointer<juce::DialogWindow> dialog (window);
 
     raw->choose.onClick = [safe, dialog]
@@ -1310,18 +1366,190 @@ void PluginEditor::offerPresetFolderOnFirstRun()
 }
 
 //==============================================================================
+juce::DialogWindow* PluginEditor::launchPrompt (const juce::String& title, std::unique_ptr<juce::Component> content)
+{
+    juce::DialogWindow::LaunchOptions options;
+    options.dialogTitle = title;
+    options.dialogBackgroundColour = Celine::Theme::chrome();
+    options.escapeKeyTriggersCloseButton = true;
+    options.useNativeTitleBar = true;
+    options.resizable = false;
+    options.content.setOwned (content.release());
+
+    // Async, and the window deletes itself, so close with exitModalState().
+    auto* window = options.launchAsync();
+    openPrompt = window;
+    return window;
+}
+
+void PluginEditor::offerUpdateChecksOnFirstRun()
+{
+    UpdateCheck::Preferences preferences;
+
+    if (preferences.hasBeenOffered())
+        return;
+
+    // Only with a window on screen, marked when asked (see the preset folder question).
+    // Closing it leaves the checks off.
+    jassert (isShowing());
+    preferences.markOffered();
+
+    const auto name = PresetLibrary::getProductName();
+
+    auto prompt = std::make_unique<ChoicePrompt> (
+        lookAndFeel,
+        "Check for a newer version of " + name + " when it starts?\n\n"
+            "Once per launch, " + name + " asks GitHub for its newest release and tells "
+            "you if it is newer than the one you have. Nothing about you or your "
+            "sessions is sent.\n\n"
+            "You can change this later in the Settings menu.",
+        juce::StringArray { "Check for updates", "No thanks" });
+
+    auto* raw = prompt.get();
+    const juce::Component::SafePointer<juce::DialogWindow> dialog (launchPrompt (name + " updates", std::move (prompt)));
+    const juce::Component::SafePointer<PluginEditor> safe (this);
+
+    raw->onChoice = [safe, dialog] (int choice)
+    {
+        if (dialog != nullptr)
+            dialog->exitModalState (0);
+
+        if (choice != 0)
+            return;
+
+        UpdateCheck::Preferences().setEnabled (true);
+
+        // Check this launch too.
+        if (safe != nullptr)
+            safe->startUpdateCheckIfEnabled();
+    };
+}
+
+void PluginEditor::startUpdateCheckIfEnabled()
+{
+    // Already checked this launch, or turned off.
+    if (UpdateCheck::Session::hasStarted() || ! UpdateCheck::Preferences().isEnabled())
+        return;
+
+    UpdateCheck::Session::startIfNeeded();
+}
+
+void PluginEditor::announceUpdate (const juce::String& version)
+{
+    // Turned off in another window meanwhile.
+    if (! UpdateCheck::Preferences().isEnabled())
+        return;
+
+    const auto name = PresetLibrary::getProductName();
+
+    auto prompt = std::make_unique<ChoicePrompt> (
+        lookAndFeel,
+        "A new update is available.\n\n"
+            + name + " " + version + " is out. You have " + UpdateCheck::installedVersion() + ".",
+        juce::StringArray { "Download", "Remind me later", "Turn off update checks" });
+
+    auto* raw = prompt.get();
+    const juce::Component::SafePointer<juce::DialogWindow> dialog (launchPrompt (name + " update", std::move (prompt)));
+    const juce::Component::SafePointer<PluginEditor> safe (this);
+
+    raw->onChoice = [safe, dialog] (int choice)
+    {
+        if (dialog != nullptr)
+            dialog->exitModalState (0);
+
+        if (choice == 0)
+        {
+            // The releases page: the right download depends on the machine.
+            UpdateCheck::releasesPage().launchInDefaultBrowser();
+        }
+        else if (choice == 2)
+        {
+            UpdateCheck::Preferences().setEnabled (false);
+
+            if (safe != nullptr)
+                safe->setStatus ("Update checks turned off. Turn them back on from the Settings menu.", false);
+        }
+
+        // "Remind me later" does nothing: the next launch asks again.
+    };
+}
+
+//==============================================================================
 juce::StandalonePluginHolder* PluginEditor::standalonePluginHolder()
 {
     return juce::StandalonePluginHolder::getInstance();
 }
 
+namespace
+{
+    const juce::String levelsInDbuKey { "levelsInDbu" };
+    const juce::String inspectorShortcutsKey { "inspectorShortcuts" };
+}
+
+bool PluginEditor::inspectorShortcutsShown()
+{
+    const juce::PropertiesFile file (PresetLibrary().getSettingsFile(), PresetLibrary::getSettingsOptions());
+    return file.getBoolValue (inspectorShortcutsKey, true);
+}
+
+void PluginEditor::setInspectorShortcutsShown (bool shown)
+{
+    juce::PropertiesFile file (PresetLibrary().getSettingsFile(), PresetLibrary::getSettingsOptions());
+    file.setValue (inspectorShortcutsKey, shown);
+    file.saveIfNeeded();
+}
+
+bool PluginEditor::levelsShownInDbu()
+{
+    // Opened for each read and write, since every instance shares the file.
+    const juce::PropertiesFile file (PresetLibrary().getSettingsFile(), PresetLibrary::getSettingsOptions());
+    return file.getBoolValue (levelsInDbuKey, false);
+}
+
+void PluginEditor::setLevelsShownInDbu (bool inDbu)
+{
+    juce::PropertiesFile file (PresetLibrary().getSettingsFile(), PresetLibrary::getSettingsOptions());
+    file.setValue (levelsInDbuKey, inDbu);
+    file.saveIfNeeded();
+}
+
+void PluginEditor::applyLevelReadouts()
+{
+    using Strip = Celine::ControlStrip;
+
+    // Accepts the value with or without its unit.
+    const auto number = [] (const juce::String& text) { return text.getDoubleValue(); };
+
+    if (levelsShownInDbu())
+    {
+        Strip::showValueBelow (inputSlider,
+                               [] (double gain) { return Strip::formatDbu (PluginProcessor::inputGainToDbu (gain)); },
+                               [number] (const juce::String& text)
+                               { return number (text) - PluginProcessor::fullScaleSineDbu(); });
+        Strip::showValueBelow (outputSlider,
+                               [] (double gain) { return Strip::formatDbu (PluginProcessor::outputGainToDbu (gain)); },
+                               [number] (const juce::String& text)
+                               { return PluginProcessor::fullScaleSineDbu() - number (text); });
+
+        inputSlider.setTooltip ("Input level, as the dBu a full-scale sine reaches the circuit at");
+        outputSlider.setTooltip ("Output level, as the dBu at the circuit's output that comes out at full scale");
+        return;
+    }
+
+    for (auto* slider : { &inputSlider, &outputSlider })
+        Strip::showValueBelow (*slider, Strip::formatDecibels, number);
+
+    inputSlider.setTooltip ("Input level");
+    outputSlider.setTooltip ("Output level");
+}
+
 void PluginEditor::showSettingsMenu()
 {
-    // Accuracy and CPU, and nothing else.
+    // Settings: simulation, display, audio device, then the plugin itself.
     juce::PopupMenu menu;
 
-    //--------------------------------------------------------------------------
-    // Oversampling: the only real fix for aliasing.
+    // --------------------------------------------------------------------------
+    // Oversampling
     menu.addSectionHeader ("Oversampling");
 
     for (const int factor : PluginProcessor::oversamplingFactors)
@@ -1349,63 +1577,67 @@ void PluginEditor::showSettingsMenu()
         menu.addItem (item);
     }
 
+    // --------------------------------------------------------------------------
+    // Fast maths: not an accuracy trade; whether it helps depends on the platform.
     menu.addSeparator();
-
-    struct Toggle
-    {
-        const char* name;
-        bool SchematicModel::BuildOptions::* member;
-    };
-
-    const auto addToggles = [this, &menu] (const Toggle* toggles, size_t count)
-    {
-        for (size_t i = 0; i < count; ++i)
-        {
-            const auto member = toggles[i].member;
-
-            juce::PopupMenu::Item item (toggles[i].name);
-            item.isTicked = processorRef.buildOptions.*member;
-            item.setAction ([this, member, name = juce::String (toggles[i].name)]
-            {
-                auto& option = processorRef.buildOptions.*member;
-                option = ! option;
-
-                // All of them change what the matrix contains or how it is
-                // solved, so they need the circuit built again rather than a
-                // live re-stamp.
-                rebuildCircuit();
-                setStatus (name + (option ? " on" : " off"), false);
-            });
-
-            menu.addItem (item);
-        }
-    };
-
-    //--------------------------------------------------------------------------
-    // All accurate by default: this section is what you give up to save CPU.
     menu.addSectionHeader ("Performance");
 
-    const Toggle performanceToggles[] = {
-        { "Model valve interelectrode capacitance",
-          &SchematicModel::BuildOptions::interelectrodeCapacitance },
-        { "Model semiconductor junction capacitance",
-          &SchematicModel::BuildOptions::transistorJunctionCapacitance },
-        { "Model transistor Early effect",
-          &SchematicModel::BuildOptions::transistorEarlyEffect },
-        { "Fast exp / log / pow",
-          &SchematicModel::BuildOptions::fastMath },
-        { "Predict the Newton convergence starting point",
-          &SchematicModel::BuildOptions::predictNewtonSeed },
-    };
+    juce::PopupMenu::Item fastMath ("Fast exp / log / pow");
+    fastMath.isTicked = processorRef.buildOptions.fastMath;
+    fastMath.setAction ([this]
+    {
+        auto& option = processorRef.buildOptions.fastMath;
+        option = ! option;
 
-    addToggles (performanceToggles, std::size (performanceToggles));
+        // Set at build time in the engine, so it needs a rebuild.
+        rebuildCircuit();
+        setStatus (option ? juce::String ("Fast exp / log / pow on.") : juce::String ("Fast exp / log / pow off."), false);
+    });
+    menu.addItem (fastMath);
 
-    // Standalone only: in a host the device is the host's business. Straight to
-    // the dialog rather than through JUCE's Options button, whose menu of four
-    // is three things nobody clicking this is asking for.
+    // --------------------------------------------------------------------------
+    // Level display: gain, or dBu calibration levels.
+    menu.addSeparator();
+    menu.addSectionHeader ("Levels");
+
+    juce::PopupMenu::Item dbu ("Show input and output in dBu");
+    dbu.isTicked = levelsShownInDbu();
+    dbu.setAction ([this, wasOn = dbu.isTicked]
+    {
+        setLevelsShownInDbu (! wasOn);
+        applyLevelReadouts();
+
+        setStatus (wasOn ? juce::String ("Input and output shown as gain in dB.")
+                         : juce::String ("Input and output shown in dBu: the level of a full-scale sine at the circuit. "
+                                         "These are the calibration levels for a capture rendered here."),
+                   false);
+    });
+    menu.addItem (dbu);
+
+    // --------------------------------------------------------------------------
+    // Whether the inspector shows the shortcut list when nothing is selected.
+    menu.addSeparator();
+    menu.addSectionHeader ("Inspector");
+
+    juce::PopupMenu::Item shortcuts ("Show inspector when nothing is selected");
+    shortcuts.isTicked = inspectorShortcutsShown();
+    shortcuts.setAction ([this, wasOn = shortcuts.isTicked]
+    {
+        setInspectorShortcutsShown (! wasOn);
+        inspector.setShortcutsShown (! wasOn);
+
+        setStatus (wasOn ? juce::String ("The inspector now appears only while a part is selected.")
+                         : juce::String ("The inspector shows the shortcuts when nothing is selected."),
+                   false);
+    });
+    menu.addItem (shortcuts);
+
+    // --------------------------------------------------------------------------
+    // Standalone only: open the audio device dialog directly.
     if (auto* holder = standalonePluginHolder())
     {
         menu.addSeparator();
+        menu.addSectionHeader ("Audio");
 
         juce::PopupMenu::Item audio ("Audio / MIDI settings" + ellipsis);
         audio.setAction ([holder] { holder->showAudioSettingsDialog(); });
@@ -1413,9 +1645,31 @@ void PluginEditor::showSettingsMenu()
         menu.addItem (audio);
     }
 
-    // Every build, not the standalone only: in a host this is the only route to
-    // the licence notice.
+    // --------------------------------------------------------------------------
+    // About, in every build (in a host it is the only route to the licence notice).
     menu.addSeparator();
+    menu.addSectionHeader (PresetLibrary::getProductName());
+
+    // Whether to check for updates at launch.
+    juce::PopupMenu::Item updates ("Check for updates at launch");
+    updates.isTicked = UpdateCheck::Preferences().isEnabled();
+    updates.setAction ([this, wasOn = updates.isTicked]
+    {
+        UpdateCheck::Preferences().setEnabled (! wasOn);
+
+        if (wasOn)
+        {
+            setStatus ("Update checks off.", false);
+            return;
+        }
+
+        // Check this launch, if not done already.
+        setStatus ("Update checks on. " + PresetLibrary::getProductName()
+                       + " will look for a newer version once each time it starts.",
+                   false);
+        startUpdateCheckIfEnabled();
+    });
+    menu.addItem (updates);
 
     juce::PopupMenu::Item theme ("Theme" + ellipsis);
     theme.setAction ([this] { Celine::showThemeWindow (this); });
@@ -1425,7 +1679,7 @@ void PluginEditor::showSettingsMenu()
     about.setAction ([this] { showAboutDialog(); });
     menu.addItem (about);
 
-    // See showPresetsMenu: a menu has no parent to inherit from.
+    // A popup menu has no parent, so set its look and feel explicitly.
     menu.setLookAndFeel (&lookAndFeel);
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (settingsButton.get()));
 }
@@ -1442,31 +1696,24 @@ void PluginEditor::refreshRebuildButtonColour()
 
 void PluginEditor::applyColours()
 {
-    // Bypass shouts in red where every other armed control wears the theme's armed
-    // colour. Set here rather than once at construction, so a theme change moves it.
+    // Bypass is red; set here so theme changes reach it.
     if (bypassButton != nullptr)
         bypassButton->setActiveColour (Celine::Theme::danger());
 
-    // Re-read from the binary rather than re-tinted in place. Assets::tint writes the
-    // fill into the drawable, so a second pass would be colouring the result of the
-    // first rather than the artwork -- which is how a mark ends up stuck on whatever
-    // colour it was first given.
+    // Re-read from the binary: Assets::tint is destructive, so re-tinting would tint the
+    // previous result.
     logo = Celine::Assets::drawable ("logo.svg");
 
-    // headerText(), which is every white mark in the chrome: this logo and the glyph in
-    // each toolbar button. They are meant to look like one another, so they are one
-    // colour rather than two that have to be set to the same value.
+    // headerText(): every white mark in the chrome shares it.
     if (logo != nullptr)
         Celine::Assets::tint (*logo, Celine::Theme::headerText());
 
-    // The one dropdown on a light panel, so it is coloured here rather than in the look
-    // and feel the inspector's boxes share.
+    // The one dropdown on a light panel.
     channelModeBox.setColour (juce::ComboBox::backgroundColourId, Celine::Theme::accent());
     channelModeBox.setColour (juce::ComboBox::textColourId, Celine::Theme::textOnPanel());
     channelModeBox.setColour (juce::ComboBox::arrowColourId, Celine::Theme::textOnPanel());
 
-    // The bottom band stands on the light panel too, so its labels take the panel's ink
-    // rather than the chrome's.
+    // The bottom band is on the light panel: use the panel's ink.
     for (auto* label : { &inputLabel, &outputLabel, &channelModeLabel })
         label->setColour (juce::Label::textColourId, Celine::Theme::textOnPanel());
 
@@ -1475,19 +1722,13 @@ void PluginEditor::applyColours()
 
 void PluginEditor::changeListenerCallback (juce::ChangeBroadcaster*)
 {
-    // First, because applyColours below reads colours back out of it: the rebuild
-    // button's idle fill is the look and feel's own button colour, and asking before
-    // this ran would answer with the colour the theme is replacing.
-    //
-    // Everything JUCE draws for us is *told* its colours, so the look and feel has to
-    // re-read them before anything repaints -- see PluginLookAndFeel::applyPalette.
+    // First: applyColours reads colours back out of it. Re-reads every colour JUCE was
+    // told (see PluginLookAndFeel::applyPalette).
     lookAndFeel.applyPalette();
 
     applyColours();
 
-    // And every child that took a colour once and kept it gets a chance to take it
-    // again. JUCE walks the tree for us; a control that snapshots colours says so by
-    // overriding lookAndFeelChanged().
+    // Let every child that cached a colour take it again (lookAndFeelChanged()).
     sendLookAndFeelChange();
 
     repaint();
@@ -1495,49 +1736,22 @@ void PluginEditor::changeListenerCallback (juce::ChangeBroadcaster*)
 
 void PluginEditor::showAboutDialog()
 {
-    // The house window, shared with the other Céline plugins. What it says about this
-    // one comes from ProductInfo.h -- the tagline, the wordmark, and the notices this
-    // plugin owes on its own account.
+    // The shared About window; this plugin's content comes from ProductInfo.h.
     showAboutWindow (this);
 }
 
-//==============================================================================
-//==============================================================================
+// ==============================================================================
 void PluginEditor::paint (juce::Graphics& g)
 {
-    // The frame, which in this window is one colour from the toolbar down the rulers to
-    // the inspector. headerBackground() rather than chrome(): the house keeps the band a
-    // toolbar sits in apart from the ground a popup is built on, and the About sheet and
-    // the theme editor are the popups. The two ship at the same aubergine, so this is a
-    // change of name rather than of colour -- but a theme can now move the frame without
-    // taking every dialog with it.
+    // The frame: one colour from the toolbar down the rulers to the inspector.
     g.fillAll (Celine::Theme::headerBackground());
 
-    // drawWithin centres the artwork's *viewBox*, and the wordmark's ink is not
-    // centred in its own -- there is far more empty space above the glyphs than
-    // below. Placed off getDrawableBounds() instead, or it sits visibly high.
-    // The bottom band. Painted by the editor because it is wider than the
-    // ControlStrip child that sits in the middle of it -- see controlBandBounds.
-    if (! controlBandBounds.isEmpty())
-    {
-        g.setColour (Celine::Theme::panel());
-        g.fillRect (controlBandBounds);
-    }
-
-    // The shared housing for undo and redo, with the divider the design puts
-    // between them. Drawn here rather than by either button, because it belongs
-    // to the pair and not to one of them.
+    // The shared housing for undo and redo, with a divider between them.
     if (! undoRedoHousing.isEmpty())
     {
         const auto housing = undoRedoHousing.toFloat().reduced (Celine::Theme::borderWidth * 0.5f);
 
-        // Fill only, like every other button in the row. This is the frame those two
-        // buttons do not draw for themselves, and it used to carry a rule as well --
-        // which made the pair the one outlined thing in a toolbar of filled ones.
-        //
-        // Dimmed with the pair rather than outlined: either one being usable keeps it
-        // lit, because the housing says "this group does something" and undo alone is
-        // enough for that.
+        // Fill only, dimmed when neither undo nor redo is available.
         g.setColour (history.canUndo() || history.canRedo()
                          ? Celine::Theme::button()
                          : Celine::Theme::button().withMultipliedAlpha (0.5f));
@@ -1553,13 +1767,11 @@ void PluginEditor::paint (juce::Graphics& g)
 void PluginEditor::layOutToolbar (juce::Rectangle<int>& area)
 {
 
-    //--------------------------------------------------------------------------
+    // --------------------------------------------------------------------------
     // Toolbar
     auto toolbar = area.removeFromTop (Celine::Theme::toolbarHeight).reduced (6, 6);
 
-    // The design's grid: every button 33 square on a 40px pitch, so the row is
-    // one rhythm from end to end. Groups are separated by a wider gap rather
-    // than by a divider.
+    // Every button 33 px square on a 40 px pitch; groups separated by a wider gap.
     const int size = Celine::Theme::buttonSize;
     const int gap = Celine::Theme::buttonGap;
     const int groupGap = 16;
@@ -1570,30 +1782,24 @@ void PluginEditor::layOutToolbar (juce::Rectangle<int>& area)
         toolbar.removeFromLeft (gap);
     };
 
-    // One unbroken pitch from Select to Redo. The design does not divide them:
-    // the pointer, the bin and the six actions are all "do this to what is
-    // already on the sheet", and a gap in the middle would claim a distinction
-    // that isn't there.
+    // One unbroken pitch from Select to Redo.
     place (*selectToolButton);
     place (*deleteToolButton);
 
-    // Mirror, flip, rotate, copy -- the design's order, which puts the three
-    // that turn a part together and the one that makes another one last.
+    // Mirror, flip, rotate, copy.
     for (const auto action : { Action::Mirror, Action::Flip, Action::Rotate, Action::Copy })
         place (actionButton (action));
 
-    // Undo and redo abut inside one housing, which the editor paints behind
-    // them -- so no gap between the pair and no frame on either.
+    // Undo and redo abut inside one housing painted by the editor.
     undoRedoHousing = toolbar.removeFromLeft (size * 2).withSizeKeepingCentre (size * 2, size);
     actionButton (Action::Undo).setBounds (undoRedoHousing.withWidth (size));
     actionButton (Action::Redo).setBounds (undoRedoHousing.withTrimmedLeft (size));
 
-    //--------------------------------------------------------------------------
+    // --------------------------------------------------------------------------
     // The right-hand cluster, laid out from the far corner inwards.
     if (logo != nullptr)
     {
-        // A wider margin than the buttons get, because the wordmark is the one
-        // thing in the row that is not a control and reads better with air.
+        // A wider margin beside the wordmark.
         toolbar.removeFromRight (10);
 
         const auto ink = logo->getDrawableBounds();
@@ -1611,34 +1817,20 @@ void PluginEditor::layOutToolbar (juce::Rectangle<int>& area)
     toolbar.removeFromRight (gap);
     bypassButton->setBounds (toolbar.removeFromRight (size).withSizeKeepingCentre (size, size));
 
-    //--------------------------------------------------------------------------
-    // Save, Load and the preset field are one group and sit *with* the field
-    // rather than out at the end of the action row: all three are about which
-    // file the sheet came from, and the design puts them together in the middle
-    // of the bar. Centred in whatever is left between the two end groups, which
-    // lands them where the mockup draws them and keeps them there as the window
-    // is resized.
+    // --------------------------------------------------------------------------
+    // Save, Load, the preset field and Import, centred between the two end groups.
     {
-        // Whatever is genuinely left between the two end groups, and never more:
-        // a floor here is a width the toolbar cannot always honour, and forcing
-        // one slid the overflow out under the bypass button.
-        //
-        // The gap below is **the number to change if this looks wrong**. It
-        // comes off before the field is sized, because the field absorbs it --
-        // sized first, it gets truncated by removeFromLeft instead.
+        // Only what is left between the end groups, never more. Change the gap below if this
+        // looks wrong: it comes off before the field is sized.
         const int sideMargin = groupGap - gap;
 
-        // Three buttons stand around the field now, not two: Save and Load
-        // before it, Import after. All three are "which drawing am I working
-        // on", and Import is the one that answers "both of them".
+        // Save and Load before the field, Import after.
         constexpr int buttonsInGroup = 3;
         const int available = toolbar.getWidth() - buttonsInGroup * (size + gap) - 2 * sideMargin;
         const int fieldWidth = juce::jlimit (0, Celine::Theme::presetWidth, available);
         const int groupWidth = buttonsInGroup * (size + gap) + fieldWidth;
 
-        // Below a certain width the field is a sliver that reads as a rendering
-        // fault rather than as a control. The three buttons stay -- they are
-        // square and still usable -- and the field comes back when there is room.
+        // Hide the field when too narrow to read; the buttons stay.
         presetsButton.setVisible (fieldWidth >= 56);
 
         toolbar.removeFromLeft (juce::jmax (sideMargin, (toolbar.getWidth() - groupWidth) / 2));
@@ -1648,41 +1840,84 @@ void PluginEditor::layOutToolbar (juce::Rectangle<int>& area)
         presetsButton.setBounds (toolbar.removeFromLeft (fieldWidth)
                                      .withSizeKeepingCentre (fieldWidth, size));
 
-        // Only the gap: removeFromLeft above already took the field's own room,
-        // and took nothing when it was too narrow to show.
+        // The folder icon at the field's right end; the field keeps that space clear.
+        {
+            constexpr int inset = 3;
+            const auto end = presetsButton.getBounds().reduced (inset);
+            const int icon = end.getHeight();
+
+            presetFolderButton->setBounds (end.withLeft (end.getRight() - icon));
+            presetFolderButton->setVisible (presetsButton.isVisible());
+            presetsButton.setTrailingSpace (icon + inset);
+            presetLibrary.setFieldTrailingSpace (icon + 2 * inset);
+        }
+
+        // Only the gap: removeFromLeft above already took the field's room.
         toolbar.removeFromLeft (gap);
         place (*importButton);
     }
 
-    //--------------------------------------------------------------------------
+    // --------------------------------------------------------------------------
     // Control strip along the bottom
 }
 
 void PluginEditor::layOutPanels (juce::Rectangle<int> area)
 {
-    controlBandBounds = area.removeFromBottom (Celine::ControlStrip::preferredHeight);
-    auto strip = controlBandBounds.reduced (6, 4);
-
-    // Caption over control, in the strip's own proportions -- see
-    // ControlStrip::layOutCell, which the drawn knobs go through, so the fixed
-    // pair and the circuit's own knobs sit on one baseline.
     using Strip = Celine::ControlStrip;
+    constexpr int margin = Celine::Theme::floatingMargin;
 
+    // The sheet takes everything below the toolbar; the band floats over its bottom edge.
+    canvas.setBounds (area);
+
+    bandRow = area.withTrimmedLeft (Celine::SchematicCanvas::leftRulerThickness)
+                  .reduced (margin)
+                  .removeFromBottom (Strip::preferredHeight);
+    bandTop = bandRow.getY();
+
+    // The panels first: the band's end bars line up under them.
+    layOutFloatingPanels();
+}
+
+void PluginEditor::layOutBand()
+{
+    using Strip = Celine::ControlStrip;
+    constexpr int margin = Celine::Theme::floatingMargin;
+
+    const auto area = canvas.getBounds();
+    auto row = bandRow;
+
+    if (area.isEmpty() || row.isEmpty())
+        return;
+
+    // Caption over control, as ControlStrip::layOutCell does, so all knobs share a
+    // baseline.
     auto placeKnob = [] (juce::Rectangle<int> cell, juce::Slider& knob, juce::Label& label)
     {
         knob.setBounds (Strip::layOutCell (cell, &label, Strip::knobSize + Strip::valueHeight)
                             .withSizeKeepingCentre (Strip::cellWidth - 4, Strip::knobSize + Strip::valueHeight));
     };
 
-    // INPUT hard left, VOLUME hard right, the circuit's own knobs between: it
-    // reads as signal flow, and bracketing the drawn controls says that neither
-    // is part of any circuit. The left column is as wide as the palette above
-    // it, which puts INPUT over the palette's centre line and starts the drawn
-    // knobs at the sheet's left edge.
-    placeKnob (strip.removeFromLeft (paletteWidth - 6), inputSlider, inputLabel);
+    // INPUT on a bar at the left, ending where the folded palette ends; OUTPUT and the
+    // channel picker on a bar at the right, starting under the inspector. Never narrower
+    // than their contents, which sit against the inner edge at the strip's padding;
+    // spare width goes to the window edge.
+    const int inputContent = Strip::cellWidth + 2 * Strip::padding;
+    // The folded palette's edge (not its tab), folded or not, so opening the palette
+    // doesn't move the band.
+    const int paletteEdge = palette.getX() + Celine::ElementPalette::getFoldedBodyWidth();
+    const int inputRight = juce::jmax (row.getX() + inputContent, paletteEdge);
+    const auto inputArea = row.removeFromLeft (juce::jmin (row.getWidth(), inputRight - row.getX()));
+    inputBar.setBounds (inputArea.withLeft (area.getX()));
+    placeKnob (inputArea.withTrimmedLeft (inputArea.getWidth() - inputContent).reduced (Strip::padding, 4),
+               inputSlider, inputLabel);
 
     constexpr int channelsWidth = Strip::comboWidth + 12;
-    auto fixed = strip.removeFromRight (Strip::cellWidth + channelsWidth);
+    const int outputContent = Strip::cellWidth + channelsWidth + 2 * Strip::padding;
+    // The inspector's left edge, whether or not it is showing, so the bar never moves.
+    const int outputLeft = juce::jmin (row.getRight() - outputContent, inspector.getX());
+    const auto outputArea = row.removeFromRight (juce::jlimit (0, row.getWidth(), row.getRight() - outputLeft));
+    outputBar.setBounds (outputArea.withRight (area.getRight()));
+    auto fixed = outputArea.withWidth (outputContent).reduced (Strip::padding, 4);
 
     channelModeBox.setBounds (
         Strip::layOutCell (fixed.removeFromRight (channelsWidth), &channelModeLabel,
@@ -1691,37 +1926,120 @@ void PluginEditor::layOutPanels (juce::Rectangle<int> area)
 
     placeKnob (fixed, outputSlider, outputLabel);
 
-    // Whatever is left in the middle. The strip lays its own knobs out, and
-    // scrolls them when there are more than fit.
-    controlStrip.setBounds (strip);
+    // The circuit's controls: a bar as wide as they are, centred on the window if there
+    // is room, else between the ends; it scrolls when full. None if there are no
+    // controls.
+    const auto between = row.reduced (margin, 0);
+    const int width = juce::jmin (controlStrip.getPreferredWidth(), between.getWidth());
+    const int centred = area.getCentreX() - width / 2;
+    const int x = juce::jlimit (between.getX(), juce::jmax (between.getX(), between.getRight() - width), centred);
 
-    //--------------------------------------------------------------------------
-    // Palette, canvas, inspector
-    palette.setBounds (area.removeFromLeft (paletteWidth));
-    // Right-hand column: the inspector on top, the console filling the rest.
-    auto rightColumn = area.removeFromRight (inspectorWidth);
+    controlStrip.setVisible (! controlStrip.isEmpty() && width > 0);
+    controlStrip.setBounds (x, row.getY(), juce::jmax (0, width), row.getHeight());
+}
 
-    // The inspector gets what it needs and the console takes the rest -- but the
-    // console never gets less than a few rows, which is what the second term
-    // buys on a short window. Halving the column instead, as this did, put the
-    // console's top a hundred pixels above where the design draws it on any
-    // window tall enough for the inspector to fit.
-    inspector.setBounds (rightColumn.removeFromTop (
-        juce::jmin (inspectorHeight, juce::jmax (120, rightColumn.getHeight() - 160))));
-    console.setBounds (rightColumn);
-    canvas.setBounds (area);
+void PluginEditor::layOutFloatingPanels()
+{
+    const auto sheet = canvas.getBounds();
+
+    if (sheet.isEmpty())
+        return;
+
+    constexpr int margin = Celine::Theme::floatingMargin;
+
+    // The console always keeps room for one line.
+    constexpr int consoleLine = 43;
+
+    // The panels' area: the sheet less its rulers and a margin.
+    const auto room = sheet.withTrimmedTop (Celine::SchematicCanvas::topRulerThickness)
+                          .withTrimmedLeft (Celine::SchematicCanvas::leftRulerThickness)
+                          .reduced (margin)
+                          .withBottom (bandTop - margin);
+
+    if (room.getWidth() <= 0 || room.getHeight() <= 0)
+    {
+        layOutBand();
+        return;
+    }
+
+    // --------------------------------------------------------------------------
+    // The palette down the left and the inspector down the right, both from the top.
+    const auto wanted = inspector.getPreferredSize();
+    const auto tallPalette = palette.getPreferredSize (room.getHeight());
+    const int paletteFootprint = juce::jmin (tallPalette.x, room.getWidth() / 2);
+
+    const int columnWidth = juce::jmin (room.getRight() - (room.getX() + paletteFootprint) - margin,
+                                        Celine::Theme::inspectorWidth);
+    const auto column = room.withTrimmedLeft (room.getWidth() - columnWidth);
+
+    // The console goes between the two; the minimum window width guarantees room. If a
+    // host ignores the minimum, the palette stops short and the console goes under it.
+    const int betweenWidth = column.getX() - margin - (room.getX() + paletteFootprint + margin);
+    const bool consoleBetween = betweenWidth >= Celine::MessageConsole::minimumWidth;
+
+    const auto paletteSize = consoleBetween ? tallPalette
+                                            : palette.getPreferredSize (room.getHeight() - margin - consoleLine);
+    // Both centred vertically in their room.
+    const int paletteRoom = consoleBetween ? room.getHeight() : room.getHeight() - margin - consoleLine;
+    palette.setBounds (room.getX(), room.getY() + juce::jmax (0, (paletteRoom - paletteSize.y) / 2),
+                       juce::jmin (paletteSize.x, room.getWidth() / 2), paletteSize.y);
+
+    const int inspectorWidth = juce::jmin (wanted.x, column.getWidth());
+    const int inspectorHeight = juce::jmin (wanted.y, column.getHeight());
+    inspector.setBounds (column.getRight() - inspectorWidth, column.getY() + (column.getHeight() - inspectorHeight) / 2,
+                         inspectorWidth, inspectorHeight);
+
+    // --------------------------------------------------------------------------
+    // The console at the top, as big as its messages, centred on the sheet if the panels
+    // allow, else between them.
+    {
+        const auto span = consoleBetween ? room.withLeft (palette.getRight() + margin)
+                                                .withRight (column.getX() - margin)
+                                         : room.withRight (column.getX() - margin)
+                                                .withTop (palette.getBottom() + margin);
+
+        const auto size = console.getPreferredSize (span.getWidth());
+        const int width = juce::jmin (size.x, span.getWidth());
+        const int height = juce::jmin (size.y, span.getHeight(), juce::jmax (sheet.getHeight() / 3, consoleLine));
+
+        const int centre = sheet.getCentreX();
+        const int halfRoom = juce::jmin (centre - span.getX(), span.getRight() - centre);
+        const int x = width <= 2 * halfRoom ? centre - width / 2 : span.getCentreX() - width / 2;
+
+        // At the top between the panels, or under the palette in the fallback.
+        console.setBounds (x, consoleBetween ? room.getY() : room.getBottom() - height, width, height);
+    }
+
+    // --------------------------------------------------------------------------
+    // Fit-to-screen frames the drawing in what the palette and inspector leave
+    // uncovered (the console is ignored).
+    canvas.setFramingInsets ({ Celine::SchematicCanvas::topRulerThickness,
+                               palette.getRight() - sheet.getX(),
+                               sheet.getBottom() - bandTop,
+                               inspector.isVisible() ? sheet.getRight() - inspector.getX() : margin });
+
+    layOutBand();
+}
+
+int PluginEditor::narrowestWindow() const
+{
+    constexpr int margin = Celine::Theme::floatingMargin;
+
+    // The ruler, palette, console at its narrowest and the inspector, with margins.
+    const int floating = Celine::SchematicCanvas::leftRulerThickness
+                       + margin + palette.getMaximumWidth()
+                       + margin + Celine::MessageConsole::minimumWidth
+                       + margin + Celine::Theme::inspectorWidth + margin;
+
+    // Never narrower than the floor.
+    return juce::jmax (floating, smallestWidth);
 }
 
 void PluginEditor::resized()
 {
-    // Handed to the processor so the window comes back the size it was left.
-    // Recorded here rather than in the destructor because a host may save its
-    // session while the editor is still open.
-    //
-    // Only a size somebody could actually have left it at. A host is free to resize an
-    // editor it is putting away -- to nothing, or to whatever its own frame is before
-    // it lays out -- and recording that would overwrite the real size with a number the
-    // window can never open at, which is indistinguishable from never having saved it.
+    // Store the size for the next window, here since a host may save while the editor is
+    // open. Only sizes at or above the minimum: hosts may shrink an editor while closing
+    // it.
     if (getWidth() >= minimumWidth && getHeight() >= minimumHeight)
     {
         processorRef.editorWidth = getWidth();
@@ -1731,4 +2049,8 @@ void PluginEditor::resized()
     auto area = getLocalBounds();
     layOutToolbar (area);
     layOutPanels (area);
+
+    // Kept under the field.
+    if (isPresetLibraryShowing())
+        placePresetLibrary();
 }

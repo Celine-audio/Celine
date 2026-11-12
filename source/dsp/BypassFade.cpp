@@ -6,8 +6,8 @@ void BypassFade::prepare (int numChannels, int maxBlockSize, int maxDelaySamples
 
     dry.setSize (channels, juce::jmax (1, maxBlockSize));
 
-    // A power of two, so the read position wraps with a mask; one more than the longest
-    // delay, so a delay of exactly that still reads a sample that has been written.
+    // Power of two so the read position wraps with a mask, and one longer than the
+    // longest delay.
     const auto length = juce::nextPowerOfTwo (juce::jmax (1, maxDelaySamples) + 1);
     delayLines.assign ((size_t) channels, std::vector<float> ((size_t) length, 0.0f));
     mask = length - 1;
@@ -39,9 +39,7 @@ void BypassFade::pushDry (const juce::AudioBuffer<float>& input, int latencySamp
     }
     else if (delay != currentDelay)
     {
-        // A second change landing inside a fade restarts it from the delay it was
-        // heading for. That is a small step rather than none, but it takes two factor
-        // changes within fadeSeconds, which the menu cannot produce.
+        // A change during a fade restarts it from the delay it was heading for.
         previousDelay = currentDelay;
         currentDelay = delay;
         delayFadeRemaining = delayFadeLength;
@@ -56,7 +54,6 @@ void BypassFade::pushDry (const juce::AudioBuffer<float>& input, int latencySamp
         auto* out = dry.getWritePointer (ch);
         auto write = writeIndex;
 
-        // Every channel runs the same fade from the same point, so the image holds.
         auto remaining = delayFadeRemaining;
 
         for (int i = 0; i < numSamples; ++i)
@@ -93,7 +90,7 @@ void BypassFade::mix (juce::AudioBuffer<float>& processed, bool bypassed) noexce
 
     if (! wet.isSmoothing())
     {
-        // Settled: all processed needs nothing doing, and all dry is the copy.
+        // Settled: all processed needs nothing, all dry is the copy.
         if (! bypassed)
             return;
 
@@ -105,8 +102,6 @@ void BypassFade::mix (juce::AudioBuffer<float>& processed, bool bypassed) noexce
 
     for (int i = 0; i < numSamples; ++i)
     {
-        // One value per sample for every channel, so the image does not lean while the
-        // fade runs.
         const auto amount = wet.getNextValue();
 
         for (int ch = 0; ch < channels; ++ch)

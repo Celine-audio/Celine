@@ -7,16 +7,9 @@
 #include <cmath>
 #include <limits>
 
-/**
-    The things a host does that a plugin has to survive.
-
-    Not a list of what a well-behaved host does -- a list of what real ones actually do,
-    which is a different and longer list: block sizes that change without warning and
-    overrun what was prepared for, sample rates that change under a loaded plugin,
-    processBlock arriving before prepareToPlay, buffers full of denormals or NaN left by
-    whatever ran before, automation moving a parameter every block, and the editor
-    opening and closing while all of it happens.
-*/
+/** Things real hosts do that a plugin has to survive: changing and overrunning block
+    sizes, sample rate changes while loaded, processBlock before prepareToPlay, buffers of
+    denormals or NaN, per-block automation, and the editor opening and closing meanwhile. */
 namespace Stress
 {
     inline void fillNoise (juce::AudioBuffer<float>& buffer, juce::Random& random, float level = 0.25f)
@@ -33,9 +26,7 @@ namespace Stress
                 buffer.setSample (ch, i, value);
     }
 
-    /** True when every sample is a real number. NaN and infinity both fail: once either
-        reaches a filter with state, it stays there, and the track is silent-or-screaming
-        until the plugin is reloaded. */
+    /** True when every sample is finite. */
     inline bool isFinite (const juce::AudioBuffer<float>& buffer)
     {
         for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
@@ -60,9 +51,7 @@ namespace Stress
         return worst;
     }
 
-    /** The block sizes hosts really use, including the awkward ones: Pro Tools uses
-        powers of two, Live can hand out anything at all when the buffer is being
-        resized, and a host under load can overrun what it declared. */
+    /** Block sizes hosts really use, including odd ones and overruns. */
     inline const std::vector<int>& blockSizes()
     {
         static const std::vector<int> sizes { 1, 2, 3, 7, 16, 31, 32, 64, 65, 128, 127,

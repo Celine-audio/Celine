@@ -37,18 +37,14 @@ namespace
 TEST_CASE ("A block larger than the host declared is still processed correctly",
            "[processor][blocksize]")
 {
-    // Hosts are supposed to honour the size they declared in prepareToPlay, and
-    // mostly do. When one does not, the circuit must still run at the timestep
-    // it was prepared for -- oversampling makes that a factor of up to sixteen,
-    // so getting it wrong retunes every capacitor in the drawing.
+    // A block larger than declared must still run the circuit at the prepared timestep.
     constexpr double rate = 48000.0;
     constexpr int declared = 256;
 
     for (const int factor : PluginProcessor::oversamplingFactors)
     {
-        // The factor first, then prepare: prepareToPlay swaps straight in, where
-        // changing the factor afterwards dips through silence, and the two
-        // renders below have to start from the same place.
+        // Factor first, then prepare: prepareToPlay swaps in directly, so both renders start
+        // from the same state.
         PluginProcessor plugin;
         plugin.setOversamplingFactor (factor);
         plugin.prepareToPlay (rate, declared);
@@ -59,10 +55,9 @@ TEST_CASE ("A block larger than the host declared is still processed correctly",
         render (plugin, small, declared);
 
         plugin.prepareToPlay (rate, declared);
-        render (plugin, large, 2048);        // four times what it was told
+        render (plugin, large, 2048);        // four times the declared size
 
-        // Past the settling transient, the two have to agree: the same circuit
-        // saw the same samples at the same rate either way.
+        // After settling, both renders must agree.
         double worst = 0.0;
 
         for (int i = declared * 2; i < small.getNumSamples(); ++i)

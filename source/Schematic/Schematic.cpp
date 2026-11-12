@@ -9,16 +9,9 @@ namespace SchematicModel
 {
     namespace
     {
-        /** Gives every item a unique, strictly positive id, and returns the next
-            free one. Ids already valid and unique are left alone, so an ordinary
-            sheet round-trips unchanged.
-
-            Every lookup here -- findElement, findWire, and through them
-            selection, the inspector, ganged write-back, probe mapping -- returns
-            the *first* match, so two parts sharing an id leaves the second drawn
-            and audible but impossible to select, edit or delete. A hand-edited
-            or truncated file is exactly where that comes from. Id 0 is worse
-            still: it is also the "nothing selected" sentinel. */
+        /** Gives every item a unique, positive id and returns the next free one. Valid,
+            unique ids are kept. Lookups return the first match and 0 means "none", so
+            duplicate or zero ids from a damaged file must be fixed. */
         template <typename Item>
         int healIds(std::vector<Item>& items)
         {
@@ -37,9 +30,7 @@ namespace SchematicModel
             return next;
         }
 
-        /** Union-find over connection points. Small, and rebuilt from scratch
-            every time nets are extracted -- there is no incremental
-            connectivity to get out of step with the drawing. */
+        /** Union-find over connection points, rebuilt on every extraction. */
         struct DisjointSet
         {
             std::vector<int> parent;
@@ -54,7 +45,7 @@ namespace SchematicModel
             {
                 while (parent[static_cast<size_t>(i)] != i)
                 {
-                    // Path halving: keeps the trees flat without recursion.
+                    // Path halving.
                     parent[static_cast<size_t>(i)] = parent[static_cast<size_t>(parent[static_cast<size_t>(i)])];
                     i = parent[static_cast<size_t>(i)];
                 }
@@ -72,7 +63,7 @@ namespace SchematicModel
             }
         };
 
-        /** Orders grid points so they can key a std::map. */
+        /** Orders grid points for use as a std::map key. */
         struct PointLess
         {
             bool operator()(juce::Point<int> a, juce::Point<int> b) const noexcept
@@ -80,12 +71,9 @@ namespace SchematicModel
                 return a.y != b.y ? a.y < b.y : a.x < b.x;
             }
         };
-        /** Joins every registered point that lies along a wire to that wire --
-            pins dropped onto one, and wires ending partway along another.
-
-            Indexed by row and column first, for the reason findJunctions is:
-            unindexed it made extraction quadratic, 1.85 ms on a 400-part sheet
-            against 38 us on a 50-part one. */
+        /** Joins each registered point lying along a wire to that wire: pins on a wire, and
+            wire ends partway along another. Wires are indexed by row and column so this stays
+            near-linear. */
         void joinPointsLyingOnWires(DisjointSet& sets,
                                     const std::map<juce::Point<int>, int, PointLess>& pointIds,
                                     const std::vector<Wire>& wires)
@@ -109,8 +97,7 @@ namespace SchematicModel
                             sets.unite(wireSet, id);
                 };
 
-                // A zero-length wire counts as both, so this is two ifs and not
-                // an else -- dropping it from one index would lose a connection.
+                // A zero-length wire is both vertical and horizontal, hence two ifs.
                 if (wire.isVertical())
                     if (const auto column = byColumn.find(wire.a.x); column != byColumn.end())
                         joinAll(column->second);
@@ -175,14 +162,8 @@ namespace SchematicModel
 
     juce::Rectangle<int> Schematic::getElementBounds(const Element& element) const noexcept
     {
-        // Min and max by hand, not Rectangle::getUnion: a rectangle from two
-        // identical points is zero-sized, JUCE counts that as empty, and
-        // getUnion returns the *other* operand when either side is empty -- so
-        // unioning pin positions collapsed to a single pin.
-        //
-        // The centre is included because several symbols are drawn around it
-        // rather than between their pins. A Text note has no pins at all, so it
-        // spans what it reads, using the estimate the renderer draws with.
+        // Min/max by hand (Rectangle::getUnion ignores zero-sized rectangles). The centre is
+        // included because some symbols are drawn around it. A Text note spans its text.
         if (element.type == ElementType::Text)
         {
             const int halfWidth = element.getTextHalfWidth();
@@ -190,17 +171,11 @@ namespace SchematicModel
                                         halfWidth * 2 + 1, 3);
         }
 
-        // A Rectangle is its bounds -- exactly, and not expanded by a square
-        // like the parts below, since the outline is drawn on the edge and a
-        // frame that didn't sit on the line it draws would be visibly wrong.
+        // A Rectangle is exactly its bounds.
         if (element.type == ElementType::Rectangle)
             return element.getRectangleBounds();
 
-        // A Node is its tag, as wide as the name inside it -- the pin loop below
-        // would box it to three squares and leave most of a long name
-        // unclickable. Grown by one, like the Text note: getNodeBounds() is the
-        // *drawn* box, whose far edges are grid lines the tag is painted on and
-        // Rectangle::contains excludes.
+        // A Node is its tag, grown by one (Rectangle::contains excludes the far edges).
         if (element.type == ElementType::Node)
         {
             const auto tag = element.getNodeBounds();
@@ -219,18 +194,14 @@ namespace SchematicModel
             maxY = juce::jmax(maxY, p.y);
         }
 
-        // Grown by a square so the body between the pins is grabbable, and so a
-        // one-pin terminal is a target rather than a point.
+        // Grown by a square so the body and one-pin terminals are easy to click.
         return juce::Rectangle<int>(minX, minY, maxX - minX + 1, maxY - minY + 1).expanded(1);
     }
 
     bool Schematic::hitTest(const Element& element, juce::Point<int> gridPoint) const noexcept
     {
-        // A group box is grabbed by its edge. Its middle is full of other
-        // people's parts, and a box that swallowed every click inside it would
-        // make everything it rings unselectable -- the opposite of the point.
-        // The band is a square either side of the outline, so it stays grabbable
-        // at any zoom.
+        // A group box is grabbed by its outline (a square either side), so the parts inside
+        // stay clickable.
         if (element.type == ElementType::Rectangle)
         {
             const auto bounds = element.getRectangleBounds();
@@ -242,9 +213,7 @@ namespace SchematicModel
 
     int Schematic::findElementAt(juce::Point<int> gridPoint) const noexcept
     {
-        // Parts before boxes: a Rectangle is drawn behind everything, so it has
-        // to lose under the cursor too. This searches newest first, and a box is
-        // placed last.
+        // Parts first, then boxes, since boxes are drawn behind.
         for (const bool boxes : {false, true})
             for (auto it = elements.rbegin(); it != elements.rend(); ++it)
                 if ((it->type == ElementType::Rectangle) == boxes && hitTest(*it, gridPoint))
@@ -278,9 +247,7 @@ namespace SchematicModel
         for (const auto& element : elements)
             include(getElementBounds(element));
 
-        // A wire is a line, so its rectangle can be zero in one dimension.
-        // Expanded before it goes in, or a sheet of one straight wire unions an
-        // "empty" box and comes back with whatever it was unioned onto.
+        // Expanded first: a straight wire's rectangle has zero size in one dimension.
         for (const auto& wire : wires)
             include(juce::Rectangle<int>(wire.a, wire.b).expanded(1));
 
@@ -293,8 +260,7 @@ namespace SchematicModel
         arrived.elementIds.reserve(other.elements.size());
         arrived.wireIds.reserve(other.wires.size());
 
-        // Copied whole rather than through copyPropertiesTo, which leaves
-        // placement behind: an import keeps its layout and shifts as one.
+        // Copied whole, positions included, so an import keeps its layout.
         for (const auto& source : other.elements)
         {
             Element copy = source;
@@ -335,10 +301,7 @@ namespace SchematicModel
             return;
         }
 
-        // A diagonal drag becomes an L, across then down: two segments meeting
-        // at a corner, joined by the net extractor because they share an
-        // endpoint. Two ids as well, so either can be deleted on its own when
-        // the corner went the wrong way round.
+        // A diagonal drag becomes an L (across then down): two wires sharing the corner.
         const juce::Point<int> corner{to.x, from.y};
         wires.push_back({nextWireId++, from, corner});
         wires.push_back({nextWireId++, corner, to});
@@ -387,20 +350,12 @@ namespace SchematicModel
             auto& moving = end == 0 ? wire.a : wire.b;
             const auto anchor = end == 0 ? wire.b : wire.a;
 
-            // Only the coordinate running along the wire comes from the
-            // pointer; the other stays on the anchor, which keeps the wire
-            // axis-aligned however far off the line the mouse strays.
-            //
-            // isVertical rather than isHorizontal because a zero-length wire is
-            // both, and a file can carry one in: treating it as vertical picks
-            // an axis rather than leaving the drag doing nothing.
+            // Only the coordinate along the wire follows the pointer, keeping it straight. A
+            // zero-length wire is treated as vertical.
             auto wanted = wire.isVertical() ? juce::Point<int>(anchor.x, gridPoint.y)
                                             : juce::Point<int>(gridPoint.x, anchor.y);
 
-            // Anywhere along the line except onto the anchor. Dragged far
-            // enough the end passes through and the wire points the other way,
-            // which is the honest result. Landing *on* the anchor is refused: a
-            // zero-length wire is invisible and unclickable.
+            // The moving end may pass the anchor but not land on it.
             if (wanted == anchor || wanted == moving)
                 return false;
 
@@ -415,9 +370,7 @@ namespace SchematicModel
     {
         const auto before = wires.size();
 
-        // Two wires join when they run along the same line and their spans touch
-        // or overlap. Overlapping counts because a wire drawn over another is a
-        // duplicate, and the sheet plainly shows one wire.
+        // Collinear wires whose spans touch or overlap.
         const auto joinable = [](const Wire& x, const Wire& y)
         {
             if (x.isVertical() && y.isVertical() && x.a.x == y.a.x)
@@ -437,26 +390,10 @@ namespace SchematicModel
             return false;
         };
 
-        // Whether a point carries a connection that only exists because a wire
-        // ends there.
-        //
-        // Connectivity is mediated by *points*: extractNets registers pins and
-        // wire ends, and joins a wire to every registered point lying on it. So
-        // merging two collinear wires deletes the ends where they met, and if
-        // that was the only thing registering the point, every other wire
-        // through it comes loose.
-        //
-        // Which is how a four-way node fell apart. Merge the two horizontals and
-        // the verticals still end there, so the point survives. Merge the
-        // verticals too and nothing registers it: what is left is a long
-        // horizontal and a long vertical that merely cross, and a crossing is
-        // not a connection. The sheet looked identical and the circuit had come
-        // apart in the middle.
-        //
-        // A T still merges, because its stem *ends* at the seam and keeps the
-        // point registered whatever the bar does. So the question is not "is
-        // anything at the seam" but "does the seam survive as a registered
-        // point" -- and a wire merely passing through does not register one.
+        // Whether a point keeps a connection that exists only because a wire ends there.
+        // Nets are formed through registered points (pins and wire ends), so merging two
+        // wires removes the ends where they met; if nothing else registers that point, wires
+        // crossing it would disconnect. A wire merely passing through doesn't register it.
         const auto seamSurvives = [this](juce::Point<int> point, const Wire& x, const Wire& y)
         {
             for (const auto& element : elements)
@@ -471,8 +408,7 @@ namespace SchematicModel
             return false;
         };
 
-        // And nothing is stranded unless something was relying on the seam to
-        // reach these two in the first place.
+        // Whether some other wire relies on the seam to reach these two.
         const auto somethingRunsThrough = [this](juce::Point<int> point, const Wire& x, const Wire& y)
         {
             for (const auto& other : wires)
@@ -482,10 +418,7 @@ namespace SchematicModel
             return false;
         };
 
-        // The ends that stop being ends. For two collinear wires the merged span
-        // runs from the outermost pair, so anything strictly inside it is an end
-        // about to be dissolved -- one point for a touching pair, two for an
-        // overlapping one.
+        // The ends that disappear in a merge: those strictly inside the merged span.
         const auto endsLostByMerging = [](const Wire& x, const Wire& y,
                                           juce::Point<int> low, juce::Point<int> high)
         {
@@ -498,8 +431,7 @@ namespace SchematicModel
             return lost;
         };
 
-        // Until nothing more will join: one merge can bring the result into
-        // contact with a wire neither half reached.
+        // Repeat until nothing joins: one merge can create another.
         for (bool merged = true; merged;)
         {
             merged = false;
@@ -514,8 +446,7 @@ namespace SchematicModel
                     const auto& first = wires[i];
                     const auto& second = wires[j];
 
-                    // The span of both, which for collinear touching segments is
-                    // simply the outermost pair of ends.
+                    // The merged span: the outermost pair of ends.
                     const juce::Point<int> low{
                         juce::jmin(juce::jmin(first.a.x, first.b.x), juce::jmin(second.a.x, second.b.x)),
                         juce::jmin(juce::jmin(first.a.y, first.b.y), juce::jmin(second.a.y, second.b.y))};
@@ -523,8 +454,7 @@ namespace SchematicModel
                         juce::jmax(juce::jmax(first.a.x, first.b.x), juce::jmax(second.a.x, second.b.x)),
                         juce::jmax(juce::jmax(first.a.y, first.b.y), juce::jmax(second.a.y, second.b.y))};
 
-                    // Leave the pair alone if dissolving where they meet would
-                    // strand something that reached them through it.
+                    // Skip if merging would disconnect something at the seam.
                     {
                         bool stranding = false;
 
@@ -537,9 +467,7 @@ namespace SchematicModel
                             continue;
                     }
 
-                    // The survivor keeps the preferred id when it is in the
-                    // pair, so a wire being dragged stays selected; otherwise
-                    // the older wins, which keeps ids stable across an edit.
+                    // Keep the preferred id if it is in the pair, else the older id.
                     const int keep = (wires[j].id == preferredId) ? wires[j].id : wires[i].id;
 
                     wires[i].id = keep;
@@ -569,9 +497,8 @@ namespace SchematicModel
 
     std::vector<juce::Point<int>> Schematic::findJunctions() const
     {
-        // A dot is warranted where the connection is not obvious from the
-        // drawing: three or more wire ends at a point, or a wire ending partway
-        // along another.
+        // Junction dots: three or more wire ends at a point, or a wire ending partway along
+        // another.
         std::map<juce::Point<int>, int, PointLess> endCount;
 
         for (const auto& wire : wires)
@@ -580,10 +507,7 @@ namespace SchematicModel
             ++endCount[wire.b];
         }
 
-        // Wires indexed by the line they run along, which turns the T-junction
-        // search from quadratic into near-linear: a point can only sit inside a
-        // wire whose axis passes through it. Scanning every wire for every
-        // endpoint measured 634 us on a 400-part sheet, inside paint().
+        // Wires indexed by the line they run along, so the T-junction search is near-linear.
         std::map<int, std::vector<const Wire*>> verticalsByX, horizontalsByY;
 
         for (const auto& wire : wires)
@@ -591,8 +515,7 @@ namespace SchematicModel
             if (wire.isVertical())
                 verticalsByX[wire.a.x].push_back(&wire);
 
-            // Not "else": a zero-length wire is both, and dropping it from one
-            // index would make a junction on it invisible.
+            // Not "else": a zero-length wire is both.
             if (wire.isHorizontal())
                 horizontalsByY[wire.a.y].push_back(&wire);
         }
@@ -607,13 +530,10 @@ namespace SchematicModel
                 continue;
             }
 
-            // Copied out of the structured binding before the lambda captures
-            // it: a binding is not a variable, and the Clang that builds this on
-            // Linux rejects capturing one where Apple's accepts it.
+            // Copied out of the structured binding: some Clang versions can't capture a binding.
             const auto at = point;
 
-            // A T: this point is the end of one or two wires and also sits
-            // strictly inside a third.
+            // A T: this point is an end of one or two wires and lies strictly inside a third.
             const auto touches = [&at](const std::vector<const Wire*>& candidates)
             {
                 for (const auto* wire : candidates)
@@ -651,9 +571,8 @@ namespace SchematicModel
         for (auto& pins : result.netOfPin)
             pins.fill(-1);
 
-        // Every point that can take part in a connection: element pins, and
-        // wire endpoints. Coincident points share an entry, which is what makes
-        // two pins touching -- with no wire at all -- a connection.
+        // Every connection point: pins and wire ends. Coincident points share an entry, so
+        // touching pins connect without a wire.
         DisjointSet sets;
         std::map<juce::Point<int>, int, PointLess> pointIds;
 
@@ -675,11 +594,8 @@ namespace SchematicModel
         for (const auto& wire : wires)
             sets.unite(idOf(wire.a), idOf(wire.b));
 
-        // Nodes carrying the same label are one net -- a wire you did not have
-        // to draw. United here rather than named later, which is the whole of
-        // why it works: a net gets exactly one name, so a node sharing its net
-        // with an Output would have had its label overwritten and joined
-        // nothing. A union survives that, and the net is still called "out".
+        // Nodes with the same label are one net. Joined here (not by naming), so it still
+        // works when the net is later named by a Ground or Output.
         {
             std::map<juce::String, int> firstPinOfLabel;
 
@@ -690,8 +606,7 @@ namespace SchematicModel
 
                 const auto label = elements[e].label.trim().toLowerCase();
 
-                // No label, no net: an unlabelled node stays on its own rather
-                // than every unlabelled one welding together.
+                // Unlabelled nodes stay separate.
                 if (label.isEmpty())
                     continue;
 
@@ -706,7 +621,7 @@ namespace SchematicModel
 
         joinPointsLyingOnWires(sets, pointIds, wires);
 
-        // Collapse the roots into dense net indices.
+        // Map roots to dense net indices.
         std::map<int, int> netOfRoot;
 
         auto netIndexOf = [&](int pointId)
@@ -722,8 +637,7 @@ namespace SchematicModel
             return net;
         };
 
-        // Assign in a stable order -- by point position -- so net numbering
-        // doesn't shuffle when an unrelated element is added.
+        // Numbered in point order, so numbering is stable when unrelated parts are added.
         for (const auto& [point, id] : pointIds)
         {
             juce::ignoreUnused(point);
@@ -739,17 +653,8 @@ namespace SchematicModel
 
         result.netNames.assign(netOfRoot.size(), {});
 
-        // Terminals name their net, before the automatic numbering, so two
-        // Ground symbols both produce "gnd" and become one node with no wire
-        // between them.
-        //
-        // In priority order, not element order: a net with a Ground on it is
-        // ground whatever else shares it. Letting the last-drawn terminal win
-        // meant an Output placed after its Ground named the shared net "out",
-        // leaving the sheet with no ground at all, and the builder's "output
-        // wired to ground" check -- which reads the name -- never fired.
-        // Node is skipped: it has done its work by uniting, and naming the net
-        // too would fight with a Ground or Output sharing it.
+        // Terminals name their net, in priority order: Ground wins over anything sharing its
+        // net, so two Grounds become one node. Nodes are skipped (already joined above).
         const std::pair<ElementType, const char*> namingOrder[] = {
             {ElementType::Ground, "gnd"},
             {ElementType::Input, "in"},
@@ -775,8 +680,7 @@ namespace SchematicModel
             if (name.isEmpty())
                 name = "n" + juce::String(autoNumber++);
 
-        // Count what each net touches, so the editor can flag the ones that
-        // touch only one thing.
+        // Count connections per net, to flag nets with only one.
         std::vector<int> connectionCount(result.netNames.size(), 0);
 
         for (size_t e = 0; e < elements.size(); ++e)
@@ -821,21 +725,18 @@ namespace SchematicModel
             node.setProperty("mirrored", element.mirrored, nullptr);
             node.setProperty("value", element.value, nullptr);
 
-            // Written only when the part has one, so a sheet full of resistors
-            // reads the same as it always did.
+            // Only written for parts with a second value.
             if (element.hasSecondValue())
                 node.setProperty("valueB", element.valueB, nullptr);
 
-            // Likewise: only a Rectangle has a size, so nothing else grows two
-            // properties it would never read back.
+            // Only Rectangles have a size.
             if (element.type == ElementType::Rectangle)
             {
                 node.setProperty("width", element.width, nullptr);
                 node.setProperty("height", element.height, nullptr);
             }
 
-            // Only a scope carries axes, on the same principle: nothing grows a
-            // property it would never read.
+            // Only scopes have axes.
             if (element.type == ElementType::Scope)
             {
                 node.setProperty("scopeAuto", element.scopeAutoScale, nullptr);
@@ -846,13 +747,8 @@ namespace SchematicModel
 
             if (element.controlOrder != 0)
                 node.setProperty("controlOrder", element.controlOrder, nullptr);
-            // The id, never the index. Written even for parts with a single
-            // model so that a reader never has to guess which field it is
-            // looking at, and omitted only where the type has no models at all.
-            // What the sheet asked for, which is not always what it got: an id
-            // this build could not resolve is written back unchanged rather
-            // than replaced by the fallback's, so obtaining the model later
-            // still repairs the sheet.
+            // The model id, never the index. An unknown id is written back unchanged so the
+            // reference isn't lost.
             const auto id = element.unresolvedModelId.isNotEmpty()
                               ? element.unresolvedModelId
                               : getModelId(element.type, element.modelIndex);
@@ -864,16 +760,19 @@ namespace SchematicModel
             node.setProperty("polarised", element.polarised, nullptr);
             node.setProperty("closed", element.closed, nullptr);
 
-            // Only a pot has one, on the same principle as valueB and the
-            // rectangle's size: nothing grows a property it would never read.
+            // A changeover's action and lever position. `closed` (above) is true on throw A, for
+            // older builds.
+            if (element.type == ElementType::Spdt)
+            {
+                node.setProperty("action", static_cast<int>(element.switchAction), nullptr);
+                node.setProperty("switchPosition", element.switchPosition, nullptr);
+            }
+
+            // Only pots have a position.
             if (element.type == ElementType::Potentiometer)
                 node.setProperty("controlPosition", element.controlPosition, nullptr);
 
-            // And only the Output terminal carries a cabinet. Written even when
-            // switched off, unlike the properties above, because "off" is a
-            // setting someone chose: a sheet saved with the cab bypassed and its
-            // file still named has to come back that way rather than as a sheet
-            // that never had one.
+            // Only Output carries a cabinet; written even when off, to keep the chosen file.
             if (element.type == ElementType::Output)
             {
                 node.setProperty("cab", element.cabEnabled, nullptr);
@@ -917,9 +816,7 @@ namespace SchematicModel
                 element.id = node.getProperty("id", 0);
                 const int type = node.getProperty("type", 0);
 
-                // A file written by a later version could name a type this build
-                // doesn't have. Dropping it beats constructing something that
-                // would index off the end of the element table.
+                // A type from a later version: skip it.
                 if (type < 0 || type >= numElementTypes)
                     continue;
 
@@ -930,30 +827,17 @@ namespace SchematicModel
                 element.mirrored = node.getProperty("mirrored", false);
                 element.value = node.getProperty("value", 0.0);
 
-                // Defaults to 1, so a transformer saved when `value` was the
-                // whole ratio still reads as value:1 -- and to 0 for a rail, so
-                // an op-amp saved before it had a negative supply reads as the
-                // single-supply part it was drawn as, rather than at -1 V.
+                // Defaults: 1 for older transformer sheets (ratio in `value`), 0 for a rail.
                 element.valueB = node.getProperty("valueB", element.isSecondValueRail() ? 0.0 : 1.0);
 
-                // Defaulted from the freshly-placed size rather than from zero,
-                // so a node missing them -- anything that isn't a Rectangle --
-                // still leaves a usable box behind if it ever becomes one.
+                // Default to a new box's size.
                 element.width = node.getProperty("width", element.width);
                 element.height = node.getProperty("height", element.height);
                 element.controlOrder = node.getProperty("controlOrder", 0);
-                // Models are named, not numbered. Three things can happen, and
-                // only the first is silent:
-                //
-                //   the id is known         -- use it
-                //   the id is unknown       -- model 0, and say which id it was
-                //   there is no id at all   -- a sheet from before model ids,
-                //                              so every part on it is about to
-                //                              fall back; say that once
-                //
-                // Falling back quietly is the failure this whole scheme exists
-                // to remove: the sheet still builds and still makes sound, just
-                // with the wrong parts in it.
+                // Models are stored by id:
+                //   known id -> use it;
+                //   unknown id -> model 0, and report the id;
+                //   no id (a sheet from before model ids) -> model 0, reported once for the sheet.
                 if (element.hasModelChoice())
                 {
                     const auto id = node.getProperty("modelId", "").toString();
@@ -978,31 +862,30 @@ namespace SchematicModel
                 element.polarised = node.getProperty("polarised", false);
                 element.closed = node.getProperty("closed", true);
 
-                // Centred, not zero, for a sheet saved before knob positions
-                // were remembered -- those pots were drawn without a position,
-                // and noon is the honest reading of "unstated".
+                // Missing on older sheets: ON-ON, with `closed` giving the throw.
+                element.switchAction = static_cast<SwitchAction>(
+                    juce::jlimit(0, numSwitchActions - 1, static_cast<int>(node.getProperty("action", 0))));
+                element.switchPosition = juce::jlimit(
+                    0, element.getSwitchPositions() - 1,
+                    static_cast<int>(node.getProperty("switchPosition", element.closed ? element.getSwitchPositions() - 1 : 0)));
+
+                // Centred when missing.
                 element.controlPosition = node.getProperty("controlPosition", 0.5);
 
-                // Absent on every sheet written before cabinets existed, and on
-                // every part that isn't an Output. Both read as "no cab", which
-                // is what those sheets meant.
+                // Missing means no cabinet.
                 element.cabEnabled = node.getProperty("cab", false);
                 element.cabFile = node.getProperty("cabFile", "").toString();
 
-                // "log" is the older boolean this replaced; read it so sheets
-                // saved before the third taper existed still load.
+                // "log" is the older boolean property.
                 const int taper = node.getProperty("taper", node.getProperty("log", false) ? 1 : 0);
                 element.taper = static_cast<Taper>(juce::jlimit(0, numTapers - 1, taper));
 
-                // Absent on every sheet written before a scope had axes, which
-                // read as the auto-scaling those sheets were drawn against.
+                // Missing means auto-scale.
                 element.scopeAutoScale = node.getProperty("scopeAuto", true);
                 element.scopeMin = node.getProperty("scopeMin", -5.0);
                 element.scopeMax = node.getProperty("scopeMax", 5.0);
 
-                // Clamped rather than trusted: the time base divides into the
-                // column count, so a zero or a negative from a hand-edited file
-                // would be a division by zero on the audio thread.
+                // Clamped: the time base divides into the column count.
                 element.scopeSeconds = juce::jlimit(0.001, 2.0,
                                                     static_cast<double>(node.getProperty("scopeSeconds", 0.04)));
 
@@ -1020,26 +903,12 @@ namespace SchematicModel
             }
         }
 
-        // Both id spaces are repaired here rather than as each item is read,
-        // because uniqueness is a property of the whole sheet: an id can only be
-        // known to be a duplicate once everything sharing it has been seen.
-        //
-        // Wires used to be numbered inline, which covered the sheets that
-        // predate wires having ids at all but not two wires that arrived with
-        // the same one. Elements had neither. Both now go through the same pass,
-        // so "every id is unique and positive" holds however the file got here.
+        // Ids are repaired after reading everything, since a duplicate can only be found once
+        // all items are known.
         nextElementId = healIds(elements);
         nextWireId = healIds(wires);
 
-        // One line rather than one per part. A sheet written before models were
-        // named has no ids anywhere, so every part with a model choice on it
-        // falls back at once -- reporting each would bury the console under a
-        // message that says the same thing every time.
-        //
-        // Reported at all because the alternative is the failure this scheme
-        // exists to remove. Such a sheet still builds and still makes sound; it
-        // just has the wrong parts in it, which is far harder to notice than a
-        // file that refuses to open.
+        // One message for a sheet without model ids, not one per part.
         if (elementsWithoutModelId > 0)
             loadWarnings.add("This sheet predates model ids, so "
                                  + juce::String(elementsWithoutModelId)

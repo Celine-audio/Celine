@@ -1,11 +1,5 @@
-/*
-    What has to survive the window being closed and reopened.
-
-    The editor is rebuilt every time the window closes, so anything it alone remembers
-    is gone by the time it comes back -- and the failure is quiet: the circuit is still
-    there, so it reads as the preset having been forgotten rather than as the window
-    having been rebuilt.
-*/
+/* What has to survive the window being closed and reopened (the editor is rebuilt
+   each time). */
 #include "helpers/test_helpers.h"
 
 #include <PluginEditor.h>
@@ -59,13 +53,8 @@ TEST_CASE ("the editor's size survives the editor", "[session]")
 
 TEST_CASE ("the preset folder is one answer across instances", "[session]")
 {
-    /*
-        The settings file is shared by every instance of the plugin on the machine. An
-        instance that held it open would answer from the copy it read when it was made,
-        so a folder chosen in the window open now would be invisible to an instance
-        loaded five minutes ago -- and that instance would write its stale copy back
-        over the new one when it closed.
-    */
+    /* Every instance shares the settings file, so none may hold it open: it would read
+       stale values and write them back on close. */
     const auto settings = juce::File::getSpecialLocation (juce::File::tempDirectory)
                               .getChildFile ("celine-session-test.settings");
     settings.deleteFile();

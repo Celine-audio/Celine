@@ -8,14 +8,9 @@ using namespace Stress;
 
 namespace
 {
-    /** Runs processBlock in a tight loop on its own thread, the way a host does, while
-        the test's own thread does message-thread work. Records anything that comes out
-        wrong so the check happens where failures can be reported.
-
-        A real thread rather than interleaved calls, because what is being looked for is
-        a race: two threads touching the same state with nothing ordering them. Calling
-        them alternately on one thread cannot find that, and is what the rest of the
-        suite already does. */
+    /** Runs processBlock in a loop on its own thread while the test thread does
+        message-thread work, recording failures for the test to report. A real thread,
+        because the target is races. */
     class AudioThread
     {
     public:
@@ -79,7 +74,7 @@ TEST_CASE ("Parameter automation from another thread races nothing", "[concurren
     auto& parameters = plugin.getParameters();
     REQUIRE (! parameters.isEmpty());
 
-    // Two seconds of the message thread moving every control while audio runs.
+    // Two seconds of moving every control while audio runs.
     const auto until = juce::Time::getMillisecondCounter() + 2000;
     juce::Random random { 43 };
 
@@ -152,16 +147,8 @@ TEST_CASE ("The editor opening and closing under load races nothing", "[concurre
 
 TEST_CASE ("Re-preparing between runs leaves the plugin working", "[concurrency]")
 {
-    // The audio thread is stopped around each prepareToPlay, which is what every host
-    // actually does -- VST3 drops setActive, AU calls Uninitialize, AAX the equivalent
-    // -- and what juce::dsp requires: preparing a Convolution while it is processing
-    // tears down the engine under the processing thread, and the crash is inside JUCE
-    // rather than anywhere we could guard.
-    //
-    // So this is not a lock waiting to be added. Putting one in processBlock would buy
-    // protection against a host that does not exist, at the cost of a lock on the one
-    // thread that must not have one. What is checked instead is the real sequence:
-    // stop, re-prepare, start again, and still be working afterwards.
+    // Hosts stop the audio thread around prepareToPlay (and juce::dsp requires it), so
+    // the test does too: stop, re-prepare, restart, and check it still works.
     PluginProcessor plugin;
     const Busy busy { plugin };
 
@@ -181,11 +168,8 @@ TEST_CASE ("Re-preparing between runs leaves the plugin working", "[concurrency]
 
 TEST_CASE ("Reloading what the plugin is playing through, while it plays", "[concurrency]")
 {
-    // The one hand-off that genuinely is concurrent, and the one users do without
-    // thinking: dropping a new cabinet, response or circuit in while the transport
-    // rolls. The host does not stop the audio thread for this -- it does not know it
-    // happened -- so the plugin has to do the swap itself, and this is where a torn
-    // one shows up.
+    // Loading while the transport rolls is genuinely concurrent: the host doesn't stop
+    // audio, so the plugin must swap safely itself.
     PluginProcessor plugin;
     const Busy busy { plugin };
     plugin.prepareToPlay (48000.0, 256);

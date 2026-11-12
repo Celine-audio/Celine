@@ -1,5 +1,7 @@
 #include "SchematicSymbols.h"
 
+#include <limits>
+
 #include <CelineUI/Fonts.h>
 #include "SymbolArtwork.h"
 #include <CelineUI/Theme.h>
@@ -10,9 +12,8 @@ namespace Celine
 
     namespace
     {
-        //======================================================================
-        // Caption colours. Three meanings, three colours -- what it is called,
-        // what it is set to, and what nobody has set yet.
+        // ======================================================================
+        // Caption colours: name, value, and unset value.
 
         struct CaptionRun
         {
@@ -31,11 +32,7 @@ namespace Celine
 
             if (element.hasModelChoice())
             {
-                // A model this build could not find draws in the unset colour,
-                // like a value still at zero: both mean "not what it looks
-                // like". The name shown is the *missing* one rather than the
-                // fallback being simulated, since the discrepancy is what is
-                // worth seeing from across the sheet.
+                // An unknown model shows its saved id in the unset colour.
                 if (element.unresolvedModelId.isNotEmpty())
                 {
                     out[count++] = {element.unresolvedModelId, Theme::captionUnset()};
@@ -51,8 +48,7 @@ namespace Celine
 
             if (element.isSecondValueRail())
             {
-                // "9V" on a single supply, as it always read; "±15V" on a split
-                // one -- the way a schematic labels its rails.
+                // "9V" for a single supply, "±15V" for a split one.
                 out[count++] = {SymbolPainter::formatSupply(element.value, element.valueB, info.unit),
                                 element.value > 0.0 ? Theme::captionValue() : Theme::captionUnset()};
             }
@@ -64,10 +60,7 @@ namespace Celine
             }
             else if (element.type == ElementType::Potentiometer)
             {
-                // "B10K" -- the taper belongs with the value because on a pot it
-                // *is* half the value. Two 250k pots of different taper are
-                // different controls and draw as the same symbol, so without
-                // this the sheet cannot say which one it means.
+                // Pots show taper and value together, e.g. "B10K".
                 out[count++] = {SymbolPainter::formatPotValue(element.value, element.taper),
                                 element.value > 0.0 ? Theme::captionValue() : Theme::captionUnset()};
             }
@@ -80,55 +73,72 @@ namespace Celine
             return count;
         }
 
-        /** What a Rectangle's "model" picks: the list in Element.h is colours,
-            since which section you are looking at is the whole of what a group
-            box has to say.
-
-            Read from the theme rather than held in a table here. It was a
-            function-local static of six literals, which is a snapshot twice over --
-            hex at a call site, and one taken before the theme was consulted. */
+        /** A group box's colour, from the theme. */
         juce::Colour rectangleColour(int modelIndex)
         {
             return Theme::groupBox(modelIndex);
         }
 
-        /** How far below its centre an element's lowest pin sits, in grid
-            squares. Never less than two, so a one-pin terminal still gets its
-            caption clear of the symbol. */
-        float lowestPinBelowCentre(const Element& element)
+        /** Default caption side for a type, facing its default way: 0 right, 1 below, 2 left,
+            3 above (the order a quarter turn moves them). The side its wires don't leave from. */
+        int naturalCaptionSide(ElementType type)
         {
-            float lowest = 2.0f;
+            switch (type)
+            {
+                case ElementType::Potentiometer:
+                    return 2;
 
-            for (int pin = 0; pin < getElementInfo(element.type).pinCount; ++pin)
-                lowest = juce::jmax(lowest,
-                                    static_cast<float>(element.getPinPosition(pin).y - element.y));
+                case ElementType::OpAmp:
+                case ElementType::PowerAmp:
+                case ElementType::Transformer:
+                case ElementType::CenterTapTransformer:
+                case ElementType::Ground:
+                case ElementType::Input:
+                case ElementType::Output:
+                    return 1;
 
-            return lowest;
+                case ElementType::Scope:
+                    return 3;
+
+                case ElementType::Resistor:
+                case ElementType::Capacitor:
+                case ElementType::Inductor:
+                case ElementType::Switch:
+                case ElementType::Spdt:
+                case ElementType::VoltageSource:
+                case ElementType::Diode:
+                case ElementType::Transistor:
+                case ElementType::Jfet:
+                case ElementType::Mosfet:
+                case ElementType::Triode:
+                case ElementType::Pentode:
+                case ElementType::VacuumDiode:
+                case ElementType::Text:
+                case ElementType::Rectangle:
+                case ElementType::Node:
+                    break;
+            }
+
+            return 0;
         }
 
-        /** How far below its centre an element's *drawn body* reaches, for the
-            few whose symbol hangs lower than any of their pins -- an op-amp's
-            triangle, a transformer's core. Only the exceptions are listed:
-            saying so for twenty parts would be twenty chances to disagree with
-            the drawing code. Rotation is ignored, since the caption is always
-            written under the part and upright. */
-        float bodyDepthBelowCentre(const Element& element)
+        /** Where a caption of `size` goes on `side` of `body`, in grid units: half a square
+            off the body, centred on the part. */
+        juce::Rectangle<float> captionBox(juce::Rectangle<float> body, juce::Point<float> centre,
+                                          int side, juce::Point<float> size)
         {
-            // Deliberately not a switch: the build asks for every enumerator to
-            // be named in one, and listing all twenty to say "nothing" nineteen
-            // times would bury the two that matter.
-            if (element.type == ElementType::OpAmp)
-                return 3.0f;
+            constexpr float gap = 0.5f;
 
-            if (element.type == ElementType::Transformer
-                || element.type == ElementType::CenterTapTransformer)
-                return 3.2f;
-
-            return 0.0f;
+            switch (side & 3)
+            {
+                case 0:  return { body.getRight() + gap, centre.y - size.y * 0.5f, size.x, size.y };
+                case 2:  return { body.getX() - gap - size.x, centre.y - size.y * 0.5f, size.x, size.y };
+                case 1:  return { centre.x - size.x * 0.5f, body.getBottom() + gap, size.x, size.y };
+                default: return { centre.x - size.x * 0.5f, body.getY() - gap - size.y, size.x, size.y };
+            }
         }
 
-        /** Rotates a point about the origin by an element's orientation, in grid
-            units, so symbol geometry can be written once facing one way. */
+        /** Rotates a point about the origin by an element's orientation, in grid units. */
         juce::Point<float> rotate(float x, float y, int orientation)
         {
             for (int turn = 0; turn < (orientation & 3); ++turn)
@@ -141,8 +151,7 @@ namespace Celine
             return {x, y};
         }
 
-        /** A little drawing context: knows where the element is and which way
-            round, and turns symbol-local grid coordinates into pixels. */
+        /** Maps an element's local grid coordinates to pixels. */
         struct LocalSpace
         {
             const SymbolPainter& painter;
@@ -152,8 +161,7 @@ namespace Celine
 
             juce::Point<float> operator()(float x, float y) const
             {
-                // Mirror then rotate, matching Element::getPinPosition -- if the
-                // two disagreed, the pins would stop landing on the symbol.
+                // Mirror then rotate, as Element::getPinPosition does.
                 const auto rotated = rotate(mirrored ? -x : x, y, orientation);
                 return painter.toPixel(static_cast<float>(centre.x) + rotated.x,
                                        static_cast<float>(centre.y) + rotated.y);
@@ -166,23 +174,11 @@ namespace Celine
         };
 
 
-        /** How far a part's symbol reaches, in grid squares about its centre:
-            its artwork's bounds together with its pins.
-
-            Measured rather than stated, because which part is biggest changes
-            whenever a symbol is redrawn -- the whole point of symbols being
-            files. A number written here would quietly stop being true, and what
-            that looks like is a valve with its envelope sliced off.
-
-            Min/max by hand rather than Rectangle::getUnion, which returns the
-            other operand when either side is empty and calls a zero-width
-            rectangle empty. Same trap as Schematic::getElementBounds. */
+        /** How far a part's symbol reaches, in grid units about its centre: artwork bounds
+            plus pins. Min/max by hand (Rectangle::getUnion ignores empty rectangles). */
         juce::Rectangle<float> symbolExtent(const Element& element)
         {
-            // The two pinless parts have neither artwork nor pins, so they come
-            // from the same geometry the renderer and the hit test use. Guessing
-            // a symmetric box was off by half a square, since
-            // getRectangleBounds centres an odd width by truncating.
+            // Pinless parts without artwork use their own geometry.
             if (element.type == ElementType::Rectangle)
             {
                 const auto box = element.getRectangleBounds();
@@ -191,21 +187,15 @@ namespace Celine
                         static_cast<float>(box.getWidth()), static_cast<float>(box.getHeight())};
             }
 
-            // The single capital T a swatch draws for a Text note, not the note's
-            // own words -- this is measured for the palette and the palette shows
-            // the letter. Squarish, so it centres like a glyph rather than like
-            // the line of text it stands in for.
+            // The palette's "T" for a Text note.
             if (element.type == ElementType::Text)
                 return {-1.2f, -1.2f, 2.4f, 2.4f};
 
-            // A node's tag, in its own frame -- the palette scales this, and the
-            // swatch draws an empty one, so the width is whatever an unnamed tag
-            // comes to rather than anything a placed node happens to say.
+            // An empty node tag, as the palette draws it.
             if (element.type == ElementType::Node)
                 return element.getNodeLocalBounds().toFloat();
 
-            // Seeded at the origin, which every symbol is drawn about, so the box
-            // always contains the point the pins are measured from.
+            // Seeded at the origin.
             float left = 0.0f, top = 0.0f, right = 0.0f, bottom = 0.0f;
 
             auto include = [&](juce::Rectangle<float> box)
@@ -220,36 +210,27 @@ namespace Celine
                 for (const auto& shape : artwork->shapes)
                     include(shape.path.getBounds());
 
-            for (int pin = 0; pin < getElementInfo(element.type).pinCount; ++pin)
+            for (int pin = 0; pin < element.getPinCount(); ++pin)
             {
                 const auto p = element.getPinPosition(pin);
                 include({static_cast<float>(p.x - element.x),
                          static_cast<float>(p.y - element.y), 0.0f, 0.0f});
             }
 
-            // A part with no artwork and no pins that isn't one of the two above
-            // would otherwise scale by zero. There isn't one today; this is so
-            // that adding one is a small symbol rather than a division.
+            // Fallback for a part with neither artwork nor pins.
             if (right - left <= 0.0f || bottom - top <= 0.0f)
                 return {-1.5f, -1.5f, 3.0f, 3.0f};
 
             return {left, top, right - left, bottom - top};
         }
 
-        /** How many grid squares a palette swatch is worth. A smaller part is
-            drawn at this scale and comes out small; a bigger one is scaled down
-            to fit.
-
-            Both halves matter. Fitting every part to the swatch would draw a
-            resistor as tall as a pentode, which is a lie -- a power valve really
-            is three times a resistor. One scale for all is worse: the pentode is
-            the largest by half again, so a resistor ends up eleven pixels tall
-            in a thirty-one pixel row.
-
-            Six is what the design draws, to within a pixel. */
+        /** Grid squares a palette swatch represents: smaller parts draw at this scale (so
+            their relative sizes are kept), larger ones are scaled down to fit. */
         constexpr float previewSquares = 6.0f;
 
-        void drawArrowHead(juce::Graphics& g, juce::Point<float> tip, juce::Point<float> from, float size)
+
+        void drawArrow(juce::Graphics& g, const SymbolPainter& painter,
+                       juce::Point<float> from, juce::Point<float> tip)
         {
             const auto direction = (tip - from);
             const auto length = direction.getDistanceFromOrigin();
@@ -257,16 +238,26 @@ namespace Celine
             if (length < 0.0001f)
                 return;
 
+            const float grid = painter.gridSize;
+            const float headLength = grid * 0.5f;
             const auto unit = direction / length;
             const juce::Point<float> normal(-unit.y, unit.x);
+            const auto base = tip - unit * headLength;
+
+            juce::Path shaft;
+            shaft.startNewSubPath(from);
+            shaft.lineTo(base);
+            g.strokePath(shaft, juce::PathStrokeType(painter.strokeWidth(), juce::PathStrokeType::curved,
+                                                     juce::PathStrokeType::rounded));
 
             juce::Path head;
             head.startNewSubPath(tip);
-            head.lineTo(tip - unit * size + normal * size * 0.45f);
-            head.lineTo(tip - unit * size - normal * size * 0.45f);
+            head.lineTo(base + normal * grid * 0.25f);
+            head.lineTo(base - normal * grid * 0.25f);
             head.closeSubPath();
 
             g.fillPath(head);
+            g.strokePath(head, juce::PathStrokeType(grid * 0.1f, juce::PathStrokeType::curved));
         }
     } // namespace
 
@@ -277,28 +268,19 @@ namespace Celine
         if (area.getWidth() < 4.0f || area.getHeight() < 4.0f)
             return {};
 
-        // Painted rather than left transparent: on the sheet this covers the
-        // static waveform drawn into scope.svg, which is there so an unbuilt
-        // probe still looks like a scope rather than an empty box.
+        // Opaque, covering the placeholder waveform in scope.svg.
         g.setColour (background);
         g.fillRect (area);
 
         if (! reading.live)
         {
-            // No circuit behind it. Said in words, because a flat line at zero
-            // is what a working probe on a grounded node looks like and the two
-            // must not be confusable.
+            // No circuit behind the probe: say so in words.
             g.setColour (axis);
             g.drawLine (area.getX(), area.getCentreY(), area.getRight(), area.getCentreY(), 1.0f);
             return {};
         }
 
-        // Auto by default, because an amplifier's nodes run from millivolts at
-        // the input to hundreds of volts at a plate and no one scale shows both.
-        // But auto-ranging is exactly wrong when you are comparing two things:
-        // a window that resizes itself to its contents always looks full, so a
-        // stage that lost 20 dB and one that did not draw the same picture.
-        // Pinning the range is how you tell them apart, so the drawing can say.
+        // Auto-scale by default; a fixed range is for comparing levels.
         float centre = 0.0f;
         float span = 1.0f;
 
@@ -312,23 +294,18 @@ namespace Celine
                 highest = juce::jmax (highest, reading.maximum[c]);
             }
 
-            // A dead flat trace has no range to scale to, so give it one rather
-            // than dividing by zero and drawing a line of infinities.
+            // A flat trace: give it a range rather than divide by zero.
             centre = 0.5f * (lowest + highest);
             span = juce::jmax (1.0e-6f, highest - lowest) * 1.15f;
         }
         else
         {
-            // Taken as given, with no 1.15 headroom: the point of typing a range
-            // is that the gridline you asked for lands on the edge of the
-            // picture, and quietly widening it by 15% would put it inside.
+            // A typed range is used exactly, without headroom.
             centre = 0.5f * (reading.rangeMin + reading.rangeMax);
             span = reading.rangeMax - reading.rangeMin;
         }
 
-        // What a caller has to know to label the vertical axis: the edges of the
-        // drawn window, not of the data, since the 1.15 headroom above is part
-        // of where the trace actually lands.
+        // The edges of the drawn window, for labelling the axis.
         const ScopeScale scale { centre - 0.5f * span, centre + 0.5f * span, true };
 
         auto yFor = [&] (float value)
@@ -336,7 +313,7 @@ namespace Celine
             return area.getCentreY() - (value - centre) / span * area.getHeight();
         };
 
-        // The DC level, which is the line you actually bias against.
+        // The DC level.
         g.setColour (axis);
         const auto dcY = yFor (reading.dcAverage);
 
@@ -346,9 +323,7 @@ namespace Celine
             g.drawDashedLine ({ area.getX(), dcY, area.getRight(), dcY }, dashes, 2, 1.0f);
         }
 
-        // Drawn oldest to newest left to right, starting one past the column
-        // being written -- so the newest reading is always at the right edge and
-        // the picture scrolls the way every scope does.
+        // Oldest to newest, left to right, starting after the column being written.
         const float step = area.getWidth() / static_cast<float> (ScopeReading::columns);
 
         juce::Path envelope;
@@ -372,9 +347,7 @@ namespace Celine
                 envelope.lineTo (x, top);
             }
 
-            // A column whose min and max differ is drawn as a vertical span, not
-            // as a point: that is what keeps a transient that lived for one
-            // sample visible at a hundred and twenty-eight columns per window.
+            // A column's min-max span, so short transients stay visible.
             envelope.lineTo (x, bottom);
         }
 
@@ -390,16 +363,7 @@ namespace Celine
     {
         drawSymbolOnly(g, element, colour);
 
-        // A Text note *is* its caption, a Rectangle carries its title inside its
-        // own frame, and a Node's name is written inside its tag -- all three
-        // drawn in place by drawSymbolOnly. None wants the second copy the
-        // caption below would give it, and a box would put that copy an
-        // arbitrary distance below its bottom edge, since the clearance below is
-        // measured from pins it hasn't got.
-        //
-        // The node is the strictest of the three: its label is its *only*
-        // caption run, so leaving this on would print the name twice and nothing
-        // else -- once in the tag and once underneath it.
+        // Text, Rectangle and Node draw their own label in drawSymbolOnly, so no caption here.
         if (element.type == ElementType::Text || element.type == ElementType::Rectangle
             || element.type == ElementType::Node)
             return;
@@ -407,12 +371,7 @@ namespace Celine
         if (gridSize <= 6.0f)
             return;
 
-        // The caption goes down in pieces rather than as one string, because
-        // what a part is *called* and what it is *set to* are different kinds of
-        // fact and reading them apart at a glance is most of what a schematic is
-        // for. Names are yellow; a value someone has entered is green; a value
-        // still sitting at zero is red, because that is a part nobody has
-        // filled in yet and it will refuse to build.
+        // The caption in coloured runs: name (yellow), value (green), unset value (red).
         CaptionRun runs[3];
         const int count = buildCaptionRuns(element, runs);
 
@@ -422,51 +381,93 @@ namespace Celine
         const juce::Font font(Fonts::light(gridSize * 0.92f));
         g.setFont(font);
 
-        const float captionHeight = gridSize * 1.25f;
-
-        const float space = gridSize * 0.45f;
+        // In grid units from here on.
+        const float lineHeight = 1.25f;
+        const float space = 0.45f;
         float widths[3];
-        float total = 0.0f;
+        float widest = 0.0f, inLine = 0.0f;
 
         for (int i = 0; i < count; ++i)
         {
-            widths[i] = juce::GlyphArrangement::getStringWidth(font, runs[i].text);
-            total += widths[i] + (i > 0 ? space : 0.0f);
+            widths[i] = juce::GlyphArrangement::getStringWidth(font, runs[i].text) / gridSize;
+            widest = juce::jmax(widest, widths[i]);
+            inLine += widths[i] + (i > 0 ? space : 0.0f);
         }
 
-        // Clear of the symbol rather than a fixed distance below its centre. A
-        // valve reaches five grid squares down where a resistor reaches two, so
-        // a single offset either buries the caption in the bottle or leaves it
-        // floating well away from the small parts.
-        const float reach = juce::jmax(lowestPinBelowCentre(element), bodyDepthBelowCentre(element));
+        // Beside a part the runs stack, name over value; above or below they share a line.
+        const auto sizeOn = [&](int side)
+        {
+            return (side & 1) == 0 ? juce::Point<float>(widest, lineHeight * (float) count)
+                                   : juce::Point<float>(inLine, lineHeight);
+        };
 
-        const auto anchor = toPixel(juce::Point<int>(element.x, element.y));
+        const auto body = elementBounds(element);
+        const juce::Point<float> centre((float) element.x, (float) element.y);
 
-        // One square of air under whatever the symbol actually reaches. It used
-        // to be nearly two, measured from the pins alone -- which had to be
-        // generous enough to clear the few bodies that hang below their lowest
-        // pin, and so left every other part's caption adrift. Measuring the body
-        // as well buys that clearance back for the parts that never needed it.
-        const float top = anchor.y + gridSize * (reach + 1.0f) - captionHeight * 0.5f;
-        float x = anchor.x - total * 0.5f;
+        // Try the part's natural side, then the opposite, then the two across. The first
+        // clear side wins, else the least cluttered (earlier sides win ties).
+        const int mirroredSide = element.mirrored && (naturalCaptionSide(element.type) & 1) == 0
+                                     ? naturalCaptionSide(element.type) + 2
+                                     : naturalCaptionSide(element.type);
+        const int natural = (mirroredSide + element.orientation) & 3;
+        int side = natural;
+
+        if (captionClutter)
+        {
+            float best = std::numeric_limits<float>::max();
+
+            for (const int candidate : { natural, natural + 2, natural + 1, natural + 3 })
+            {
+                const float clutter = captionClutter(element, captionBox(body, centre, candidate, sizeOn(candidate)));
+
+                if (clutter < best)
+                {
+                    best = clutter;
+                    side = candidate & 3;
+                }
+
+                if (clutter <= 0.0f)
+                    break;
+            }
+        }
+
+        const auto box = captionBox(body, centre, side, sizeOn(side));
+
+        if (onCaptionPlaced)
+            onCaptionPlaced(box);
+
+        const auto topLeft = toPixel(box.getX(), box.getY());
 
         for (int i = 0; i < count; ++i)
         {
-            // The alpha rides along so a dimmed element keeps a dimmed caption,
-            // while the colour still says what the text means.
+            juce::Rectangle<float> line;
+
+            if ((side & 1) == 0)
+            {
+                // Stacked runs align against the part.
+                const float x = side == 0 ? 0.0f : widest - widths[i];
+                line = { x, lineHeight * (float) i, widths[i], lineHeight };
+            }
+            else
+            {
+                float x = 0.0f;
+                for (int j = 0; j < i; ++j)
+                    x += widths[j] + space;
+                line = { x, 0.0f, widths[i], lineHeight };
+            }
+
+            // Keep the caller's alpha, so a dimmed part has a dimmed caption.
             g.setColour(runs[i].colour.withMultipliedAlpha(colour.getFloatAlpha()));
-            g.drawText(runs[i].text, juce::Rectangle<float>(x, top, widths[i], captionHeight),
-                       juce::Justification::centredLeft, false);
-            x += widths[i] + space;
+            g.drawText(runs[i].text, (line * gridSize) + topLeft, juce::Justification::centredLeft, false);
         }
     }
 
     namespace
     {
-        /** The part's body, from assets/icons/elements. Mirror, then rotate, then
-            place -- the same order as Element::getPinPosition, or the pins stop
-            landing on the terminals. */
-        void drawArtwork(juce::Graphics& g, const SymbolPainter& painter, const Element& element)
+        /** Draws a part's body from its artwork's ink: one fill per opacity level, mirrored,
+            rotated and placed in the same order as Element::getPinPosition. */
+        void drawArtwork(juce::Graphics& g, const SymbolPainter& painter, const Element& element,
+                         juce::Colour colour)
         {
             const auto* artwork = getSymbolArtwork(element);
 
@@ -479,6 +480,20 @@ namespace Celine
                              * juce::MathConstants<float>::halfPi)
                     .translated(painter.toPixel(juce::Point<int>(element.x, element.y)));
 
+            if (! artwork->ink.empty())
+            {
+                for (const auto& run : artwork->ink)
+                {
+                    g.setColour(colour.withMultipliedAlpha(run.alpha));
+                    g.fillPath(run.path, placement);
+                }
+
+                // Restore the caller's colour for what follows.
+                g.setColour(colour);
+                return;
+            }
+
+            // A file with no viewBox: stroke its paths at the canvas weight.
             for (const auto& shape : artwork->shapes)
             {
                 if (shape.filled)
@@ -493,9 +508,7 @@ namespace Celine
         void drawTerminalLettering(juce::Graphics& g, const SymbolPainter& painter,
                                        const Element& element, const LocalSpace& s)
         {
-            // Lettering, not artwork: it is read, so it stays upright and
-            // gets drawn with a font rather than baked into the flag as
-            // outlines that would rotate with the part.
+            // IN/OUT is drawn with a font, so it stays upright.
             const bool isInput = element.type == ElementType::Input;
             const float backX = isInput ? -1.6f : 1.6f;
 
@@ -509,34 +522,22 @@ namespace Celine
         void drawWiper(juce::Graphics& g, const SymbolPainter& painter,
                            const Element& element, const LocalSpace& s)
         {
-            // The wiper is drawn where the knob actually is, rather than
-            // parked mid-track: turning a knob in the strip writes back to
-            // the part, so the tap slides up and down the body and the
-            // sheet shows what you are hearing. A continuous position is
-            // not something an asset can carry.
-            //
-            // Fully clockwise taps pin 0, which is the top of the body --
-            // see Potentiometer::setPosition, where position 1 sends the
-            // resistance above the wiper to its minimum.
+            // The wiper follows the knob position. Position 1 taps pin 0, the top (see
+            // Potentiometer::setPosition).
             const float tap = 1.0f - 2.0f * element.getControlPosition();
-            const auto tip = s(0.85f, tap);
+            const auto tip = s(0.83f, tap);
             const auto tail = s(2.6f, 0.0f);
-            g.drawLine(juce::Line<float>(tail, tip), painter.strokeWidth());
-            drawArrowHead(g, tip, tail, painter.gridSize * 0.55f);
+            drawArrow(g, painter, tail, tip);
         }
 
         void drawNodeTag(juce::Graphics& g, const SymbolPainter& painter,
                              const Element& element, const LocalSpace& s, juce::Colour colour)
         {
-            // A tag with the name written inside it, pointing at its pin.
-            // The same pentagon the Input terminal has always been, so the
-            // two read as one family -- but drawn here rather than loaded,
-            // because its width is the width of what it says.
+            // A tag with the name inside, pointing at its pin; its width follows the name.
             const auto box = element.getNodeLocalBounds().toFloat();
 
-            // Tip on the pin at {2, 0}, shoulders one square back. Corners
-            // through LocalSpace so the tag mirrors and turns exactly as the
-            // pin does.
+            // Tip on the pin at {2, 0}. Corners go through LocalSpace so the tag turns with the
+            // pin.
             juce::Path tag;
             tag.startNewSubPath(s(box.getRight(), 0.0f));
             tag.lineTo(s(box.getRight() - 1.0f, box.getY()));
@@ -548,41 +549,22 @@ namespace Celine
             g.strokePath(tag, juce::PathStrokeType(painter.strokeWidth(), juce::PathStrokeType::curved,
                                                    juce::PathStrokeType::rounded));
 
-            // The palette shows the shape, not a name: the row beside it
-            // already reads "Node", and a placeholder set small enough for a
-            // swatch is an illegible smudge -- the same call painter.textShowsContents
-            // makes for a Text note. A conditional rather than an early
-            // return, so the pin dots below still get drawn whatever
-            // combination of the painter's flags is set.
+            // Palette swatches show the empty tag.
             if (painter.textShowsContents)
             {
-                // The body's middle, in the part's own frame, then placed.
-                // The point is not part of it: centring on the whole tag
-                // would push every name a half square towards its own tip.
+                // Centred on the body, not the whole tag including its point.
                 const auto centre = s(box.getCentreX() - 0.5f, 0.0f);
 
                 juce::Graphics::ScopedSaveState state(g);
 
-                // A quarter turn, or none. The text turns *with* the tag,
-                // unlike IN/OUT -- it has to, because it is inside
-                // something: a tag on end is two squares across, and a name
-                // left horizontal would run straight out of its own box and
-                // over the wire.
-                //
-                // Never a half turn, though. At 180 degrees the tag points
-                // left and the name still reads left to right, because text
-                // upside down is not a reading of anything. So the angle
-                // comes from whether the part is on end, not from which way
-                // it faces.
+                // Text turns with the tag for a quarter turn, but never upside down.
                 if ((element.orientation & 1) != 0)
                     g.addTransform(juce::AffineTransform::rotation(
                         juce::MathConstants<float>::halfPi, centre.x, centre.y));
 
                 g.setFont(Fonts::light(painter.gridSize * 1.1f));
 
-                // Red for an unnamed one, which is the sheet's existing word
-                // for "nobody has filled this in" -- and it is the same fact
-                // here, since the label is the whole of what a node carries.
+                // Red when unnamed.
                 if (element.label.isEmpty())
                     g.setColour(Theme::captionUnset().withMultipliedAlpha(colour.getFloatAlpha()));
 
@@ -596,27 +578,13 @@ namespace Celine
         void drawTextNote(juce::Graphics& g, const SymbolPainter& painter,
                               const Element& element, juce::Colour colour)
         {
-            // Drawn where it sits rather than through LocalSpace: a note is
-            // read, so it stays upright whatever the sheet is doing. That is
-            // also why the inspector hides rotate and flip for it.
+            // Drawn upright, ignoring orientation.
             const auto centre = painter.toPixel({element.x, element.y});
 
             if (! painter.textShowsContents)
             {
-                // A capital T standing for the type -- see painter.textShowsContents.
-                //
-                // Two strokes rather than a letter set in a font, which is
-                // the one thing that makes it belong: every other swatch in
-                // the list is stroked at the schematic's line weight, and a
-                // glyph at the size this has to be comes out visibly finer
-                // than its neighbours however bold a face it is set in. Drawn
-                // it also stays in step as the palette's row height changes,
-                // where a font size would have to be re-guessed.
-                //
-                // The crossbar takes the 1.3x the artwork convention already
-                // uses for capacitor plates and valve electrodes, which is
-                // what the design draws: two pixels of bar over one and a
-                // half of stem.
+                // A "T" drawn as two strokes, so it matches the other swatches' line weight. The
+                // crossbar is 1.3x the stroke, like other emphasised strokes.
                 const float halfBar = painter.gridSize * 1.05f;
                 const float top = centre.y - painter.gridSize;
                 const float bottom = centre.y + painter.gridSize;
@@ -632,9 +600,7 @@ namespace Celine
 
                 g.setFont(Fonts::light(painter.gridSize * 1.6f));
 
-                // Dimmed when it is still the placeholder, so an empty note
-                // reads as "type something here" rather than as a part called
-                // Text.
+                // Dimmed while it is the placeholder.
                 if (element.label.isEmpty())
                     g.setColour(colour.withAlpha(0.45f));
 
@@ -648,10 +614,7 @@ namespace Celine
         void drawGroupBox(juce::Graphics& g, const SymbolPainter& painter,
                               const Element& element, juce::Colour colour)
         {
-            // A frame the user drags the corner of, so its size is data and
-            // not a drawing. Also in sheet space, like a Text note: an
-            // axis-aligned box has nothing for an orientation to do, which
-            // is why the inspector hides rotate and flip for it.
+            // In sheet space: a box has no orientation.
             const auto box = element.getRectangleBounds();
             const juce::Rectangle<float> pixels(painter.toPixel(box.getTopLeft()),
                                                 painter.toPixel(box.getBottomRight()));
@@ -685,11 +648,9 @@ namespace Celine
                                        juce::Colour colour) const
     {
         g.setColour(colour);
-        drawArtwork(g, *this, element);
+        drawArtwork(g, *this, element, colour);
 
-        // Everything below is drawn in code rather than loaded, and always for
-        // the same reason: it is a *reading* of the part's state rather than a
-        // picture of the part, so no file could hold it.
+        // The following parts are drawn in code because they show the part's state.
         const LocalSpace s{*this, {element.x, element.y}, element.orientation, element.mirrored};
 
         if (terminalLettering
@@ -707,11 +668,11 @@ namespace Celine
         if (! connectionDots)
             return;
 
-        // Pins, so it is obvious where a wire has to land.
+        // Pin dots.
         g.setColour(colour.withAlpha(0.9f));
         const float pinRadius = juce::jmax(1.5f, gridSize * 0.18f);
 
-        for (int pin = 0; pin < getElementInfo(element.type).pinCount; ++pin)
+        for (int pin = 0; pin < element.getPinCount(); ++pin)
         {
             const auto p = toPixel(element.getPinPosition(pin));
             g.fillEllipse(juce::Rectangle<float>(pinRadius * 2.0f, pinRadius * 2.0f).withCentre(p));
@@ -724,9 +685,7 @@ namespace Celine
     {
         const juce::Point<float> centre(static_cast<float>(element.x), static_cast<float>(element.y));
 
-        // The three with no artwork keep the rules they already had: a note
-        // spans what it reads, a group box *is* its bounds, and a tag is as wide
-        // as the name in it.
+        // Text, Rectangle and Node have their own bounds.
         if (element.type == ElementType::Text)
         {
             const auto halfWidth = static_cast<float>(element.getTextHalfWidth());
@@ -760,9 +719,7 @@ namespace Celine
 
         if (const auto* artwork = getSymbolArtwork(element); artwork != nullptr && ! artwork->isEmpty())
         {
-            // Mirror, then rotate, then place -- the same order the symbol is
-            // drawn in, and the same order Element::getPinPosition uses. Any
-            // other order and the box stops covering the part.
+            // Mirror, rotate, place: same order as the drawing and Element::getPinPosition.
             auto box = artwork->bounds;
 
             if (element.mirrored)
@@ -774,8 +731,7 @@ namespace Celine
             include(box + centre);
         }
 
-        // The pins, so a part is always grabbable by its terminals even if its
-        // artwork is missing entirely.
+        // Pins included, so a part is grabbable even without artwork.
         for (int pin = 0; pin < element.getPinCount(); ++pin)
             include(juce::Rectangle<float>(0.4f, 0.4f).withCentre(element.getPinPosition(pin).toFloat()));
 
@@ -784,10 +740,7 @@ namespace Celine
 
         juce::Rectangle<float> box(minX, minY, maxX - minX, maxY - minY);
 
-        // A floor, because some symbols are genuinely thin: a switch is a line
-        // and two dots, which measures 0.4 of a square across. Tracing that
-        // exactly would be correct and unusable. One rule for every part rather
-        // than a nudge per type, so it cannot drift from the artwork.
+        // Minimum span, so thin symbols (a switch) are still clickable.
         constexpr float minimumSpan = 1.2f;
 
         if (box.getWidth() < minimumSpan)
@@ -799,33 +752,32 @@ namespace Celine
         return box;
     }
 
+    float SymbolPainter::previewLineWidth(juce::Rectangle<float> area)
+    {
+        // For a part no larger than previewSquares.
+        constexpr float pinDotAllowance = 5.0f;
+        const float grid = juce::jmax(0.5f, (juce::jmin(area.getWidth(), area.getHeight()) - pinDotAllowance)
+                                                / previewSquares);
+        return grid * 0.12f;
+    }
+
     void SymbolPainter::drawPreview(juce::Graphics& g, ElementType type, juce::Rectangle<float> area,
                                     juce::Colour colour)
     {
-        // A throwaway element at the origin, drawn with the painter's origin
-        // moved so it lands in the middle of `area`.
+        // A temporary element at the origin.
         Element element;
         element.type = type;
         element.x = 0;
         element.y = 0;
 
-        // Small enough to fit the nine grid squares a preview is scaled to. A
-        // Rectangle is the one part whose size is up to the user, so it is also
-        // the one whose real size means nothing in a palette swatch.
+        // Box size for its swatch.
         element.width = 7;
         element.height = 5;
 
         SymbolPainter painter;
 
-        // Six squares' worth of swatch, or the part's own reach if it is bigger
-        // than that -- see previewSquares. The `jmax` is what guarantees nothing
-        // is ever cut off: a part at or over six squares is scaled to exactly the
-        // room available, and a smaller one to less.
-        //
-        // The pin dots are drawn on top of the artwork and stick out past it, so
-        // the room for them comes out of the swatch rather than out of the symbol.
-        // Without that the op-amp's inputs and both transformers' outer windings
-        // land on the clip edge and lose a pixel to it.
+        // Scale to previewSquares, or to fit a larger part. Leave room for the pin dots,
+        // which stick out past the artwork.
         const auto extent = symbolExtent(element);
         const float swatch = juce::jmin(area.getWidth(), area.getHeight());
         constexpr float pinDotAllowance = 5.0f;
@@ -833,36 +785,21 @@ namespace Celine
         const float reach = juce::jmax(previewSquares, extent.getWidth(), extent.getHeight());
         painter.gridSize = juce::jmax(0.5f, (swatch - pinDotAllowance) / reach);
 
-        // Centred on what is actually *drawn* rather than on the element's own
-        // origin. An op-amp's triangle sits to the right of its centre and a
-        // valve's envelope above it; centring the origin instead leaves those
-        // visibly off to one side of the pill, and pushes the far edge out past
-        // the clip even when the symbol would have fitted.
+        // Centre the drawn extent, not the element's origin.
         painter.origin = area.getCentre()
                        - juce::Point<float>(extent.getCentreX(), extent.getCentreY())
                              * painter.gridSize;
 
-        // A floor under the line weight, which is what makes these read as
-        // symbols rather than as smudges. At the swatch's scale the canvas's own
-        // `gridSize * 0.12` comes out at half a pixel, and a half-pixel stroke is
-        // rendered as two rows of grey rather than one of ink -- so the whole
-        // palette came out pale and thin next to the mockup, which draws it at
-        // full contrast.
-        painter.minStrokeWidth = 1.5f;
+        // No minimum line width, so code-drawn lines match the artwork's weight.
+        painter.minStrokeWidth = 0.0f;
 
-        // See SymbolPainter::terminalLettering -- the row says "Input" already,
-        // and the lettering is drawn far enough outside the flag to run off the
-        // pill.
+        // No IN/OUT lettering in the palette.
         painter.terminalLettering = false;
 
-        // A capital T rather than the word "Text" -- see
-        // SymbolPainter::textShowsContents.
+        // A "T" instead of text.
         painter.textShowsContents = false;
 
-        // No pin dots -- see SymbolPainter::connectionDots.
-        painter.connectionDots = false;
-
-        // No caption in a preview -- the palette already says the name.
+        // No caption in a preview.
         juce::Graphics::ScopedSaveState state(g);
         g.reduceClipRegion(area.toNearestInt());
         painter.drawSymbolOnly(g, element, colour);
@@ -876,7 +813,7 @@ namespace Celine
         if (negative == 0.0)
             return formatValue(positive, unit);
 
-        // The usual case, said the usual way.
+        // Symmetric rails: "±15V".
         if (juce::approximatelyEqual(positive, -negative))
             return juce::String(juce::CharPointer_UTF8("\xc2\xb1")) + formatValue(positive, unit);
 
@@ -885,8 +822,7 @@ namespace Celine
 
     juce::String SymbolPainter::formatRatio(double primary, double secondary)
     {
-        // Plainly, with no engineering prefixes: a turns ratio is dimensionless,
-        // so "100m:1" is nonsense where "1:10" is what anyone would write.
+        // No engineering prefixes for a ratio.
         auto number = [](double v)
         {
             juce::String text(v, 3);
@@ -914,7 +850,7 @@ namespace Celine
             const char* suffix;
         };
 
-        // Engineering notation, the way a schematic writes it.
+        // Engineering prefixes.
         static const Prefix prefixes[] = {
             {1.0e12, "T"}, {1.0e9, "G"}, {1.0e6, "M"}, {1.0e3, "k"}, {1.0, ""},
             {1.0e-3, "m"}, {1.0e-6, "u"}, {1.0e-9, "n"}, {1.0e-12, "p"},
@@ -928,8 +864,7 @@ namespace Celine
             {
                 const double scaled = value / prefix.scale;
 
-                // Two significant decimals at most, and no trailing zeros:
-                // "4.7k", not "4.70k".
+                // At most two decimals, no trailing zeros: "4.7k".
                 juce::String text(scaled, scaled < 10.0 ? 2 : 1);
 
                 while (text.contains(".") && (text.endsWithChar('0')))
@@ -949,15 +884,11 @@ namespace Celine
     {
         const auto code = SchematicModel::getTaperCode (taper);
 
-        // Nothing to mark if there is no value yet. The bare "0" keeps the
-        // unset-value colouring meaning what it means everywhere else, and a
-        // "B0" reads like a part number rather than like something missing.
+        // No value yet: plain "0", so it shows as unset.
         if (value <= 0.0)
             return "0";
 
-        // A space only for the numbered tapers. "A250K" is how the part is
-        // marked and stays exactly that; "10A250K" is not a marking of
-        // anything, and run together it reads as one long number.
+        // A space only after numbered taper codes ("10A 250K").
         const auto separator = code.length() > 1 ? " " : "";
 
         return code + separator + formatValue (value, "").replaceCharacter ('k', 'K');
@@ -969,15 +900,9 @@ namespace Celine
         auto trimmed = text.trim();
         taperGiven = false;
 
-        // The code is an optional run of digits followed by one letter --
-        // "A", "C", "10A". Peeled only when something follows it, so "A" on its
-        // own stays what it always was: not a value, and refused.
-        //
-        // Taking the digits first is what keeps "10A250K" from being read as
-        // the number 10: a leading number is part of the code only when a taper
-        // letter closes it, and otherwise the whole string goes to parseValue
-        // untouched. That is also why "M2" still parses as 2 megohms -- M names
-        // no taper, so nothing is peeled.
+        // An optional taper code (digits then one letter, like "10A") is peeled off only when
+        // something follows it; otherwise the whole text goes to parseValue ("M2" stays 2
+        // megohms).
         int split = 0;
 
         while (split < trimmed.length() && juce::CharacterFunctions::isDigit (trimmed[split]))
@@ -997,15 +922,7 @@ namespace Celine
     {
         auto source = text.trim();
 
-        // Upper-case M is mega, lower-case m is milli, and the distinction has
-        // to survive the toLowerCase below -- so it is spelled out first.
-        //
-        // This is not a nicety. formatValue *writes* an upper-case M for mega,
-        // so without this a 2.2M resistor read straight back off its own editor
-        // parsed as 2.2 milliohms: opening the inspector on a part and pressing
-        // return, changing nothing, turned a 2M2 grid leak into a short.
-        // "meg" keeps meaning mega whatever case it arrives in, since that is
-        // what a netlist writes.
+        // Upper-case M is mega and lower-case m is milli: handle M before lower-casing.
         if (! source.containsIgnoreCase("meg"))
             source = source.replace("M", "meg", false);
 
@@ -1014,14 +931,7 @@ namespace Celine
         if (trimmed.isEmpty())
             return false;
 
-        // Drop a trailing unit letter so "10k ohm", "100nF", "9V" and "40ms"
-        // all work.
-        //
-        // "s" goes last, after "ohms", because the loop stops at the first
-        // match and stripping the s off "10 ohms" would leave "10 ohm" for the
-        // suffix scan to choke on. It has to be here at all because formatValue
-        // *writes* seconds -- a scope's time span is displayed as "40ms", and
-        // without this that text did not read back as anything.
+        // Strip a trailing unit ("ohm", "F", "V", "s"...). "s" comes after "ohms".
         for (const auto* unit : {"ohm", "ohms", ":1", "f", "h", "v", "s"})
         {
             if (trimmed.endsWith(unit) && trimmed.length() > juce::String(unit).length())
@@ -1042,8 +952,7 @@ namespace Celine
             {"u", 1.0e-6}, {"n", 1.0e-9}, {"p", 1.0e-12},
         };
 
-        // "meg" before "m", since SPICE means milli by "m" and mega by "meg" --
-        // and a capacitor typed as "10m" is far more likely to be millifarads.
+        // "meg" before "m" (SPICE: m is milli, meg is mega).
         for (const auto& suffix : suffixes)
         {
             const juce::String letter(suffix.letter);
@@ -1057,8 +966,7 @@ namespace Celine
             if (before.isEmpty() && after.isEmpty())
                 continue;
 
-            // "4k7" means 4.7k -- the decimal point standing in for the suffix,
-            // which is how values are written on a real schematic.
+            // "4k7" means 4.7k.
             const auto digits = after.isEmpty() ? before : before + "." + after;
 
             if (! digits.containsOnly("0123456789.-+"))

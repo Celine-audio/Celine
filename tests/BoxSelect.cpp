@@ -7,8 +7,8 @@ using namespace Celine;
 
 namespace
 {
-    /** A canvas with three resistors in a row, far enough apart that a box can
-        take one without touching the next. */
+    /** A canvas with three resistors in a row, far enough apart for a box to take one
+        alone. */
     struct Bench
     {
         Schematic sheet;
@@ -23,8 +23,7 @@ namespace
             canvas.setBounds (0, 0, 900, 600);
         }
 
-        /** The element's box on screen, which is what a selection box is
-            compared against. */
+        /** The element's box on screen. */
         juce::Rectangle<float> pixelsOf (int id) const
         {
             const auto bounds = sheet.getElementBounds (*sheet.findElement (id));
@@ -39,8 +38,8 @@ namespace
                      juce::Time::getCurrentTime(), p, juce::Time::getCurrentTime(), 1, false };
         }
 
-        /** Drags a box from one screen point to another. Which way round they
-            are is the whole point, so they are never reordered. */
+        /** Drags a box between two screen points. The direction matters, so they are never
+            reordered. */
         void dragBox (juce::Point<float> from, juce::Point<float> to,
                       juce::ModifierKeys mods = {})
         {
@@ -59,7 +58,7 @@ TEST_CASE ("Dragging left to right selects only what fits inside", "[canvas][gui
 {
     Bench bench;
 
-    // A box that swallows the first resistor whole and merely clips the second.
+    // A box that encloses the first resistor and clips the second.
     const auto first = bench.pixelsOf (bench.a);
     const auto second = bench.pixelsOf (bench.b);
 
@@ -73,7 +72,7 @@ TEST_CASE ("Dragging left to right selects only what fits inside", "[canvas][gui
 
     bench.dragBox (box.getTopLeft(), box.getBottomRight());
 
-    // Enclosed only: the one it merely touched is left alone.
+    // Enclosed only.
     CHECK (bench.selected (bench.a));
     CHECK (! bench.selected (bench.b));
     CHECK (! bench.selected (bench.c));
@@ -90,8 +89,7 @@ TEST_CASE ("Dragging right to left selects anything it touches", "[canvas][gui]"
                                       (second.getCentreX() - first.getX()) + 10.0f,
                                       first.getHeight() + 20.0f);
 
-    // Exactly the same rectangle as the test above -- only the direction of the
-    // drag differs, and that is what changes the rule.
+    // The same rectangle, dragged the other way: crossing.
     bench.dragBox (box.getBottomRight(), box.getTopLeft());
 
     CHECK (bench.selected (bench.a));
@@ -151,12 +149,11 @@ TEST_CASE ("A selection moves, rotates and deletes as one", "[canvas][gui]")
         CHECK (movedA->x == before.first.x + 5);
         CHECK (movedA->y == before.first.y + 3);
 
-        // The spacing is the point: a group that moves by different amounts is
-        // not a group.
+        // Everything moves by the same amount.
         CHECK (movedB->x == before.second.x + 5);
         CHECK (movedB->y == before.second.y + 3);
 
-        // The one left out stays put.
+        // The unselected one stays put.
         CHECK (bench.sheet.findElement (bench.c)->x == 30);
     }
 
@@ -168,8 +165,7 @@ TEST_CASE ("A selection moves, rotates and deletes as one", "[canvas][gui]")
         CHECK (bench.sheet.findElement (bench.b)->orientation == 1);
         CHECK (bench.sheet.findElement (bench.c)->orientation == 0);
 
-        // Turning the symbols must not shift them off the pins they are wired
-        // to, so the centres stay exactly where they were.
+        // Rotating keeps the centres in place.
         CHECK (bench.sheet.findElement (bench.a)->x == before.first.x);
         CHECK (bench.sheet.findElement (bench.b)->x == before.second.x);
     }
@@ -193,7 +189,7 @@ TEST_CASE ("Clicking empty sheet clears the selection", "[canvas][gui]")
     bench.dragBox (span.getBottomRight(), span.getTopLeft());
     REQUIRE (bench.count() == 3);
 
-    // Well away from anything, and with no drag: the box never opens.
+    // Away from anything, no drag: the box never opens.
     const auto empty = bench.canvas.gridToPixel ({ 60, 40 });
     bench.canvas.mouseDown (bench.event (empty, {}));
     bench.canvas.mouseUp (bench.event (empty, {}));
@@ -209,9 +205,8 @@ TEST_CASE ("Clicking one member of a selection narrows to it", "[canvas][gui]")
     bench.dragBox (span.getBottomRight(), span.getTopLeft());
     REQUIRE (bench.count() == 3);
 
-    // Press and release on one of them without moving. The press must keep the
-    // group -- otherwise picking a group up by one of its members would drop
-    // the rest before the drag even started -- and the release narrows it.
+    // Press and release on a member without moving: the press keeps the group, the
+    // release narrows it.
     const auto onB = bench.canvas.gridToPixel ({ 20, 10 });
     bench.canvas.mouseDown (bench.event (onB, {}));
     CHECK (bench.count() == 3);

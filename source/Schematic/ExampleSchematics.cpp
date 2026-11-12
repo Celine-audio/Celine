@@ -4,8 +4,7 @@ namespace SchematicModel::Examples
 {
     namespace
     {
-        /** Places an element and sets the fields worth setting, so the layouts
-            below read as circuits rather than as struct filling. */
+        /** Places elements with the fields worth setting, so the layouts below stay short. */
         struct Placer
         {
             Schematic& schematic;
@@ -53,11 +52,10 @@ namespace SchematicModel::Examples
             p.valued(ElementType::Resistor, 8, 0, 10000.0, 1); // horizontal, pins at 6 and 10
             p.wire(2, 0, 6, 0);
 
-            // The signal rail the diodes and the pot all hang off.
+            // Signal rail.
             p.wire(10, 0, 26, 0);
 
-            // Antiparallel pair: the second one turned round, so one clips each
-            // half of the wave.
+            // Antiparallel pair: one diode clips each half of the wave.
             p.model(ElementType::Diode, 14, 6, 0, 0);
             p.model(ElementType::Diode, 18, 6, 0, 2);
             p.wire(14, 0, 14, 4);
@@ -102,25 +100,20 @@ namespace SchematicModel::Examples
         }
 
         //======================================================================
-        /** A 12AX7 gain stage on a 300 V supply: plate load, cathode bias,
-            coupling capacitors either side, grid leak to ground.
-
-            Worth having as an example because it is the shape every valve preamp
-            is built from, and because it exercises the part of the engine that
-            has to find a bias point before it can run at all. */
+        /** A 12AX7 gain stage on a 300 V supply: plate load, cathode bias, coupling caps
+            either side, grid leak to ground. */
         void triodeStage(Schematic& s)
         {
             Placer p{s};
 
-            // Supply, standing well clear on the right -- the output terminal
-            // and its label reach further than the pin geometry suggests.
+            // Supply, placed clear of the output terminal's label.
             p.valued(ElementType::VoltageSource, 36, 8, 300.0);
             p.wire(36, 10, 36, 12);
             p.at(ElementType::Ground, 36, 14);
             p.wire(14, 2, 36, 2);
             p.wire(36, 2, 36, 6);
 
-            // Plate load down onto the valve.
+            // Plate load.
             p.valued(ElementType::Resistor, 14, 4, 100000.0);
             p.wire(14, 6, 14, 9);
 
@@ -132,10 +125,8 @@ namespace SchematicModel::Examples
             p.wire(14, 22, 14, 24);
             p.at(ElementType::Ground, 14, 26);
 
-            // In through a coupling capacitor to the grid, with a grid leak.
-            // The input terminal's pin and the capacitor's left pin land on the
-            // same grid point, which connects them with no wire -- the same rule
-            // that makes two touching pins a connection anywhere else.
+            // Input through a coupling cap to the grid, with a grid leak. Pins that land on the
+            // same grid point connect without a wire.
             p.at(ElementType::Input, 0, 12);
             p.valued(ElementType::Capacitor, 4, 12, 100.0e-9, 1); // pins at 2 and 6
             p.wire(6, 12, 11, 12);
@@ -145,7 +136,7 @@ namespace SchematicModel::Examples
             p.wire(11, 20, 11, 22);
             p.at(ElementType::Ground, 11, 24);
 
-            // Out through another, taken off the plate.
+            // Output through a coupling cap from the plate.
             p.valued(ElementType::Capacitor, 20, 9, 22.0e-9, 1); // pins at 18 and 22
             p.wire(14, 9, 18, 9);
             p.wire(22, 9, 24, 9);

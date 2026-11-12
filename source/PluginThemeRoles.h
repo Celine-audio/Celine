@@ -1,28 +1,10 @@
 #pragma once
 
-/*
-    Céline's own themeable colours, added to the house list in `ui/ThemeRoles.h`.
+/* Céline's own themeable colours, added to the shared list in `CelineUI/ThemeRoles.h`.
+   Named for their job, not their colour.
 
-    These are the schematic's vocabulary: what a wire is, what a selected part is, what
-    a value nobody has typed yet looks like. They are named for the job they do rather
-    than for the colour they are, so the drawing's conventions survive a change of
-    palette -- which is the whole point of a theme being able to reach them.
-
-    The light panel is here for a different reason, and it is the one worth explaining.
-    The house design is two-tone -- dark chrome, near-white panels -- but the shared list
-    carries only the dark half, because most plugins in the house have no light surface
-    in them at all and a colour nobody can paint with is a row in the theme editor that
-    does nothing. This window has two of them, the control strip and the panel beside the
-    sheet, so the ground, the ink that goes on it and the row that sits on it are this
-    plugin's three colours rather than the house's.
-
-    Same shape as the shared list, and the same warning: the identifier is the key in a
-    `.celthm` file, so **renaming one breaks every theme anybody has saved**. Adding,
-    removing and regrouping are all free.
-
-    Groups are rendered as headings in the theme editor in list order, so the entries
-    under one have to stay together -- `tests/ThemeTests.cpp` fails if they do not.
-*/
+   The identifier is the key in a `.celthm` file: renaming one breaks saved themes.
+   Entries under a group must stay together (`tests/ThemeTests.cpp` checks). */
 #define CELINE_PLUGIN_THEME_ROLES(X)                                                    \
     X (wire,         "Wire",                "Schematic",   0xff9761dc)                  \
     X (element,      "Part",                "Schematic",   0xffd9d9d9)                  \

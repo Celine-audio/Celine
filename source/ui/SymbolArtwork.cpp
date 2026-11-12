@@ -13,31 +13,20 @@ namespace Celine
 
     namespace
     {
-        /** SVG units per grid square. Baked into the artwork, so it lives here
-            and in the header's convention note and nowhere else. */
+        /** SVG units per grid square. */
         constexpr float unitsPerGrid = 10.0f;
 
-        /** The stroke width the artwork calls normal. */
+        /** The artwork's normal stroke width. */
         constexpr float baselineStroke = 1.2f;
 
         //======================================================================
-        /** One slot per file. The *index* is the identity of a symbol as far as
-            the drawing is concerned; the filename is needed once, when the file
-            is parsed, and never again.
-
-            That split is the whole point. The canvas asks for artwork once per
-            part per repaint, and the first version of this answered by building
-            a juce::String, searching a table of names for it, and hashing it
-            into a map -- three allocations per part per frame in the one
-            function that is supposed to allocate nothing.
-
-            Order matches assetNames below, which a static_assert and a test both
-            hold to. */
+        /** One slot per artwork file, so the paint path looks artwork up by index without
+            building strings. Order matches assetNames (checked by a static_assert and a test). */
         enum class Asset
         {
             Ground, Input, Output, Resistor,
             Capacitor, CapacitorPolarised, Inductor, Potentiometer,
-            SwitchClosed, SwitchOpen, SpdtA, SpdtB,
+            SwitchClosed, SwitchOpen, SpdtA, SpdtB, SpdtOff, Sp3tA, Sp3tB, Sp3tC,
             VoltageSource, Diode, DiodeZener, DiodeSchottky, DiodeLed,
             TransistorNpn, TransistorPnp, Triode, OpAmp,
             JfetN, JfetP, VacuumDiode, Pentode,
@@ -52,7 +41,7 @@ namespace Celine
         const char* const assetNames[] = {
             "ground", "input", "output", "resistor",
             "capacitor", "capacitor-polarised", "inductor", "potentiometer",
-            "switch-closed", "switch-open", "spdt-a", "spdt-b",
+            "switch-closed", "switch-open", "spdt-a", "spdt-b", "spdt-off", "sp3t-a", "sp3t-b", "sp3t-c",
             "voltage-source", "diode", "diode-zener", "diode-schottky", "diode-led",
             "transistor-npn", "transistor-pnp", "triode", "opamp",
             "jfet-n", "jfet-p", "vacuum-diode", "pentode",
@@ -64,22 +53,13 @@ namespace Celine
         static_assert(std::size(assetNames) == (size_t) assetCount,
                       "every Asset needs a filename, in the same order");
 
-        /** No artwork: Text is its own text, Rectangle a dragged frame. */
+        /** No artwork (parts drawn in code). */
         constexpr int noAsset = -1;
 
         //======================================================================
-        /** Pulls the paths out of a parsed SVG, in grid units.
-            Recursive because a drawing program will nest things in groups even
-            when the artwork is flat. */
-        /** The union of every shape's path, grown by half a stroke so the ink
-            is inside the box rather than straddling it.
-
-            Written out by hand rather than with Rectangle::getUnion, for the
-            reason Schematic::getElementBounds spells out: a horizontal line has
-            zero height, JUCE counts a zero-sized rectangle as empty, and
-            getUnion answers with the *other* operand whenever either side is
-            empty -- so a symbol made of straight lines would measure as one of
-            them. */
+        /** The union of every shape's path, grown by half a stroke so the ink is inside.
+            Computed by hand: Rectangle::getUnion ignores zero-height rectangles, which straight
+            lines are. */
         juce::Rectangle<float> measure(const SymbolArtwork& artwork)
         {
             bool first = true;
@@ -90,9 +70,7 @@ namespace Celine
                 if (shape.path.isEmpty())
                     continue;
 
-                // Half the *authored* weight, in grid units. The canvas strokes
-                // at a floor that varies with zoom, so this is the shape's own
-                // idea of how fat it is, not the view's.
+                // Half the authored stroke width, in grid units.
                 const auto half = shape.filled ? 0.0f
                                                : 0.5f * shape.strokeScale * baselineStroke / unitsPerGrid;
 
@@ -119,12 +97,7 @@ namespace Celine
         void collect(const juce::Drawable& drawable, SymbolArtwork& out,
                      juce::AffineTransform accumulated)
         {
-            // getDrawableTransform rather than getTransform: JUCE 9 made the
-            // latter protected and virtual, and this one public. They return the
-            // same member. DrawableText overrides the virtual one, which would
-            // matter if artwork carried text -- it does not, and could not: the
-            // lettering on this sheet is drawn with a font so it stays upright
-            // when a part is turned, which is the whole reason it is in code.
+            // getDrawableTransform: the public accessor in JUCE 9.
             const auto here = drawable.getDrawableTransform().followedBy(accumulated);
 
             if (const auto* shape = dynamic_cast<const juce::DrawablePath*>(&drawable))
@@ -135,44 +108,174 @@ namespace Celine
 
                 const auto stroke = shape->getStrokeType().getStrokeThickness();
 
-                // No stroke means the path is a filled one -- a diode's
-                // triangle, an arrowhead, a contact dot.
+                // A filled and stroked path may arrive as one DrawablePath or two; split it so the
+                // fill and the outline are always separate shapes.
+                if (! shape->getFill().isInvisible() && stroke > 0.0f)
+                {
+                    auto fill = s;
+                    fill.filled = true;
+                    out.shapes.push_back(std::move(fill));
+                }
+
+                // No stroke: a filled shape.
                 s.filled = stroke <= 0.0f;
                 s.strokeScale = s.filled ? 1.0f : stroke / baselineStroke;
 
                 out.shapes.push_back(std::move(s));
             }
 
-            // Children by index. JUCE 9 stopped deriving Drawable from
-            // Component, so a composite no longer has Component::getChildren()
-            // and there is nothing to downcast -- getChild() hands back a
-            // Drawable already, which is what this always wanted.
+            // JUCE 9 composites expose children through getChild().
             if (const auto* composite = dynamic_cast<const juce::DrawableComposite*>(&drawable))
                 for (int i = 0; i < composite->getNumChildren(); ++i)
                     collect(composite->getChild(i), out, here);
         }
 
-        /** The viewBox origin, which the SVG parser normalises away.
+        /** A group's opacity, which DrawableComposite has no getter for: measured once by
+            drawing the group in black and reading the deepest coverage. */
+        float measureOpacity(const juce::DrawableComposite& group)
+        {
+            const auto bounds = group.getDrawableBounds();
 
-            JUCE 9 replaced its own SVG parser with LunaSVG, and LunaSVG maps the
-            viewBox onto a viewport starting at (0,0) -- so for this project's
-            `viewBox="-60 -60 120 120"` every path comes back carrying a
-            translation of (+60,+60), and the artwork lands in the first quadrant
-            instead of straddling the origin. Every symbol was six grid squares
-            down and to the right of where its pins are drawn.
+            if (bounds.isEmpty())
+                return 1.0f;
 
-            Undone here rather than compensated for further down, because the
-            convention in SymbolArtwork.h is that (0,0) is the part's centre, and
-            that has to be true of the paths themselves: the canvas draws pins at
-            the positions in Element.h and strokes the cached paths beside them,
-            with nothing in between to reconcile the two.
+            // Large enough that a line has fully covered pixels.
+            const float scale = juce::jmin(32.0f, 512.0f / juce::jmax(bounds.getWidth(), bounds.getHeight()));
+            juce::Image probe(juce::Image::ARGB,
+                              juce::jmax(1, juce::roundToInt(bounds.getWidth() * scale) + 2),
+                              juce::jmax(1, juce::roundToInt(bounds.getHeight() * scale) + 2), true,
+                              juce::SoftwareImageType());
+            {
+                juce::Graphics g(probe);
+                group.draw(g, 1.0f, juce::AffineTransform::translation(-bounds.getX(), -bounds.getY())
+                                        .scaled(scale).translated(1.0f, 1.0f));
+            }
 
-            Read from the file rather than assumed, even though the convention
-            fixes it at -60. A hardcoded 60 would silently mis-place any artwork
-            that used a different box, which is exactly the failure the
-            convention exists to prevent -- and it would do it without a
-            compiler or a test saying anything. */
-        juce::Point<float> viewBoxOrigin(const void* data, int size)
+            int deepest = 0;
+            const juce::Image::BitmapData pixels(probe, juce::Image::BitmapData::readOnly);
+
+            for (int y = 0; y < probe.getHeight(); ++y)
+                for (int x = 0; x < probe.getWidth(); ++x)
+                    deepest = juce::jmax(deepest, (int) pixels.getPixelColour(x, y).getAlpha());
+
+            return deepest > 0 ? (float) deepest / 255.0f : 1.0f;
+        }
+
+        /** How strongly a fill or stroke inks: the colour's alpha for a colour fill. */
+        float strength(const juce::FillType& fill) noexcept
+        {
+            return fill.isInvisible() ? 0.0f : fill.getOpacity();
+        }
+
+        /** `source` in `transform`, flattened, with every outline turned to wind positively
+            and every hole (inside an odd number of outlines) negatively, so overlapping ink
+            can share one non-zero filled path. */
+        juce::Path oriented(const juce::Path& source, const juce::AffineTransform& transform)
+        {
+            // A quarter of a device pixel at maximum zoom.
+            constexpr float tolerance = 0.25f / 80.0f;
+
+            std::vector<std::vector<juce::Point<float>>> contours;
+
+            for (juce::PathFlatteningIterator it(source, transform, tolerance); it.next();)
+            {
+                if (it.subPathIndex == 0)
+                    contours.push_back({{it.x1, it.y1}});
+
+                contours.back().push_back({it.x2, it.y2});
+            }
+
+            std::vector<juce::Path> shapes;
+
+            for (const auto& c : contours)
+            {
+                juce::Path p;
+                p.startNewSubPath(c.front());
+                for (size_t i = 1; i < c.size(); ++i)
+                    p.lineTo(c[i]);
+                p.closeSubPath();
+                shapes.push_back(std::move(p));
+            }
+
+            juce::Path result;
+
+            for (size_t i = 0; i < contours.size(); ++i)
+            {
+                auto points = contours[i];
+                float area = 0.0f;
+
+                for (size_t k = 0; k < points.size(); ++k)
+                {
+                    const auto& a = points[k];
+                    const auto& b = points[(k + 1) % points.size()];
+                    area += a.x * b.y - b.x * a.y;
+                }
+
+                int depth = 0;
+
+                for (size_t j = 0; j < contours.size(); ++j)
+                    if (j != i && shapes[j].contains(points.front(), 0.0f))
+                        ++depth;
+
+                // Positive area is clockwise on screen (y down).
+                if ((area > 0.0f) != (depth % 2 == 0))
+                    std::reverse(points.begin(), points.end());
+
+                result.startNewSubPath(points.front());
+                for (size_t k = 1; k < points.size(); ++k)
+                    result.lineTo(points[k]);
+                result.closeSubPath();
+            }
+
+            return result;
+        }
+
+        void addInk(SymbolArtwork& out, const juce::Path& path, float alpha)
+        {
+            // Merge into the previous run if it has the same opacity.
+            if (out.ink.empty() || ! juce::approximatelyEqual(out.ink.back().alpha, alpha))
+                out.ink.push_back({ {}, alpha });
+
+            out.ink.back().path.addPath(path);
+        }
+
+        /** Every fill and stroke outline, in grid units, grouped by opacity. Strokes are
+            outlined in their own space and then transformed, as SVG specifies. */
+        void collectInk(const juce::Drawable& drawable, SymbolArtwork& out,
+                        juce::AffineTransform accumulated, float alpha, bool isDocument)
+        {
+            const auto here = drawable.getDrawableTransform().followedBy(accumulated);
+
+            if (const auto* shape = dynamic_cast<const juce::DrawablePath*>(&drawable))
+            {
+                // Fill first, then the stroke over it, each at its own opacity.
+                if (const auto fill = strength(shape->getFill()); fill > 0.0f)
+                {
+                    addInk(out, oriented(shape->getPath(), here), alpha * fill);
+                }
+
+                if (const auto stroke = strength(shape->getStrokeFill());
+                    stroke > 0.0f && shape->getStrokeType().getStrokeThickness() > 0.0f)
+                {
+                    // Twenty times JUCE's default precision, so curves stay round at maximum zoom.
+                    juce::Path outline;
+                    shape->getStrokeType().createStrokedPath(outline, shape->getPath(), {}, 20.0f);
+                    addInk(out, oriented(outline, here), alpha * stroke);
+                }
+            }
+
+            if (const auto* composite = dynamic_cast<const juce::DrawableComposite*>(&drawable))
+            {
+                // Groups carry an element's opacity; the document itself is full strength.
+                const float groupAlpha = isDocument ? alpha : alpha * measureOpacity(*composite);
+
+                for (int i = 0; i < composite->getNumChildren(); ++i)
+                    collectInk(composite->getChild(i), out, here, groupAlpha, false);
+            }
+        }
+
+        /** The file's viewBox in SVG units, or empty if it has none. */
+        juce::Rectangle<float> viewBoxOf(const void* data, int size)
         {
             const auto text = juce::String::createStringFromData(data, size);
 
@@ -182,22 +285,26 @@ namespace Celine
                     xml->getStringAttribute("viewBox").trim(), " ,", "");
                 numbers.removeEmptyStrings();
 
+                if (numbers.size() >= 4)
+                    return {numbers[0].getFloatValue(), numbers[1].getFloatValue(),
+                            numbers[2].getFloatValue(), numbers[3].getFloatValue()};
+
                 if (numbers.size() >= 2)
-                    return {numbers[0].getFloatValue(), numbers[1].getFloatValue()};
+                    return {numbers[0].getFloatValue(), numbers[1].getFloatValue(), 0.0f, 0.0f};
             }
 
             return {};
         }
 
-        /** Loads one asset by *filename*, or leaves it empty if there isn't one.
+        /** The viewBox origin, read from the file. JUCE 9's parser (LunaSVG) moves the viewBox
+            to (0,0), so this is needed to put (0,0) back at the part's centre. */
+        juce::Point<float> viewBoxOrigin(const void* data, int size)
+        {
+            return viewBoxOf(data, size).getPosition();
+        }
 
-            Matched on the original filename rather than on the C++ identifier
-            JUCE derives from it. That derivation is not the obvious one --
-            "capacitor-polarised.svg" becomes `capacitorpolarised_svg`, with the
-            hyphen dropped rather than turned into an underscore -- and guessing
-            it wrong is silent: the part simply draws as nothing but its pins.
-            Asking for the filename means the rule never has to be guessed, and
-            "drop a file in with this name" is the whole contract. */
+        /** Loads an asset by original filename (not JUCE's derived identifier, which drops
+            hyphens). Empty if missing. */
         SymbolArtwork load(const juce::String& name)
         {
             SymbolArtwork artwork;
@@ -217,37 +324,38 @@ namespace Celine
                     data != nullptr && size > 0)
                     if (const auto drawable = juce::Drawable::createFromImageData(data, (size_t) size))
                     {
-                        // Seeded with the viewBox origin, so the parser's
-                        // normalisation is cancelled before anything is cached.
-                        const auto origin = viewBoxOrigin(data, size);
-                        collect(*drawable, artwork,
-                                juce::AffineTransform::translation(origin.x, origin.y));
+                        // Offset so the viewBox's centre is the part's centre, whatever the file's origin.
+                        // A file with no viewBox uses its origin.
+                        const auto box = viewBoxOf(data, size);
+                        const auto shift = box.isEmpty() ? viewBoxOrigin(data, size)
+                                                         : juce::Point<float>(-box.getWidth() * 0.5f,
+                                                                              -box.getHeight() * 0.5f);
+                        collect(*drawable, artwork, juce::AffineTransform::translation(shift.x, shift.y));
+                        collectInk(*drawable, artwork,
+                                   juce::AffineTransform::translation(shift.x, shift.y)
+                                       .scaled(1.0f / unitsPerGrid, 1.0f / unitsPerGrid),
+                                   1.0f, true);
+
+                        // Centred like the paths.
+                        if (! box.isEmpty())
+                            artwork.viewBox = box.withPosition(-box.getWidth() * 0.5f, -box.getHeight() * 0.5f)
+                                              / unitsPerGrid;
                     }
 
                 break;
             }
 
-            // A part with no artwork draws as nothing at all, which looks like a
-            // bug in the schematic rather than a missing file.
+            // A missing asset draws as nothing.
             jassert(! artwork.isEmpty());
 
-            // Measured here, with the paths, so nothing can hold artwork whose
-            // bounds were never taken.
+            // Measured with the paths, so bounds always exist.
             artwork.bounds = measure(artwork);
 
             return artwork;
         }
 
-        /** The parsed artwork, one slot per asset.
-
-            A `DeletedAtShutdown` rather than a plain function-local static, for
-            the same reason Fonts.cpp's cache is one: the paths inside are
-            leak-counted JUCE objects, and a static holding them outlives the
-            detector that counts them. What that looks like is
-            "*** Leaked objects detected: 165 instance(s) of class Path" and an
-            assertion at the end of every single test run -- a permanent false
-            positive, which is worse than no leak checking at all because it
-            trains you to ignore the one that matters. */
+        /** Parsed artwork, one slot per asset. DeletedAtShutdown rather than a static, so the
+            cached Paths are freed before JUCE's leak detector runs. */
         struct ArtworkCache final : public juce::DeletedAtShutdown
         {
             ~ArtworkCache() override { instance = nullptr; }
@@ -260,7 +368,7 @@ namespace Celine
 
         ArtworkCache* ArtworkCache::instance = nullptr;
 
-        /** Parsed once each, on first use, and found again by index. */
+        /** Parsed on first use, then found by index. */
         const SymbolArtwork& cached(int asset)
         {
             if (ArtworkCache::instance == nullptr)
@@ -279,13 +387,8 @@ namespace Celine
         }
 
         //======================================================================
-        /** Which artwork each model of a part wants, worked out once.
-
-            The decision is made from the model's *name* or *description*, so
-            that reordering the lists in Element.h cannot silently swap a
-            symbol -- but those reads build StringArrays, and doing that per part
-            per frame is exactly the kind of thing that made painting allocate.
-            Resolved into a small table the first time it is asked for instead. */
+        /** Which artwork each model of a part uses, worked out once from the model's group or
+            description (not its index) and cached. */
         template <typename Decide>
         const std::vector<int>& modelTable(ElementType type, Decide&& decide)
         {
@@ -315,9 +418,7 @@ namespace Celine
 
         int diodeAsset(int modelIndex)
         {
-            // From the dropdown heading, as a transistor's arrow is from its
-            // polarity: the heading *is* the kind of junction, and a part
-            // number -- a 1N5817, a BAT41 -- says nothing about it.
+            // From the model's group (Silicon, Zener, ...), not its part number.
             const auto& table = modelTable(ElementType::Diode, [](int model)
             {
                 const auto group = getModelGroup(ElementType::Diode, model);
@@ -343,8 +444,7 @@ namespace Celine
         }
 
         //======================================================================
-        /** The one place a part's state becomes a choice of artwork. No strings:
-            this is on the paint path. */
+        /** Maps a part's state to its artwork. No strings: this is on the paint path. */
         int assetFor(const Element& element)
         {
             switch (element.type)
@@ -366,16 +466,12 @@ namespace Celine
                 case ElementType::Transformer:          return (int) Asset::Transformer;
                 case ElementType::CenterTapTransformer: return (int) Asset::TransformerCt;
 
-                // The variants. Each is a file of its own rather than a flag on
-                // one, so replacing "the open switch" is replacing one drawing.
+                // Variants: one file per state.
                 case ElementType::Capacitor:
                     return (int) (element.polarised ? Asset::CapacitorPolarised : Asset::Capacitor);
 
                 case ElementType::Switch:
                     return (int) (element.closed ? Asset::SwitchClosed : Asset::SwitchOpen);
-
-                case ElementType::Spdt:
-                    return (int) (element.closed ? Asset::SpdtA : Asset::SpdtB);
 
                 case ElementType::Diode:
                     return diodeAsset(element.modelIndex);
@@ -392,9 +488,19 @@ namespace Celine
                     return polarityAsset(ElementType::Mosfet, element.modelIndex,
                                          Asset::MosfetN, Asset::MosfetP);
 
-                // A note is its own text, a group box a frame whose size is
-                // dragged, and a node a tag as wide as the name written in it.
-                // None of the three is a picture of a part, so none has a file.
+                // A changeover: one file per throw the lever can be on, plus the middle of an
+                // ON-OFF-ON. ON-ON and ON-OFF-ON share the two throw drawings.
+                case ElementType::Spdt:
+                {
+                    const int on = element.getThrowAt(element.switchPosition);
+
+                    if (element.getSwitchThrows() == 3)
+                        return (int) (on == 0 ? Asset::Sp3tA : on == 1 ? Asset::Sp3tB : Asset::Sp3tC);
+
+                    return (int) (on == 0 ? Asset::SpdtA : on == 1 ? Asset::SpdtB : Asset::SpdtOff);
+                }
+
+                // Text, group boxes and nodes are drawn in code.
                 case ElementType::Text:
                 case ElementType::Rectangle:
                 case ElementType::Node:

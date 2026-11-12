@@ -1,10 +1,6 @@
-// The parts added with the MOSFET: every new model held to the datasheet it was
-// fitted to, the device maths that came with them held to its own derivatives,
-// and each new part type followed from the drawing to the engine.
-//
-// Datasheet figures are checked through the engine's own equations -- a
-// device's linearise(), or a Circuit solved to its bias point -- rather than an
-// independent formula, so what is measured is the model the solver runs.
+// Device models held to their datasheets, device maths held to its own derivatives,
+// and each part type followed from the drawing to the engine. Datasheet figures are
+// checked through the engine's own equations (linearise(), or a Circuit's bias point).
 
 #include <CelineEngine/Circuits.h>
 #include <Schematic/SchematicBuilder.h>
@@ -29,8 +25,8 @@ namespace
         double vbe, hfe;
     };
 
-    /** Terminal currents of an NPN at Vbe, with its collector held `vce` above
-        its emitter, from the device's own linearisation. */
+    /** NPN terminal currents at Vbe, collector `vce` above the emitter, from the device's
+        linearisation. */
     void npnCurrents(const Bjt& t, double vbe, double vce, double& collector, double& base)
     {
         DeviceLinearisation out {};
@@ -60,10 +56,8 @@ namespace
         return { lo, collector / base };
     }
 
-    /** The same through a real Circuit, which is the only way to reach a
-        Darlington: addTransistor() builds the pair. The collector is held by a
-        supply and the base by a swept source, and both currents are read off
-        the sources. */
+    /** The same through a real Circuit (the only way to reach a Darlington). Collector on a
+        supply, base on a swept source; currents read off the sources. */
     BjtPoint circuitNpnAt(const BjtModel& model, double ic, double vce = 5.0)
     {
         Circuit circuit;
@@ -90,8 +84,7 @@ namespace
         return { lo, -circuit.getSourceCurrent(supply) / -circuit.getSourceCurrent(drive) };
     }
 
-    /** All three terminal currents of an NPN at (Vbe, Vbc), from the device's
-        own linearisation: base and collector currents in, emitter current out. */
+    /** All three NPN terminal currents at (Vbe, Vbc): base and collector in, emitter out. */
     struct BjtTerminals
     {
         double base, collector, emitter;
@@ -122,9 +115,8 @@ namespace
         return 0.5 * (lo + hi);
     }
 
-    /** Common-emitter h-parameters at a Vce and an emitter current, the way a
-        datasheet quotes them: hie and hfe with the collector voltage held,
-        hoe with the base current held. */
+    /** Common-emitter h-parameters at a Vce and emitter current, as datasheets quote them:
+        hie and hfe with Vce held, hoe with Ib held. */
     struct HParameters
     {
         double hie, hfe, hoe;
@@ -150,16 +142,14 @@ namespace
         return { 1.0 / gBase, hfe, collectorVsVce - hfe * baseVsVce };
     }
 
-    /** Vbe and Vce with both the collector and base currents forced -- the
-        datasheet's saturation test. For a trial Vbe, the Vbc that carries the
-        collector current; then the Vbe whose base current is the forced one. */
+    /** Vbe and Vce with collector and base currents both forced (the datasheet saturation
+        test). */
     std::pair<double, double> saturationAt(const BjtModel& model, double ic, double ib)
     {
         const auto vbcFor = [&](double vbe)
         { return risingRoot([&](double vbc) { return ic - npnTerminals(model, vbe, vbc).collector; }, vbe - 20.0, vbe + 0.3); };
 
-        // Starting from the active-region Vbe, where the base takes less than
-        // it is being given.
+        // Start from the active-region Vbe.
         const double active = npnAt(model, ic).vbe;
         const double vbe = risingRoot([&](double v) { return npnTerminals(model, v, vbcFor(v)).base - ib; },
                                       active, active + 0.4);
@@ -251,8 +241,8 @@ namespace
     //==========================================================================
     // Diodes
 
-    /** The voltage across a diode -- series resistance, guard ring and all,
-        since those are wired by addDiode() -- at a forward current. */
+    /** The voltage across a diode at a forward current, including the series resistance
+        and guard ring addDiode() wires. */
     double diodeVoltageAt(const DiodeModel& model, double current)
     {
         Circuit circuit;
@@ -263,7 +253,7 @@ namespace
         circuit.setOutputNode("a");
         circuit.prepare(sampleRate);
 
-        // Up to 4 V, so an LED's drop is inside the bracket.
+        // Up to 4 V, to bracket an LED's drop.
         double lo = 0.0, hi = 4.0;
 
         for (int i = 0; i < 80; ++i)
@@ -334,9 +324,8 @@ namespace
 
 TEST_CASE("The BC107-109 / BC547-550 grades reproduce their datasheet", "[bjt][model]")
 {
-    // Philips's typicals, reprinted on the Comset BC107-109 sheet: hFE at 10 uA
-    // and at 2 mA, Vce 5 V. Each grade was refitted to exactly these, because
-    // Philips's own extracted cards hold the gain flat to 10 uA.
+    // Philips typicals (Comset BC107-109 sheet): hFE at 10 uA and 2 mA, Vce 5 V. Each
+    // grade is fitted to these.
     struct Grade { BjtModel model; double at10uA, at2mA, low, high; };
 
     const Grade grades[] = {
@@ -368,11 +357,8 @@ TEST_CASE("The BC107-109 / BC547-550 grades reproduce their datasheet", "[bjt][m
 
 TEST_CASE("The 2N3904 and 2N3906 land on Fairchild's typical curves", "[bjt][model]")
 {
-    // Fairchild's own curves (docs/specs/transistors, 25 C), digitised from the
-    // vector paths: pulsed current gain and base-emitter on voltage. The 2N3904
-    // at Vce 5 V, the 2N3906 at Vce 1 V. Fairchild's SPICE card printed on the
-    // same 2N3904 sheet gives 0.6 times this gain, and the model that took only
-    // its IS and BF gave twice it.
+    // Fairchild's curves (docs/specs/transistors, 25 C): pulsed hFE and Vbe(on). 2N3904
+    // at Vce 5 V, 2N3906 at Vce 1 V.
     struct Point { double ic, hfe, vbe; };
 
     const Point npn[] = { { 0.1e-3, 231.0, 0.608 }, { 1.0e-3, 228.0, 0.667 }, { 10.0e-3, 223.0, 0.727 }, { 100.0e-3, 159.0, -1.0 } };
@@ -388,8 +374,7 @@ TEST_CASE("The 2N3904 and 2N3906 land on Fairchild's typical curves", "[bjt][mod
             CHECK(at.vbe == Catch::Approx(p.vbe).margin(0.003));
     }
 
-    // A PNP is the same device with every sign turned round, so the NPN helper
-    // reads it with the polarity flipped.
+    // A PNP is the NPN with every sign flipped.
     auto mirrored = BjtModel::pnpSilicon();
     mirrored.polarity = BjtModel::Polarity::NPN;
 
@@ -406,10 +391,9 @@ TEST_CASE("The 2N3904 and 2N3906 land on Fairchild's typical curves", "[bjt][mod
 
 TEST_CASE("The 2N5088 and 2N5089 reproduce Fairchild's card and sheet", "[bjt][model]")
 {
-    // The datasheet's own SPICE card, run through the engine -- which now gives
-    // ngspice's gains for it to the decimal. Its minima:
-    // 2N5088 300 / 350 / 300 at 0.1 / 1 / 10 mA (900 max at 0.1 mA), 2N5089
-    // 400 / 450 / 400 (1200 max).
+    // The datasheet's SPICE card through the engine (matches ngspice). Minima: 2N5088
+    // 300 / 350 / 300 at 0.1 / 1 / 10 mA (900 max at 0.1 mA); 2N5089 400 / 450 / 400
+    // (1200 max).
     struct Point { double ic, card, minimum; };
 
     const Point p5088[] = { { 100.0e-6, 483.7, 300.0 }, { 1.0e-3, 643.9, 350.0 }, { 10.0e-3, 546.2, 300.0 } };
@@ -462,7 +446,7 @@ TEST_CASE("The MPSA13 is two transistors and reproduces onsemi's curves", "[bjt]
     const auto m = BjtModel::npnMPSA13();
     REQUIRE(m.darlington);
 
-    // Two devices on the netlist: four ports where one transistor has two.
+    // A Darlington is two devices: four ports.
     Circuit circuit;
     circuit.addTransistor("b", "c", "gnd", m);
     circuit.addResistor("in", "b", 1.0e6);
@@ -485,14 +469,13 @@ TEST_CASE("The MPSA13 is two transistors and reproduces onsemi's curves", "[bjt]
         CHECK(at.vbe == Catch::Approx(p.vbe).margin(0.015));
     }
 
-    // Guaranteed 5000 at 10 mA; a typical part clears it by a mile.
+    // Guaranteed 5000 at 10 mA.
     CHECK(circuitNpnAt(m, 10.0e-3).hfe > 5000.0);
 }
 
 TEST_CASE("A Darlington's two halves move together on a model swap", "[bjt][darlington]")
 {
-    // Swapping the card on the pair has to land both halves on it: the result
-    // must be the pair that would have been built with the new card.
+    // Swapping the card on a pair must update both halves.
     auto build = [](const BjtModel& model, Circuit& circuit, ComponentId& collector, ComponentId& base)
     {
         const auto id = circuit.addTransistor("b", "c", "gnd", model);
@@ -521,8 +504,8 @@ TEST_CASE("A Darlington's two halves move together on a model swap", "[bjt][darl
     CHECK(swapped.getSourceCurrent(swappedC) == Catch::Approx(fresh.getSourceCurrent(freshC)).epsilon(1.0e-9));
     CHECK(swapped.getSourceCurrent(swappedB) == Catch::Approx(fresh.getSourceCurrent(freshB)).epsilon(1.0e-9));
 
-    // And a single transistor handed a Darlington's card stays single: its
-    // neighbour in the list is left alone.
+    // A single transistor given a Darlington card stays single; its neighbour is
+    // untouched.
     Circuit two;
     const auto first = two.addTransistor("b1", "c", "gnd", BjtModel::npnSilicon());
     two.addTransistor("b2", "c", "gnd", BjtModel::npnSilicon());
@@ -537,7 +520,7 @@ TEST_CASE("A Darlington's two halves move together on a model swap", "[bjt][darl
     two.setOutputNode("c");
     two.prepare(sampleRate);
 
-    // Different cards, different base currents -- the second kept the 2N3904.
+    // Different cards, different base currents.
     CHECK(std::abs(two.getSourceCurrent(b1) - two.getSourceCurrent(b2)) > 1.0e-9);
 }
 
@@ -547,11 +530,11 @@ TEST_CASE("The high-injection knee turns the gain over and keeps its Jacobian ex
     auto without = withKnee;
     without.forwardKneeCurrent = 0.0;
 
-    // Below the knee it barely matters; past it, it is most of the story.
+    // The knee barely matters below it.
     CHECK(npnAt(withKnee, 100.0e-6).hfe == Catch::Approx(npnAt(without, 100.0e-6).hfe).epsilon(0.02));
     CHECK(npnAt(withKnee, 30.0e-3).hfe < 0.75 * npnAt(without, 30.0e-3).hfe);
 
-    // Newton relies on the derivatives being those of what is stamped.
+    // Newton relies on the derivatives matching what is stamped.
     Bjt t {};
     t.model = withKnee;
 
@@ -569,9 +552,8 @@ TEST_CASE("The NTE102 and NTE103 reproduce NTE's sheet", "[bjt][model][germanium
     CHECK(npnAt(m, 12.0e-3, 0.15).hfe == Catch::Approx(80.0).epsilon(0.02));
     CHECK(npnAt(m, 24.0e-3, 0.20).hfe == Catch::Approx(90.0).epsilon(0.02));
 
-    // h-parameters at Vce 6 V, Ie 1 mA: hfe 135, hie 3.6k, hoe 50 uS. hie
-    // is allowed more, since the sheet's includes a base spreading resistance
-    // the engine has no terminal for.
+    // h-parameters at Vce 6 V, Ie 1 mA: hfe 135, hie 3.6k, hoe 50 uS. hie gets more room:
+    // the sheet's includes base spreading resistance the model lacks.
     const auto h = smallSignalAt(m, 6.0, 1.0e-3);
     INFO("hfe " << h.hfe << ", hie " << h.hie << ", hoe " << h.hoe);
     CHECK(h.hfe == Catch::Approx(135.0).epsilon(0.01));
@@ -588,8 +570,7 @@ TEST_CASE("The NTE102 and NTE103 reproduce NTE's sheet", "[bjt][model][germanium
     CHECK(vbe12 == Catch::Approx(0.27).margin(0.003));
     CHECK(vbe24 == Catch::Approx(0.30).margin(0.003));
 
-    // Cutoff: ICBO 0.8 uA at Vcb 12 V, IEBO 0.5 uA at Veb 2.5 V -- the
-    // ideal junctions' own leakage, with no ISC to help.
+    // Cutoff: ICBO 0.8 uA at Vcb 12 V, IEBO 0.5 uA at Veb 2.5 V, from the ideal junctions.
     CHECK(icboAt(m, 12.0) == Catch::Approx(0.8e-6).epsilon(0.01));
     CHECK(ieboAt(m, 2.5) == Catch::Approx(0.5e-6).epsilon(0.01));
     CHECK(m.baseCollectorLeakage == 0.0);
@@ -646,8 +627,7 @@ TEST_CASE("The 2SC2240 grades reproduce Toshiba's sheet", "[bjt][model]")
     CHECK(saturationAt(gr, 1.0e-3, 0.1e-3).second == Catch::Approx(0.078).margin(0.004));
     CHECK(saturationAt(gr, 10.0e-3, 1.0e-3).second == Catch::Approx(0.063).margin(0.004));
 
-    // The sheet's h-parameters put hie at hfe Vt / Ic, i.e. NF = 1 and no
-    // visible base resistance. The model has to agree.
+    // The sheet's hie is hfe Vt / Ic (NF = 1, no visible base resistance).
     const auto h = smallSignalAt(gr, 6.0, 1.0e-3);
     CHECK(h.hie == Catch::Approx(h.hfe * gr.thermalVoltage / 1.0e-3).epsilon(0.02));
 
@@ -693,8 +673,7 @@ TEST_CASE("The KT88 reproduces the JJ sheet", "[valve][model]")
     CHECK(triodeRi == Catch::Approx(670.0).epsilon(1.0e-3));
     CHECK(triodeS == Catch::Approx(12.0e-3).epsilon(0.01));
 
-    // The plate characteristics, at Ug2 = 300 V and Ua 250 V -- held out of
-    // everything but the split of MU against KP. Read off the sheet.
+    // Plate characteristics at Ug2 300 V, Ua 250 V, read off the sheet.
     const std::pair<double, double> family[] = { { -5.0, 351.0e-3 }, { -10.0, 269.9e-3 }, { -15.0, 194.9e-3 },
                                                  { -20.0, 145.8e-3 }, { -25.0, 108.6e-3 }, { -30.0, 73.8e-3 },
                                                  { -35.0, 38.7e-3 } };
@@ -713,8 +692,7 @@ TEST_CASE("The KT88 reproduces the JJ sheet", "[valve][model]")
 
 namespace
 {
-    /** A point read off a datasheet's plate characteristics: control-grid
-        volts, plate volts, plate milliamps. */
+    /** A plate-characteristics point: grid volts, plate volts, plate mA. */
     struct SheetPoint
     {
         double ug1, ua, ia;
@@ -733,12 +711,9 @@ namespace
 
 TEST_CASE("Every pentode lands on its sheet's plate family", "[valve][model]")
 {
-    // Digitised from the vector paths in docs/specs/tubes, each curve at 50,
-    // 100, 200, 300 and 400 V where the sheet draws it -- and above the bottom
-    // of the dip, on the beam tetrodes' low curves that have one, since that
-    // is secondary emission and nothing here models it. The rms each valve
-    // had in Koren's form, before the plate-slope term, is recorded beside
-    // its bound, so a refit that gives the improvement back is visible.
+    // Digitised from docs/specs/tubes at 50-400 V. Beam tetrode curves are cut above the
+    // dip (secondary emission isn't modelled). Each valve's rms before the plate-slope
+    // term is recorded beside its bound, so a regression shows.
     const std::vector<PlateFamily> families = {
         { "EL34", PentodeModel::el34(), 250.0, 9.0, 22.31,
           { { 0, 50, 217.5 }, { 0, 100, 254.3 }, { 0, 200, 271.2 }, { -5, 50, 147.5 },
@@ -820,8 +795,7 @@ TEST_CASE("Every pentode lands on its sheet's plate family", "[valve][model]")
 
 TEST_CASE("The refitted pentodes keep their datasheet operating points", "[valve][model]")
 {
-    // The plate-slope refit was made with these held exactly; this is what
-    // stops a later refit trading the operating point for a better family.
+    // Held exactly by the plate-slope refit.
     struct Point
     {
         const char* name;
@@ -859,8 +833,7 @@ TEST_CASE("The refitted pentodes keep their datasheet operating points", "[valve
         CHECK(ri / 1.0e3 == Catch::Approx(p.ri).epsilon(1.0e-3));
     }
 
-    // The EL84's quoted S is the one figure the form cannot reach; it has sat
-    // at 11.06 against 11.3 since its first fit.
+    // The EL84's quoted S is out of the form's reach: 11.06 against 11.3.
     const double s84 = (pentodeAt(PentodeModel::el84(), -7.3 + h, 250.0, 250.0).plate
                         - pentodeAt(PentodeModel::el84(), -7.3 - h, 250.0, 250.0).plate) / (2.0 * h);
     CHECK(s84 * 1.0e3 == Catch::Approx(11.3).epsilon(0.03));
@@ -873,8 +846,7 @@ TEST_CASE("Two pentode checks no fit ever saw", "[valve][model]")
     const auto pushPull = pentodeAt(PentodeModel::u6l6gc(), -17.5, 270.0, 270.0);
     CHECK(pushPull.plate * 1.0e3 == Catch::Approx(67.0).epsilon(0.03));
 
-    // The 6V6S sheet's only plate family is triode-connected -- screen strapped
-    // to plate -- so it reads the cathode current. Ug1 0 to -40 V.
+    // The 6V6S sheet only has a triode-connected family, so it reads cathode current.
     const SheetPoint triode[] = {
         { 0, 50, 15.9 }, { 0, 100, 36.4 }, { 0, 150, 61.9 }, { 0, 200, 92.1 }, { 0, 250, 126.3 },
         { -10, 100, 5.8 }, { -10, 150, 20.5 }, { -10, 200, 40.5 }, { -10, 250, 64.8 },
@@ -899,9 +871,7 @@ TEST_CASE("Two pentode checks no fit ever saw", "[valve][model]")
 
 TEST_CASE("The plate-slope term's derivative is the derivative of its current", "[valve][model]")
 {
-    // Newton converges on whatever the Jacobian says, so a slope that does not
-    // match its current is a model that quietly solves something else. Checked
-    // through the knee, across it and below the cathode.
+    // The Jacobian must match the current, through, across and below the knee.
     for (const auto& model : { PentodeModel::el34(), PentodeModel::el84(), PentodeModel::kt88(),
                                PentodeModel::u6l6gc() })
     {
@@ -943,8 +913,7 @@ TEST_CASE("The 1N4001 reproduces its card and the Diodes Inc curve", "[diode][mo
     // The Diodes Inc typical curve (docs/specs): 0.70 V at 10 mA.
     CHECK(diodeVoltageAt(m, 10.0e-3) == Catch::Approx(0.70).margin(0.015));
 
-    // Softer than a 1N4148: lower at a microamp-ish current, and a wider
-    // voltage span over the same three decades.
+    // Softer than a 1N4148: lower at small currents, wider span over three decades.
     const auto sig = DiodeModel::d1n4148();
     CHECK(diodeVoltageAt(m, 10.0e-6) < diodeVoltageAt(sig, 10.0e-6));
     CHECK(diodeVoltageAt(m, 10.0e-3) - diodeVoltageAt(m, 10.0e-6)
@@ -953,9 +922,8 @@ TEST_CASE("The 1N4001 reproduces its card and the Diodes Inc curve", "[diode][mo
 
 TEST_CASE("The 1N4148, 1N5817 and LEDs land on their makers' curves", "[diode][model]")
 {
-    // Each from its maker's typical forward curve at 25 C, digitised from the
-    // sheet's vector paths (docs/specs/diodes): Vishay's 1N4148 and 1N5817,
-    // and Kingbright's WP7113 red (GaAsP), green (GaP) and blue (InGaN).
+    // Makers' typical forward curves at 25 C (docs/specs/diodes): Vishay 1N4148 and
+    // 1N5817, Kingbright WP7113 red (GaAsP), green (GaP) and blue (InGaN).
     struct Point { double current, volts, margin; };
 
     const auto check = [](const char* name, const DiodeModel& model, std::initializer_list<Point> points)
@@ -980,6 +948,67 @@ TEST_CASE("The 1N4148, 1N5817 and LEDs land on their makers' curves", "[diode][m
     check("WP7113QBC", DiodeModel::blueLed(), { { 1.0e-3, 2.571, 0.03 }, { 5.0e-3, 2.806, 0.03 }, { 10.0e-3, 3.000, 0.03 } });
 }
 
+TEST_CASE("The Zeners land on Vishay's BZX55 sheet", "[diode][model][zener]")
+{
+    // docs/specs/diodes/BZX55-Vishay.PDF: the forward curve (Fig. 6, 25 C) and the
+    // capacitance (Fig. 5, at 2 V reverse) digitised from the vector paths; the
+    // breakdown against the table, which gives limits only. Below 5 V Fig. 5 leaves the
+    // chart straight up at 4.92 V, to 175 pF, and the low parts take that.
+    struct Part { double vz, capacitancePf, impedanceAt5mA, impedanceAt1mA, leakageVolts, leakageAmps; };
+
+    for (const auto& part : { Part { 3.9, 174.7, 85.0, 600.0, 1.0, 2.0e-6 }, Part { 4.3, 174.7, 75.0, 600.0, 1.0, 1.0e-6 },
+                              Part { 5.1, 104.4, 35.0, 550.0, 1.0, 0.1e-6 }, Part { 9.1, 46.1, 10.0, 50.0, 6.8, 0.1e-6 } })
+    {
+        const auto m = DiodeModel::zener(part.vz);
+        INFO("BZX55C" << part.vz);
+
+        // Fig. 6 is one curve for the whole series.
+        for (const auto& [current, volts] : { std::pair { 1.0e-6, 0.520 }, { 10.0e-6, 0.589 }, { 100.0e-6, 0.654 },
+                                               { 1.0e-3, 0.716 }, { 10.0e-3, 0.786 } })
+        {
+            const double v = diodeVoltageAt(m, current);
+            INFO("forward at " << current << " A: " << v << " V, sheet " << volts);
+            CHECK(v == Catch::Approx(volts).margin(0.004));
+        }
+
+        CHECK(m.junctionCapacitance == Catch::Approx(part.capacitancePf * 1.0e-12).margin(1.5e-12));
+        CHECK(m.transitTime == Catch::Approx(50.1e-9)); // Diodes Inc's BZT52 card
+
+        // Reverse, straight from the device: the voltage where it carries a current,
+        // and its slope there.
+        Diode d {};
+        d.model = m;
+        const auto reverseAt = [&](double current, double& resistance)
+        {
+            double lo = -part.vz - 2.0, hi = -part.vz + 2.0, i = 0.0, g = 0.0;
+            for (int k = 0; k < 100; ++k)
+            {
+                const double mid = 0.5 * (lo + hi);
+                evaluateDiode(d, mid, i, g);
+                (-i > current ? lo : hi) = mid;
+            }
+            evaluateDiode(d, lo, i, g);
+            resistance = 1.0 / g;
+            return -lo;
+        };
+
+        double r5 = 0.0, r1 = 0.0;
+        CHECK(reverseAt(5.0e-3, r5) == Catch::Approx(part.vz).margin(0.005)); // nominal at IZT
+        reverseAt(1.0e-3, r1);
+        INFO("ZZ " << r5 << " ohms, ZZK " << r1 << " ohms");
+        CHECK(r5 < part.impedanceAt5mA);
+        CHECK(r1 < part.impedanceAt1mA);
+
+        double i = 0.0, g = 0.0;
+        evaluateDiode(d, -part.leakageVolts, i, g);
+        CHECK(-i < part.leakageAmps);
+    }
+
+    // Tunnelling below about 6 V, avalanche above: the low-voltage part's knee is the
+    // softer, as the table's knee impedances say.
+    CHECK(DiodeModel::zener(5.1).breakdownEmission > DiodeModel::zener(9.1).breakdownEmission);
+}
+
 TEST_CASE("The BAT41 reproduces ST's typical curve", "[diode][model]")
 {
     // Figure 1 of the ST sheet (docs/specs), 25 C, and VF 0.4 V typ at 1 mA.
@@ -996,8 +1025,7 @@ TEST_CASE("The BAT41 reproduces ST's typical curve", "[diode][model]")
     // 1 V max at 200 mA.
     CHECK(diodeVoltageAt(m, 200.0e-3) < 1.0);
 
-    // Two junctions and a resistor: the Schottky behind its 35 ohms, and the
-    // guard ring across the lot.
+    // The Schottky behind its 35 ohms, with the guard ring across both.
     Circuit circuit;
     circuit.addDiode("a", "gnd", m);
     circuit.addResistor("in", "a", 1000.0);
@@ -1009,24 +1037,22 @@ TEST_CASE("The BAT41 reproduces ST's typical curve", "[diode][model]")
 
 TEST_CASE("The BAT41 sits inside General Semiconductor's sheet", "[diode][model]")
 {
-    // docs/specs/diodes/BAT41.PDF: a table, no curves -- and the same figures
-    // as ST's. Typical 0.40 V at 1 mA, which ST's own curve puts at 0.39.
+    // docs/specs/diodes/BAT41.PDF: table only, same figures as ST's. 0.40 V typ at 1 mA.
     const auto m = DiodeModel::bat41();
 
     CHECK(diodeVoltageAt(m, 1.0e-3) == Catch::Approx(0.40).margin(0.015));
     CHECK(diodeVoltageAt(m, 1.0e-3) < 0.45);
     CHECK(diodeVoltageAt(m, 200.0e-3) < 1.0);
 
-    // 100 nA max at 50 V reverse, 25 C. The model's leakage is its two
-    // saturation currents, which nothing was fitted to.
+    // 100 nA max at 50 V reverse, 25 C. Leakage is the two saturation currents (not
+    // fitted).
     CHECK(m.saturationCurrent + m.guardRingSaturationCurrent < 100.0e-9);
 }
 
 TEST_CASE("The BAT46 reproduces ST's typical curve", "[diode][model]")
 {
-    // ST's sheet (docs/specs/diodes/BAT46-ST.PDF), Fig. 1-1 (to 20 mA) and Fig. 1-2 (above), 25 C. The
-    // drafter plotted on round currents, so these are the sheet's own points.
-    // Fitted with the weight on 20 mA and below, where a pedal runs it.
+    // ST's sheet (docs/specs/diodes/BAT46-ST.PDF), Fig. 1-1 (to 20 mA) and 1-2 (above),
+    // 25 C. Weighted to 20 mA and below.
     const auto m = DiodeModel::bat46();
     const std::pair<double, double> low[] = { { 0.1e-3, 0.188 }, { 0.2e-3, 0.208 }, { 0.5e-3, 0.235 },
                                               { 1.0e-3, 0.259 }, { 2.0e-3, 0.287 }, { 3.0e-3, 0.307 },
@@ -1039,9 +1065,8 @@ TEST_CASE("The BAT46 reproduces ST's typical curve", "[diode][model]")
         CHECK(diodeVoltageAt(m, current) == Catch::Approx(volts).margin(0.003));
     }
 
-    // Above 20 mA the guard ring's own resistance, which the model has not got,
-    // shows: 16 mV high at 100 mA and 24 mV low at 500 mA, where it is three
-    // times its rating.
+    // Above 20 mA the guard ring's unmodelled resistance shows: 16 mV high at 100 mA,
+    // 24 mV low at 500 mA.
     const std::pair<double, double> high[] = { { 50.0e-3, 0.685 }, { 100.0e-3, 0.756 },
                                                { 200.0e-3, 0.820 }, { 500.0e-3, 0.914 } };
 
@@ -1056,9 +1081,7 @@ TEST_CASE("The BAT46 reproduces ST's typical curve", "[diode][model]")
     CHECK(diodeVoltageAt(m, 10.0e-3) < 0.45);
     CHECK(diodeVoltageAt(m, 250.0e-3) < 1.0);
 
-    // The leakage, which is the saturation currents and was not fitted: ST's
-    // Fig. 2 reads about 0.28 uA typical at 10 V, and both sheets say 0.5 max
-    // at 1.5 V.
+    // Leakage (not fitted): ST Fig. 2 reads about 0.28 uA at 10 V; 0.5 max at 1.5 V.
     const double leakage = m.saturationCurrent + m.guardRingSaturationCurrent;
     CHECK(leakage > 0.1e-6);
     CHECK(leakage < 0.5e-6);
@@ -1066,16 +1089,13 @@ TEST_CASE("The BAT46 reproduces ST's typical curve", "[diode][model]")
 
 TEST_CASE("A BAT46 clips lowest of the small-signal diodes", "[diode][model]")
 {
-    // 0.26 V at a milliamp: 130 mV under a BAT41, and under germanium. Only
-    // the 1N5817 goes lower -- a 1 A Schottky, whose large die puts a
-    // milliamp at a tenth of a volt (Vishay's curve, extrapolated).
+    // 0.26 V at 1 mA: under a BAT41 and germanium; only the 1N5817 (1 A die) goes lower.
     const double bat46 = diodeVoltageAt(DiodeModel::bat46(), 1.0e-3);
     CHECK(bat46 < diodeVoltageAt(DiodeModel::bat41(), 1.0e-3) - 0.1);
     CHECK(bat46 < diodeVoltageAt(DiodeModel::germanium(), 1.0e-3));
     CHECK(bat46 > diodeVoltageAt(DiodeModel::schottky(), 1.0e-3));
 
-    // But with a Schottky's sharp knee rather than germanium's soft one: less
-    // voltage across the three decades below a milliamp.
+    // But a sharper knee than germanium: less voltage across three decades.
     const auto span = [](const DiodeModel& model)
     { return diodeVoltageAt(model, 1.0e-3) - diodeVoltageAt(model, 1.0e-6); };
 
@@ -1084,8 +1104,7 @@ TEST_CASE("A BAT46 clips lowest of the small-signal diodes", "[diode][model]")
 
 TEST_CASE("A diode stack scales its series resistance and guard ring", "[diode]")
 {
-    // n composite diodes in series drop n times one at the same current --
-    // resistance, ring and all.
+    // n diodes in series drop n times one.
     Circuit circuit;
     const auto source = circuit.addVoltageSource("a", "gnd", 0.5);
     circuit.addDiode("a", "gnd", DiodeModel::bat41(), 2);
@@ -1103,9 +1122,8 @@ TEST_CASE("A diode stack scales its series resistance and guard ring", "[diode]"
 
 TEST_CASE("A slow diode gives back its stored charge when it turns off", "[diode][model][charge]")
 {
-    // Forward at +5 V through 1k, then yanked to -5 V. A diode with a transit
-    // time has TT * If of charge to give back before it blocks; one without
-    // has only its depletion capacitance's.
+    // Forward at +5 V through 1k, then switched to -5 V. A diode with transit time gives
+    // back TT * If of charge before blocking.
     auto recovered = [](const DiodeModel& model, double& forwardCurrent)
     {
         Circuit circuit;
@@ -1136,10 +1154,8 @@ TEST_CASE("A slow diode gives back its stored charge when it turns off", "[diode
         return charge;
     };
 
-    // Without its depletion capacitance, which a step this sharp through a
-    // resistor this small would set ringing at Nyquist -- the trapezoidal
-    // rule's answer to a time constant far shorter than a sample, and true of
-    // every small capacitor in the engine. It is the transit time on test.
+    // Without depletion capacitance, which would ring at Nyquist on a step this sharp:
+    // this tests transit time only.
     auto slow = DiodeModel::d1n4001();
     slow.junctionCapacitance = 0.0;
     auto instant = slow;
@@ -1156,14 +1172,14 @@ TEST_CASE("A slow diode gives back its stored charge when it turns off", "[diode
     CHECK(qSlow == Catch::Approx(slow.transitTime * ifSlow).epsilon(0.1));
     CHECK(qInstant < 0.05 * qSlow);
 
-    // At rest the two are the same diode.
+    // At rest they are the same diode.
     CHECK(ifSlow == Catch::Approx(ifInstant).epsilon(1.0e-5));
 }
 
 TEST_CASE("A 1N4001 clipper sounds different from a charge-free one", "[diode][charge]")
 {
-    // The stored charge is the audible part of a rectifier in a clipper: at
-    // 5 kHz it carries a real fraction of the junction's current.
+    // Stored charge matters in a clipper: at 5 kHz it carries a real fraction of the
+    // current.
     auto clip = [](const DiodeModel& model)
     {
         Circuit circuit;
@@ -1214,8 +1230,7 @@ TEST_CASE("A BAT41 clips between a germanium diode and a 1N4148", "[diode][model
 
 namespace
 {
-    /** Vds that carries `id` at `vgs` -- on-resistance is this over id. As a
-        magnitude, for either polarity. */
+    /** Vds that carries `id` at `vgs` (on-resistance is this over id), as a magnitude. */
     double drainVoltageFor(const MosfetModel& model, double vgs, double id)
     {
         const double p = model.polaritySign();
@@ -1230,8 +1245,7 @@ namespace
         return lo;
     }
 
-    /** The body diode's forward voltage at `current`, gate at the source -- the
-        datasheet's source-drain diode test. */
+    /** Body diode forward voltage at `current`, gate at the source. */
     double bodyDiodeVoltageAt(const MosfetModel& model, double current)
     {
         const double p = model.polaritySign();
@@ -1249,11 +1263,8 @@ namespace
 
 TEST_CASE("The JFETs are InterFET's measured models", "[jfet][model]")
 {
-    // InterFET's own SPICE models, measured on their parts, run in ngspice-47
-    // with the drain 10 V up: Idss, and the gate voltage where the drain current
-    // falls to a microamp. The engine's channel is SPICE's, so these are the
-    // models' own figures; they used to be round numbers 1.7-1.8 times too
-    // much current on the J201 and 2N5457.
+    // InterFET's SPICE models in ngspice-47, drain 10 V up: Idss, and the gate voltage
+    // where drain current falls to 1 uA.
     struct Reference { const char* name; JfetModel model; double idss, cutoff; };
 
     const Reference references[] = {
@@ -1280,7 +1291,7 @@ TEST_CASE("The JFETs are InterFET's measured models", "[jfet][model]")
         INFO(r.name << ": Idss " << drain(0.0) * 1e3 << " mA");
         CHECK(drain(0.0) == Catch::Approx(r.idss).epsilon(0.003));
 
-        // A microamp at the cutoff, within the 10 mV the sweep stepped by.
+        // 1 uA at the cutoff, within the sweep's 10 mV step.
         CHECK(drain(r.cutoff - p * 0.01) < 1.0e-6);
         CHECK(drain(r.cutoff + p * 0.01) > 1.0e-6);
     }
@@ -1288,12 +1299,10 @@ TEST_CASE("The JFETs are InterFET's measured models", "[jfet][model]")
 
 TEST_CASE("The 2N7000 reproduces Vishay's sheet", "[mosfet][model]")
 {
-    // Vishay Siliconix document 70226, typical column and typical curves, read
-    // from the PDF's own vector paths.
+    // Vishay Siliconix 70226, typical column and curves, from the PDF's vector paths.
     const auto m = MosfetModel::n2N7000();
 
-    // Vgs(th) with the drain strapped to the gate: 2.1 V at 1 mA, 2.0 V at
-    // 0.25 mA. The pair is what fixes n.
+    // Vgs(th), drain strapped to gate: 2.1 V at 1 mA, 2.0 V at 0.25 mA (fixes n).
     CHECK(thresholdAt(m, 1.0e-3) == Catch::Approx(2.10).margin(0.005));
     CHECK(thresholdAt(m, 0.25e-3) == Catch::Approx(2.00).margin(0.005));
 
@@ -1307,12 +1316,11 @@ TEST_CASE("The 2N7000 reproduces Vishay's sheet", "[mosfet][model]")
         CHECK(drainCurrent(m, vgs, 4.5) == Catch::Approx(id).epsilon(0.07));
     }
 
-    // In the triode region too, which is where the source resistance shows.
+    // Also in the triode region, where source resistance shows.
     CHECK(drainCurrent(m, 5.0, 1.0) == Catch::Approx(0.296).epsilon(0.1));
     CHECK(drainCurrent(m, 7.0, 1.0) == Catch::Approx(0.386).epsilon(0.05));
 
-    // rDS(on): 2.21 ohm at Vgs 10 V and 0.1 A, 3.2 at Vgs 5 V and 50 mA. With
-    // no source resistance the first came out 0.79.
+    // rDS(on): 2.21 ohm at Vgs 10 V, 0.1 A; 3.2 at Vgs 5 V, 50 mA.
     CHECK(drainVoltageFor(m, 10.0, 0.1) / 0.1 == Catch::Approx(2.21).epsilon(0.1));
     CHECK(drainVoltageFor(m, 5.0, 0.05) / 0.05 == Catch::Approx(3.20).epsilon(0.02));
 
@@ -1345,8 +1353,8 @@ TEST_CASE("The 2N7000 reproduces Vishay's sheet", "[mosfet][model]")
 
 TEST_CASE("The BS250 reproduces Vishay's sheet", "[mosfet][model]")
 {
-    // Vishay Siliconix document 70209 (TP0610L/T, VP0610L/T, BS250), typical
-    // curves. Its typical column is the TP0610L's, so only the curves are held.
+    // Vishay Siliconix 70209 (TP0610L/T, VP0610L/T, BS250), typical curves only (the
+    // typical column is the TP0610L's).
     const auto m = MosfetModel::pBS250();
     REQUIRE(m.channel == MosfetModel::Channel::P);
 
@@ -1362,9 +1370,8 @@ TEST_CASE("The BS250 reproduces Vishay's sheet", "[mosfet][model]")
         CHECK(magnitude(vgs, 10.0) == Catch::Approx(id).epsilon(0.22));
     }
 
-    // Output characteristics at -Vds 4.5 V: the model runs 7-20% under the
-    // middle of the family and on it at either end, which is the most one
-    // source resistance bends a square law.
+    // Output characteristics at -Vds 4.5 V: the model is 7-20% under mid-family, on it at
+    // the ends.
     const std::pair<double, double> output[] = { { 4.0, 0.064 }, { 5.0, 0.270 }, { 6.0, 0.551 },
                                                  { 7.0, 0.796 }, { 8.0, 0.943 } };
 
@@ -1394,8 +1401,8 @@ TEST_CASE("The BS250 reproduces Vishay's sheet", "[mosfet][model]")
 
 TEST_CASE("A MOSFET's source resistance solves its own equation", "[mosfet][model]")
 {
-    // What the device stamps has to be the root of I = f(Vgs - I Rs, Vds - I Rs),
-    // with f the bare channel -- in every region and in both directions.
+    // The stamped current must solve I = f(Vgs - I Rs, Vds - I Rs) for the bare channel f,
+    // in every region and direction.
     auto withRs = MosfetModel::n2N7000();
     auto bare = withRs;
     bare.sourceResistance = 0.0;
@@ -1414,7 +1421,7 @@ TEST_CASE("A MOSFET's source resistance solves its own equation", "[mosfet][mode
             CHECK(i == Catch::Approx(f).epsilon(1.0e-10).margin(1.0e-15));
         }
 
-    // No resistance is no change at all, bit for bit.
+    // Zero resistance changes nothing, bit for bit.
     for (const double vgs : { 1.9, 2.4, 5.0 })
         for (const double vds : { -0.3, 0.1, 5.0 })
         {
@@ -1426,8 +1433,7 @@ TEST_CASE("A MOSFET's source resistance solves its own equation", "[mosfet][mode
             CHECK(juce::exactlyEqual(ad, bd));
         }
 
-    // And it is what bends the curve: at a milliamp it barely moves anything,
-    // at half an amp it takes a third of the current away.
+    // At 1 mA Rs barely matters; at half an amp it removes a third of the current.
     CHECK(drainCurrent(withRs, 2.1, 5.0) == Catch::Approx(drainCurrent(bare, 2.1, 5.0)).epsilon(0.03));
     CHECK(drainCurrent(withRs, 5.0, 5.0) < 0.75 * drainCurrent(bare, 5.0, 5.0));
 }
@@ -1445,10 +1451,8 @@ TEST_CASE("A MOSFET is off at zero gate voltage and exponential below threshold"
 
 TEST_CASE("A MOSFET channel is symmetric and smooth through Vds = 0", "[mosfet][model]")
 {
-    // The channel alone: the body diode is deliberately one-sided, and by
-    // -0.5 V it is already carrying tens of microamps. So is the source
-    // resistance, which sits at one end only -- a real part is not symmetric
-    // either -- so it goes too, and its own smoothness is checked below.
+    // The channel alone: the body diode and source resistance are one-sided, so removed
+    // here (source resistance is checked below).
     auto m = MosfetModel::n2N7000();
     m.bodyDiodeSaturationCurrent = 0.0;
     m.sourceResistance = 0.0;
@@ -1463,7 +1467,7 @@ TEST_CASE("A MOSFET channel is symmetric and smooth through Vds = 0", "[mosfet][
                   == Catch::Approx(-drainCurrent(m, vgs, vds)).epsilon(1.0e-6).margin(1.0e-11));
         }
 
-    // The slope just either side of zero agrees, as the JFET's does.
+    // The slope either side of zero agrees.
     auto slope = [&m](double vds) { return (drainCurrent(m, 2.5, vds + 1.0e-9) - drainCurrent(m, 2.5, vds - 1.0e-9)) / 2.0e-9; };
     CHECK(slope(-1.0e-6) == Catch::Approx(slope(1.0e-6)).epsilon(1.0e-3));
 
@@ -1482,10 +1486,9 @@ TEST_CASE("The MOSFET Jacobian is the derivative of what it stamps", "[mosfet][m
         m.model = model;
         const double p = model.polaritySign();
 
-        // Subthreshold, moderate and strong inversion; triode, saturation,
-        // reverse, and the body diode conducting.
-        // Strong inversion runs up to 10 V, where the source resistance is
-        // doing most of the work and its implicit slopes are most exposed.
+        // Subthreshold, moderate and strong inversion; triode, saturation, reverse, and body
+        // diode conduction. Up to 10 V, where the source resistance's implicit slopes matter
+        // most.
         for (const double vgs : { 0.5, 1.9, 2.1, 2.4, 3.3, 4.0, 6.0, 10.0 })
             for (const double vds : { -0.7, -0.2, 0.05, 0.3, 5.0 })
                 checkJacobian(m, p * vgs, p * vds);
@@ -1496,21 +1499,20 @@ TEST_CASE("A MOSFET's body diode conducts when the drain is pulled below the sou
 {
     const auto m = MosfetModel::n2N7000();
 
-    // Gate at the source, drain 0.6 V below: the channel is off and the body
-    // diode forward-biased -- current out of the drain, milliamps of it.
+    // Gate at source, drain 0.6 V below: channel off, body diode conducting milliamps out
+    // of the drain.
     const double id = drainCurrent(m, 0.0, -0.6);
     CHECK(id < -0.5e-3);
     CHECK(id > -5.0e-3);
 
-    // And a P-channel part's is the other way round.
+    // A P-channel part's is the other way round.
     CHECK(drainCurrent(MosfetModel::pBS250(), 0.0, 0.6) > 0.1e-3);
 }
 
 namespace
 {
-    /** A drain-feedback common-source stage: Rd to the rail, the gate held at
-        half the drain by two 1M resistors, the signal onto the gate through a
-        capacitor. Biases itself whatever the threshold. */
+    /** Drain-feedback common-source stage: Rd to the rail, gate at half the drain via two
+        1M resistors, signal onto the gate through a capacitor. Self-biasing. */
     Circuit makeMosfetStage(const MosfetModel& model, Circuit::SolverStrategy strategy)
     {
         const bool p = model.channel == MosfetModel::Channel::P;
@@ -1535,8 +1537,7 @@ TEST_CASE("A MOSFET stage biases itself and amplifies", "[circuit][mosfet]")
     auto circuit = makeMosfetStage(MosfetModel::n2N7000(), Circuit::SolverStrategy::Auto);
     REQUIRE(circuit.foundOperatingPoint());
 
-    // Vd = 9 - 10k Id with Vg = Vd / 2: the gate sits a little over its
-    // threshold, so the drain at about 4.1 V.
+    // Vd = 9 - 10k Id with Vg = Vd / 2: drain at about 4.1 V.
     const double vd = circuit.getNodeVoltage("d");
     INFO("drain at " << vd << " V");
     CHECK(vd > 3.6);
@@ -1545,10 +1546,8 @@ TEST_CASE("A MOSFET stage biases itself and amplifies", "[circuit][mosfet]")
     // The gate is insulated, so the divider is exactly a divider.
     CHECK(circuit.getNodeVoltage("g") == Catch::Approx(0.5 * vd).epsilon(1.0e-6));
 
-    // About gm * 10k, inverting: gm near 6.5 mS at half a milliamp. It was
-    // 8.5 before n was fitted -- Vishay's two threshold points put it at 2.0,
-    // not the 1.5 that had been assumed, and a gentler subthreshold slope is
-    // less gain per milliamp at the bottom of the curve. Measured 63.8.
+    // About gm * 10k, inverting: gm near 6.5 mS at 0.5 mA (with n fitted to 2.0).
+    // Measured 63.8.
     circuit.setOutputOffsetToOperatingPoint();
     const float gain = amplitudeOf(circuit, 1000.0, 1.0e-3f, sampleRate, 0.5) / 1.0e-3f;
     INFO("gain " << gain);
@@ -1562,11 +1561,8 @@ TEST_CASE("A P-channel MOSFET stage mirrors an N-channel one", "[circuit][mosfet
     auto circuit = makeMosfetStage(MosfetModel::pBS250(), Circuit::SolverStrategy::Auto);
     REQUIRE(circuit.foundOperatingPoint());
 
-    // The same stage upside down, so the drain hangs below the rail -- but by
-    // twice the gate's drive, and the BS250 needs a good deal more drive than
-    // the 2N7000 for the same current: about 3.1 V at 0.3 mA against 2.05 V.
-    // So the drain sits about 6.2 V under the rail, at about 2.8 V, where the
-    // N stage's sits 4.1 V over ground.
+    // The P-channel stage: the BS250 needs about 3.1 V of drive at 0.3 mA (the 2N7000
+    // 2.05 V), so the drain sits about 6.2 V under the rail, at about 2.8 V.
     const double vd = circuit.getNodeVoltage("d");
     INFO("drain at " << vd << " V");
     CHECK(vd > 2.3);
@@ -1599,9 +1595,9 @@ TEST_CASE("DK and full Newton agree on a MOSFET stage", "[circuit][mosfet][dk]")
 
 namespace
 {
-    /** An LM386 with in+ driven through `sourceOhms` (zero for directly), in-
-        grounded, an unloaded output, and `between18` wired across pins 1 and 8:
-        nothing, a capacitor, or a resistor and capacitor in series. */
+    /** An LM386 with in+ driven through `sourceOhms` (zero for direct), in- grounded, output
+        unloaded, and `between18` across pins 1 and 8: nothing, a capacitor, or R and C in
+        series. */
     Circuit makeLm386(double supply, double rate, double sourceOhms, double gainOhms, double gainFarads,
                       double loadOhms = 0.0)
     {
@@ -1660,8 +1656,7 @@ TEST_CASE("An LM386's gain is set by pins 1 and 8", "[circuit][poweramp]")
         return amplitudeOf(circuit, 1000.0, 2.0e-3f, sampleRate, 0.3) / 2.0e-3f;
     };
 
-    // 2 * 15k / 1.5k, plus one from the + input: 21, which is the 26.4 dB the
-    // datasheet plots. With 10 uF across: 201. With 1.2k in series with it,
+    // 2 * 15k / 1.5k + 1 = 21 (26.4 dB). 10 uF across: 201. With 1.2k in series:
     // 2 * 15k / (150 + 1.35k || 1.2k) + 1 = 39.2.
     CHECK(gainOf(0.0, 0.0) == Catch::Approx(21.0).epsilon(0.02));
     CHECK(gainOf(0.0, 10.0e-6) == Catch::Approx(201.0).epsilon(0.02));
@@ -1678,8 +1673,8 @@ TEST_CASE("An LM386's inputs are 50k to ground", "[circuit][poweramp]")
 
 TEST_CASE("An LM386 has the datasheet's bandwidth", "[circuit][poweramp]")
 {
-    // At a rate high enough that the trapezoidal rule's warping is a couple
-    // of percent at 60 kHz. Datasheet conditions: 6 V.
+    // A rate where trapezoidal warping is a couple of percent at 60 kHz. Datasheet
+    // conditions: 6 V.
     constexpr double rate = 768000.0;
 
     auto responseAt = [](double gainFarads, double frequency)
@@ -1729,8 +1724,7 @@ TEST_CASE("An LM386 clips short of its rails, and harder into a speaker", "[circ
     swing(0.0, low, high);
     INFO("unloaded: " << low << " to " << high);
 
-    // 0.6 V short of each rail by the model, soft as the op-amp's clamp is.
-    // The datasheet's 7.8 V peak to peak on 9 V, give or take the softness.
+    // 0.6 V short of each rail, soft-clamped: about the datasheet's 7.8 V p-p on 9 V.
     CHECK(high > 8.0);
     CHECK(high < 8.8);
     CHECK(low > 0.2);
@@ -1753,18 +1747,11 @@ namespace
 {
     using namespace SchematicModel;
 
-    /** A self-biasing stage around one three-terminal active part, drawn: a
-        load from the rail to the output pin, a feedback resistor from the
-        output pin to the control pin and a second from there to ground, and
-        the input coupled onto the control pin through 100k -- enough source
-        resistance for the Miller capacitance to show. Every BJT and MOSFET in
-        the lists biases in it.
-
-        Pins are joined to named nodes rather than to each other: a label names
-        its net, which spares routing wires past other parts' pins. Returns the
-        settled amplitude at the output. */
-    float probeStage(ElementType type, int modelIndex, const BuildOptions& options = {},
-                     double frequency = 1000.0)
+    /** A self-biasing stage around one three-terminal part, drawn: load from rail to
+        output, feedback from output to control pin and from there to ground, input through
+        100k (so Miller capacitance shows). Pins join named nodes rather than wires. Returns
+        the settled output amplitude. */
+    float probeStage(ElementType type, int modelIndex, double frequency = 1000.0)
     {
         Schematic schematic;
 
@@ -1773,8 +1760,7 @@ namespace
 
         auto pin = [&schematic](int id, int index) { return schematic.findElement(id)->getPinPosition(index); };
 
-        // A node label `dx` squares along from a pin, wired to it -- or sitting
-        // on it, when dx is zero.
+        // A node label `dx` squares from a pin, wired to it (or on it when dx is zero).
         auto label = [&schematic](juce::Point<int> at, const char* name, int dx)
         {
             const auto id = schematic.addElement(ElementType::Node, at.x + dx - 2, at.y);
@@ -1811,7 +1797,7 @@ namespace
         resistor(30, "ctl", "com", bjt ? 1.0e9 : 1.0e6);
         resistor(40, "src", "ctl", 100000.0);
 
-        // Input, coupling capacitor lying flat beside it, output off its label.
+        // Input, coupling capacitor flat beside it, output off its label.
         const auto input = schematic.addElement(ElementType::Input, -40, 60);
         const auto coupling = schematic.addElement(ElementType::Capacitor, -30, 60);
         schematic.findElement(coupling)->value = 1.0e-6;
@@ -1822,7 +1808,7 @@ namespace
         const auto output = schematic.addElement(ElementType::Output, 0, 80);
         label(pin(output, 0), "outn", -4);
 
-        auto result = buildCircuits(schematic, sampleRate, 1, options);
+        auto result = buildCircuits(schematic, sampleRate, 1);
         INFO(result.error);
         REQUIRE(result.isValid());
 
@@ -1835,12 +1821,9 @@ namespace
         return peak;
     }
 
-    /** A non-inverting op-amp stage with a gain of 101, drawn, on a single 9 V
-        supply with its input at ground -- so the output rests on the low clamp
-        and swings up from it. Driven at 10 kHz hard enough to clip, which puts
-        both the gain-bandwidth product (the closed loop's corner is GBW / 101,
-        a few times 10 kHz) and the output headroom into the answer. Returns
-        the settled amplitude at the output. */
+    /** A drawn non-inverting stage, gain 101, single 9 V supply, input at ground (output
+        rests on the low clamp). Driven at 10 kHz into clipping, so both GBW and headroom
+        show. Returns the settled output amplitude. */
     float probeOpAmpStage(int modelIndex)
     {
         Schematic schematic;
@@ -1901,9 +1884,8 @@ namespace
 
 TEST_CASE("Every transistor and MOSFET model in the palette reaches the engine", "[plugin][schematic]")
 {
-    // The builder's switches end in `default:`, so a model the table lists and
-    // the switch forgot silently builds as model 0. Each is probed in a stage
-    // and has to come out differently from the head of its list.
+    // The builder's switches end in `default:`, so a forgotten model builds as model 0.
+    // Each must differ from the head of its list.
     for (const auto type : { ElementType::Transistor, ElementType::Mosfet })
     {
         const auto choices = getModelChoices(type);
@@ -1921,10 +1903,8 @@ TEST_CASE("Every transistor and MOSFET model in the palette reaches the engine",
 
 TEST_CASE("Every op-amp model in the palette reaches the engine", "[plugin][schematic]")
 {
-    // The op-amp switch ends in `default:` like the others, so an index it
-    // forgot builds as the TL072 -- still an op-amp, still a sound, and nothing
-    // on the sheet to say so. The ideal one is built by a different call
-    // altogether, and is in the loop to show that branch is reached as well.
+    // Same for op-amps (a forgotten index builds as the TL072). The ideal one takes a
+    // different call and is included to reach that branch.
     const auto choices = getModelChoices(ElementType::OpAmp);
     REQUIRE(choices.size() > 1);
 
@@ -1939,8 +1919,8 @@ TEST_CASE("Every op-amp model in the palette reaches the engine", "[plugin][sche
 
 TEST_CASE("An amplifier with too low a supply is refused by name", "[plugin][schematic]")
 {
-    // Below its model's limit the two clamps overlap and pin the output, which
-    // builds and plays as a fixed level. Refused, naming the part, instead.
+    // Below the model's minimum supply, the clamps overlap and pin the output: refused,
+    // naming the part.
     const auto stage = [](ElementType type, double supply)
     {
         Schematic schematic;
@@ -1979,8 +1959,7 @@ TEST_CASE("An amplifier with too low a supply is refused by name", "[plugin][sch
     {
         INFO(getElementInfo(type).name);
 
-        // Not a structured binding: a lambda may not capture one under the
-        // Linux CI compiler, and the id is needed inside the predicate below.
+        // Not a structured binding: the Linux CI compiler won't let a lambda capture one.
         const auto built = stage(type, 2.0);
         const auto& starved = built.first;
         const int id = built.second;
@@ -1995,29 +1974,6 @@ TEST_CASE("An amplifier with too low a supply is refused by name", "[plugin][sch
     }
 }
 
-TEST_CASE("The junction capacitance option reaches the MOSFET", "[plugin][schematic]")
-{
-    // Driven through 100k, the gate-drain capacitance times the stage's gain
-    // is a lowpass near the top of the audio band -- near rather than inside,
-    // since the drain feedback that biases the stage also lowers the gate's
-    // impedance. Off, it goes.
-    BuildOptions with, without;
-    without.transistorJunctionCapacitance = false;
-
-    const float on = probeStage(ElementType::Mosfet, 0, with, 10000.0);
-    const float off = probeStage(ElementType::Mosfet, 0, without, 10000.0);
-
-    // 8.5% down at 10 kHz with Vishay's 6.3 pF gate-drain, which is half
-    // what the card used to carry -- the test is that the option reaches the
-    // part, not how much there is to reach.
-    INFO("10 kHz: " << on << " with the capacitances, " << off << " without");
-    CHECK(on < 0.95f * off);
-
-    // And at a low frequency they agree: it is only the capacitance.
-    CHECK(probeStage(ElementType::Mosfet, 0, with, 100.0)
-          == Catch::Approx(probeStage(ElementType::Mosfet, 0, without, 100.0)).epsilon(0.02));
-}
-
 TEST_CASE("A drawn LM386 builds, amplifies, and leaves its gain pins open quietly", "[plugin][schematic][poweramp]")
 {
     Schematic schematic;
@@ -2027,8 +1983,7 @@ TEST_CASE("A drawn LM386 builds, amplifies, and leaves its gain pins open quietl
 
     auto pin = [&schematic](int id, int index) { return schematic.findElement(id)->getPinPosition(index); };
 
-    // Terminals placed on their pins by their own offsets, as the diode probe
-    // does: in on in+, ground on in-, out on the output.
+    // Terminals placed on their pins by offset: in on in+, ground on in-, out on output.
     const auto place = [&](ElementType type, juce::Point<int> onto)
     {
         const auto id = schematic.addElement(type, 0, 0);
@@ -2046,7 +2001,7 @@ TEST_CASE("A drawn LM386 builds, amplifies, and leaves its gain pins open quietl
     INFO(result.error);
     REQUIRE(result.isValid());
 
-    // Pins 1 and 8 unconnected is gain 20, not a mistake.
+    // Pins 1 and 8 open is gain 20, not a mistake.
     for (const auto& diagnostic : result.diagnostics)
     {
         INFO(diagnostic.text);
@@ -2067,13 +2022,10 @@ namespace
 {
     using namespace SchematicModel;
 
-    /** A drawn non-inverting stage with a gain of 101 -- 100k over 1k -- its
-        input coupled through 10u and biased by 1M, as a preamp's is. The 1M
-        and the 1k go to `reference`: "com" (ground) for a split supply, or
-        "vg" for the single-supply workaround, which adds a source holding vg
-        `virtualGround` volts above ground. Returns the circuit, unprepared
-        offsets and all, so a test can read the output node -- which the
-        Output terminal names "out" -- directly. */
+    /** A drawn non-inverting stage, gain 101 (100k over 1k), input through 10u biased by
+        1M. The 1M and 1k go to "com" (ground) for a split supply, or "vg", a source
+        `virtualGround` volts above ground, for single supply. Returns the circuit
+        unprepared, so tests can read node "out" directly. */
     std::unique_ptr<Circuit> drawSupplyStage(double plus, double minus, double virtualGround)
     {
         Schematic schematic;
@@ -2132,7 +2084,7 @@ namespace
         return std::move(result.circuits[0]);
     }
 
-    /** The voltage at the output node, sample by sample, under a 100 Hz sine. */
+    /** The output node voltage per sample under a 100 Hz sine. */
     std::vector<double> driveSupplyStage(Circuit& circuit, float amplitude)
     {
         std::vector<double> out;
@@ -2149,9 +2101,7 @@ namespace
 
 TEST_CASE("A drawn op-amp runs on a split supply", "[plugin][schematic][opamp]")
 {
-    // A bass amp's preamp is drawn on +15 and -15 with its references at
-    // ground. Both rails reach the engine: the stage rests at ground, and
-    // driven hard it clips at both, each where the model's headroom puts it.
+    // On +15/-15 with ground references: rests at ground, clips at both rails.
     auto split = drawSupplyStage(15.0, -15.0, 0.0);
     CHECK(std::abs(split->getNodeVoltage("out")) < 0.05);
 
@@ -2163,14 +2113,9 @@ TEST_CASE("A drawn op-amp runs on a split supply", "[plugin][schematic][opamp]")
     CHECK(*high == Catch::Approx(15.0 - model.positiveHeadroom()).margin(0.5));
     CHECK(*low == Catch::Approx(-15.0 + model.negativeHeadroom()).margin(0.5));
 
-    // Before the negative supply could be set, this circuit had to be drawn on
-    // 30 V with every reference moved to a 15 V virtual ground. The model sees
-    // only its rails, so the two are the same circuit 15 V apart, but for
-    // 1.5 mV: the bias solve conditions every node with gmin (1e-12 S) to
-    // ground, which on the shifted drawing is 15 pA out of a node biased
-    // through 1M, times a gain of 101. That offset rides on the linear part of
-    // the waveform and not on the clipped part, where the rails set the level,
-    // so it is the bound on the whole of it -- 0.006% of the swing.
+    // The single-supply equivalent (30 V with a 15 V virtual ground) matches 15 V up, to
+    // within 1.5 mV: gmin to ground leaks 15 pA through the 1M bias, times 101. Only on the
+    // linear part; the clipped part is set by the rails.
     auto shifted = drawSupplyStage(30.0, 0.0, 15.0);
     const auto workaround = driveSupplyStage(*shifted, 0.3f);
 
@@ -2184,9 +2129,8 @@ TEST_CASE("A drawn op-amp runs on a split supply", "[plugin][schematic][opamp]")
 
 TEST_CASE("An op-amp's negative supply is ground unless it is set", "[plugin][schematic][opamp]")
 {
-    // A freshly placed op-amp, and one from a sheet saved before the field
-    // existed, are single-supply parts -- zero is the rail being ground, not a
-    // value left unfilled, so neither draws red nor refuses to build.
+    // A new op-amp, and one from a sheet predating the field, are single-supply: zero
+    // means ground, not unset.
     Schematic sheet;
     const auto id = sheet.addElement(ElementType::OpAmp, 0, 0);
     CHECK(juce::exactlyEqual(sheet.findElement(id)->valueB, 0.0));
@@ -2205,7 +2149,7 @@ TEST_CASE("An op-amp's negative supply is ground unless it is set", "[plugin][sc
     old.restoreFromValueTree(older);
     CHECK(juce::exactlyEqual(old.getElements()[0].valueB, 0.0));
 
-    // A transformer still reads an absent secondary as 1, as it always did.
+    // A transformer still reads an absent secondary as 1.
     Schematic transformer;
     transformer.addElement(ElementType::Transformer, 0, 0);
     auto tree = transformer.toValueTree();
@@ -2213,8 +2157,7 @@ TEST_CASE("An op-amp's negative supply is ground unless it is set", "[plugin][sc
     transformer.restoreFromValueTree(tree);
     CHECK(juce::exactlyEqual(transformer.getElements()[0].valueB, 1.0));
 
-    // Typed into the inspector, the size is what counts: the field is the
-    // negative supply, so "15" means 15 V below ground.
+    // The field is the negative supply, so "15" means 15 V below ground.
     CHECK(juce::exactlyEqual(Element::railBelowGround(15.0), -15.0));
     CHECK(juce::exactlyEqual(Element::railBelowGround(-15.0), -15.0));
     CHECK(juce::exactlyEqual(Element::railBelowGround(0.0), 0.0));
@@ -2222,8 +2165,8 @@ TEST_CASE("An op-amp's negative supply is ground unless it is set", "[plugin][sc
 
 TEST_CASE("A negative supply above ground is refused by name", "[plugin][schematic][opamp]")
 {
-    // Only a hand-edited file can carry one. It is not a circuit, so it is
-    // refused, pointing at the part, rather than handed to the clamps.
+    // A positive negative-rail only comes from a hand-edited file; refused, naming the
+    // part.
     Schematic sheet;
     const auto amp = sheet.addElement(ElementType::OpAmp, 0, 0);
     sheet.findElement(amp)->value = 15.0;

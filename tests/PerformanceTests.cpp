@@ -8,15 +8,8 @@ using namespace Stress;
 
 namespace
 {
-    /** How long one block takes, as a share of the time that block represents.
-
-        The number that decides whether a plugin drops out. A block of 256 samples at
-        48 kHz is 5.33 ms of audio; if processing it takes 5.33 ms the plugin is using
-        one whole core just to keep up, and anything else on the machine pushes it over.
-        Reported as a percentage of realtime, per instance.
-
-        The worst block matters more than the average: a host's deadline is per block,
-        so one block at 400% is a click even if the average is 5%. */
+    /** How long one block takes as a percentage of the audio it represents. The worst block
+        matters most: the host's deadline is per block. */
     struct Cost
     {
         double meanPercent = 0.0;
@@ -30,7 +23,7 @@ namespace
         juce::MidiBuffer midi;
         juce::Random random { 5150 };
 
-        // Warm up: first blocks pay for page faults and lazily-built tables.
+        // Warm up: page faults and lazily built tables.
         for (int b = 0; b < 32; ++b)
         {
             fillNoise (buffer, random);
@@ -66,9 +59,7 @@ namespace
 
 TEST_CASE ("The cost of a block, as a share of realtime", "[performance]")
 {
-    // Debug builds are three to ten times slower than what ships, so the numbers here
-    // are a ceiling rather than a forecast -- but a regression shows up in them just as
-    // clearly, and the shape across block sizes is the same either way.
+    // Debug builds are 3-10x slower than release, so these are a ceiling.
     std::printf ("\n  %-28s %8s %8s %8s\n", "", "mean", "p99", "worst");
 
     for (const auto rate : { 48000.0, 96000.0 })
@@ -85,8 +76,7 @@ TEST_CASE ("The cost of a block, as a share of realtime", "[performance]")
                          rate / 1000.0, size, "      ",
                          cost.meanPercent, cost.p99Percent, cost.worstPercent);
 
-            // A single instance taking more than a whole core at a sane buffer size
-            // would drop on its own, before the session has anything else in it.
+            // More than a whole core at a sane buffer size would drop on its own.
             if (size >= 128)
                 CHECK (cost.meanPercent < 100.0);
         }
@@ -97,26 +87,10 @@ TEST_CASE ("The cost of a block, as a share of realtime", "[performance]")
 
 TEST_CASE ("No block is wildly more expensive than its neighbours", "[performance]")
 {
-    // What a click sounds like: not a high average, but one block that takes far longer
-    // than the rest, because something was rebuilt inside the callback. The worst block
-    // is compared against the median rather than the mean, so a handful of slow ones
-    // cannot hide in the baseline.
-    //
-    // Three runs, each on a fresh instance fed the same noise, and each block judged by
-    // the fastest of its three timings. A shared CI runner is a virtual machine that is
-    // now and then paused outright, and the block in flight then measures tens of
-    // milliseconds for reasons that have nothing to do with the plugin: the macOS
-    // runner once put 52 ms on a block whose median was 0.14 ms, and another time
-    // paused all three runs -- 10.4, 20.8 and 31.5 ms, whole multiples of the
-    // scheduler's 10 ms quantum -- on a build that thirty thousand blocks on a desk
-    // never took past 4x the median. A structural cost is different: a fresh instance
-    // given the same input does the same work at the same block, every time, so it
-    // survives the minimum. A pause lands wherever the host happens to stop, and has
-    // to hit the same block in all three runs to count.
-    //
-    // That is why this keeps every timing in block order rather than asking "was any
-    // one run clean": the old rule needed a whole run of 2000 blocks without a single
-    // pause, which a busy runner can fail three times in a row.
+    // Looks for a block far slower than the median (a rebuild inside the callback). Three
+    // runs on fresh instances with the same input; each block is judged by its fastest
+    // timing, so CI scheduler pauses (which land on different blocks) don't count but
+    // structural costs (same block every run) do.
     constexpr double rate = 48000.0;
     constexpr int size = 256;
     constexpr int blocks = 2000;
@@ -181,11 +155,8 @@ TEST_CASE ("No block is wildly more expensive than its neighbours", "[performanc
                  runs, median * 1000.0, worst * 1000.0, (int) (slowestAt - fastest.begin()),
                  blockSeconds * 1000.0, worst / median);
 
-    // The scheduler alone accounts for a good deal of scatter in a test process, so
-    // this is looking for something structural: a rebuild landing inside a callback,
-    // which shows up as tens of times the median rather than a few. And whatever the
-    // scatter, no single block may take longer than the audio it is for, which is
-    // the point at which the host actually drops it.
+    // Structural costs show up as tens of times the median. And no block may take longer
+    // than the audio it is for.
     CHECK (worst < median * 60.0);
     CHECK (worst < blockSeconds);
 }
