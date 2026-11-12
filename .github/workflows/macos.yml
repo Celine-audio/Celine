@@ -157,3 +157,27 @@ jobs:
         with:
           name: ${{ env.ARTIFACT_NAME }}.zip
           path: "${{ env.ARTIFACTS_PATH }}/${{ env.ARTIFACT_NAME }}.zip"
+
+      # The disk image: each format beside a shortcut to the folder it installs
+      # into, on a background drawn by packaging/make-artwork.swift. Layout in
+      # packaging/dmg/settings.py. dmgbuild writes Finder's layout itself rather
+      # than scripting Finder, which is what makes it dependable on a headless
+      # runner; pinned, so a release does not change shape under us. Written to
+      # the build directory, after the zip, so neither holds the other.
+      - name: Build the disk image
+        run: |
+          python3 -m venv "${{ runner.temp }}/dmgbuild"
+          "${{ runner.temp }}/dmgbuild/bin/pip" install --quiet dmgbuild==1.6.7
+          "${{ runner.temp }}/dmgbuild/bin/dmgbuild" \
+            -s packaging/dmg/settings.py \
+            -D artefacts="${{ env.ARTIFACTS_PATH }}" \
+            -D product="${{ env.PRODUCT_NAME }}" \
+            "${{ env.PRODUCT_NAME }}" \
+            "${{ env.BUILD_DIR }}/${{ env.ARTIFACT_NAME }}.dmg"
+          hdiutil imageinfo "${{ env.BUILD_DIR }}/${{ env.ARTIFACT_NAME }}.dmg" | grep -E "Format:|Total Bytes"
+
+      - name: Upload disk image
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ARTIFACT_NAME }}.dmg
+          path: "${{ env.BUILD_DIR }}/${{ env.ARTIFACT_NAME }}.dmg"
