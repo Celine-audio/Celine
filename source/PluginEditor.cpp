@@ -1026,12 +1026,12 @@ void PluginEditor::browseForCircuit (bool saving)
                                        : juce::File::getSpecialLocation (juce::File::userDocumentsDirectory),
         juce::String ("*") + PluginProcessor::circuitFileExtension);
 
-    const auto flags = juce::FileBrowserComponent::canSelectFiles
+    const auto chooserFlags = juce::FileBrowserComponent::canSelectFiles
                      | (saving ? juce::FileBrowserComponent::saveMode
                                      | juce::FileBrowserComponent::warnAboutOverwriting
                                : juce::FileBrowserComponent::openMode);
 
-    fileChooser->launchAsync (flags, [this, saving] (const juce::FileChooser& chooser)
+    fileChooser->launchAsync (chooserFlags, [this, saving] (const juce::FileChooser& chooser)
     {
         auto file = chooser.getResult();
 
@@ -1245,9 +1245,24 @@ void PluginEditor::adoptNativeTitleBar()
 
     nativeTitleBarChecked = true;
 
+    // JUCE's standalone window asks for minimise and close only, and a native frame
+    // gets exactly the buttons asked for: on Windows that is no maximise box, so the
+    // window could not be maximised by button, title-bar double-click or Win+Up. macOS
+    // was unaffected, since any resizable window there gets the green full-screen button.
+    // The style is read when the peer is made, so it has to be set before going native,
+    // and a window that already is native has to be put back on the desktop to see it.
+    constexpr int buttons = juce::DocumentWindow::minimiseButton
+                          | juce::DocumentWindow::maximiseButton
+                          | juce::DocumentWindow::closeButton;
+    const auto stylesBefore = window->getDesktopWindowStyleFlags();
+    window->setTitleBarButtonsRequired (buttons, false);
+    const bool buttonsChanged = window->getDesktopWindowStyleFlags() != stylesBefore;
+
     // The window outlives the editor and may already be native.
     if (! window->isUsingNativeTitleBar())
         window->setUsingNativeTitleBar (true);
+    else if (buttonsChanged && window->isOnDesktop())
+        window->addToDesktop();
 
     // Native title bars drop JUCE's Options button; the Settings menu opens the audio
     // dialog instead.

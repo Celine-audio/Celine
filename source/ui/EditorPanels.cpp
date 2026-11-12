@@ -222,10 +222,13 @@ namespace Celine
                                       paletteTabCornerRadius, paletteTabCornerRadius,
                                       false, true, false, true);
 
-            g.setColour(down          ? Theme::pill()
-                        : highlighted ? Theme::pill().brighter(0.4f)
-                                      : Theme::panel());
-            g.fillPath(shape);
+            // At rest the palette has already filled it, in one piece with the body (see
+            // ElementPalette::paint); filling it again here would bring the seam back.
+            if (down || highlighted)
+            {
+                g.setColour(down ? Theme::pill() : Theme::pill().brighter(0.4f));
+                g.fillPath(shape);
+            }
 
             // A chevron pointing the way the panel will move.
             const auto centre = bounds.getCentre();
@@ -418,8 +421,22 @@ namespace Celine
 
     void ElementPalette::paint(juce::Graphics& g)
     {
+        // The body and the tab at rest are one fill. Filled apart, as they used to be, their
+        // shared edge falls mid-pixel at a fractional display scale (125%, 150% on Windows),
+        // each side anti-aliases it to half coverage, and the sheet shows through as a dark
+        // seam between them. The tab's subpath reaches a pixel into the body so the two
+        // overlap rather than meet; one fill, non-zero winding, so the overlap is not doubled.
+        const auto body = getBodyBounds().toFloat();
+        const auto tabArea = tab->getBounds().toFloat().withLeft(body.getRight() - 1.0f);
+
+        juce::Path shape;
+        shape.addRoundedRectangle(body, Theme::paletteCornerRadius);
+        shape.addRoundedRectangle(tabArea.getX(), tabArea.getY(), tabArea.getWidth(), tabArea.getHeight(),
+                                  paletteTabCornerRadius, paletteTabCornerRadius,
+                                  false, true, false, true);
+
         g.setColour(Theme::panel());
-        g.fillRoundedRectangle(getBodyBounds().toFloat(), Theme::paletteCornerRadius);
+        g.fillPath(shape);
     }
 
     void ElementPalette::resized()
