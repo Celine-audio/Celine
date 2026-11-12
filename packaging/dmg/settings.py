@@ -31,9 +31,9 @@ rows = [
 ]
 
 # In points, matching make-artwork.swift: icons on the left column, folders on the right,
-# one row every 100 points from the first.
+# one row every 94 points from the first.
 left_x, right_x = 230, 530
-first_row_y, row_pitch = 174, 100
+first_row_y, row_pitch = 144, 94
 
 files = []
 symlinks = {}
@@ -54,15 +54,19 @@ background = os.path.join(here, "background.png")
 
 # Finder takes this as the whole window frame, title bar included, with y measured up from
 # the bottom of the screen (measured on macOS 27: a 760 x 660 frame opened as exactly that).
-# Its status and path bars, if the user has them on, show here too and also come out of the
-# height. So the frame is the picture's width and 740 high: with no bars the last tile has
-# about 78 points of grid under it, with both still about 26. The picture (720 high) runs
-# past what any title bar leaves, so no version shows beyond it.
+#
+# The show_* settings below are the DMG's say, and Finder no longer listens to all of it:
+# the tab, path and status bars are the user's own Finder settings now and show in every
+# window, this one included. With all three on they and the title took 124 points of a
+# 740-point window (a CI-built DMG, opened on macOS 27), and cut the last row off. So the
+# layout is compact enough to fit under every bar: the rows end at 572, the frame is 712,
+# and with every bar on the last tile still has 16 points under it. With none, the window
+# shows plain grid below the rows, and the picture (700 high) runs past what it shows.
 #
 # Finder cannot centre a window or keep it off the Dock and the menu bar by itself. 100
-# points up clears a usual Dock, and the top (840) stays under the menu bar on a 900-point
+# points up clears a usual Dock, and the top (812) stays under the menu bar on a 900-point
 # laptop screen, the smallest current one.
-window_rect = ((160, 100), (760, 740))
+window_rect = ((160, 100), (760, 712))
 default_view = "icon-view"
 show_status_bar = False
 show_tab_view = False
@@ -71,7 +75,7 @@ show_pathbar = False
 show_sidebar = False
 
 arrange_by = None
-icon_size = 64
+icon_size = 56
 text_size = 12
 label_pos = "bottom"
 show_icon_preview = False

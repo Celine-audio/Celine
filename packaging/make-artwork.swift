@@ -200,12 +200,14 @@ func writeICO(_ sizes: [Int], _ url: URL) {
 
 // MARK: - The DMG window
 
-// Window and layout, in points. Kept in step with packaging/dmg/settings.py by hand. The
-// picture runs 90 points past the last tile, plain grid: Finder's title bar, and its status
-// and path bars when someone has them on, come out of the window's height (see settings.py).
-let dmgWidth = 760, dmgHeight = 720
+// Window and layout, in points. Kept in step with packaging/dmg/settings.py by hand.
+// Compact enough that the five rows (down to 572) show with every Finder bar on -- tab,
+// path and status bars, 124 points of a 712-point window between them -- and the picture
+// runs on as plain grid to 700, past what the window shows with none (see settings.py).
+let dmgWidth = 760, dmgHeight = 700
+let headerHeight: CGFloat = 92
 let leftX: CGFloat = 230, rightX: CGFloat = 530
-let firstRowY: CGFloat = 174, rowPitch: CGFloat = 100
+let firstRowY: CGFloat = 144, rowPitch: CGFloat = 94
 let rows = ["APP", "AU", "VST3", "CLAP", "LV2"]
 
 func dmgBackground(scale: CGFloat) -> NSBitmapImageRep {
@@ -216,11 +218,11 @@ func dmgBackground(scale: CGFloat) -> NSBitmapImageRep {
 
         // The header band, holding the logo alone: the rows say what to do.
         header.setFill()
-        NSRect(x: 0, y: 0, width: rect.width, height: 116).fill()
+        NSRect(x: 0, y: 0, width: rect.width, height: headerHeight).fill()
 
-        let logoHeight: CGFloat = 44
+        let logoHeight: CGFloat = 40
         let logoWidth = logoHeight * logo.size.width / logo.size.height
-        drawUpright(logo, in: NSRect(x: (rect.width - logoWidth) / 2, y: (116 - logoHeight) / 2,
+        drawUpright(logo, in: NSRect(x: (rect.width - logoWidth) / 2, y: (headerHeight - logoHeight) / 2,
                                      width: logoWidth, height: logoHeight))
 
         // One row per format: a tile under each icon and its name, so Finder's label
@@ -233,9 +235,9 @@ func dmgBackground(scale: CGFloat) -> NSBitmapImageRep {
 
             for x in [leftX, rightX] {
                 tile.setFill()
-                // Finder centres the 64-point icon on its position and sets its name about
+                // Finder centres the 56-point icon on its position and sets its name about
                 // 3 points under it, 16 high: the tile covers both with room to spare.
-                NSBezierPath(roundedRect: NSRect(x: x - 68, y: y - 40, width: 136, height: 96),
+                NSBezierPath(roundedRect: NSRect(x: x - 68, y: y - 36, width: 136, height: 88),
                              xRadius: 14, yRadius: 14).fill()
             }
 
