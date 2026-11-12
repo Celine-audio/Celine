@@ -46,6 +46,12 @@ public:
     /** The product name without the version; also the settings folder's name. */
     static juce::String getProductName();
 
+    /** Whether the library leaves a file or folder out: hidden as the platform says, or
+        named with a leading dot. macOS and Linux hide dot-names and Windows does not (it
+        hides by attribute), so without the second a folder synced from a Mac listed its
+        ".something" files on Windows only. */
+    static bool isHidden (const juce::File& file);
+
     /** A folder to suggest when asking. Not created here. */
     static juce::File getSuggestedDirectory();
 

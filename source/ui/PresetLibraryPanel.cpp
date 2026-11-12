@@ -1,6 +1,7 @@
 #include "PresetLibraryPanel.h"
 
 #include "../PluginProcessor.h"
+#include "../PresetLibrary.h"
 #include "PluginLookAndFeel.h"
 #include <CelineUI/Fonts.h>
 
@@ -188,15 +189,17 @@ namespace Celine
         // Folders before files at each level.
         juce::Array<juce::File> subfolders, found;
 
+        // PresetLibrary::isHidden, not the entry's own flag: a dot-name is hidden on every
+        // platform, Windows included.
         for (const auto& entry : juce::RangedDirectoryIterator (directory, false, "*", juce::File::findDirectories))
-            if (! entry.isHidden())
+            if (! PresetLibrary::isHidden (entry.getFile()))
                 subfolders.add (entry.getFile());
 
         // One wildcard: the iterator doesn't split on ";".
         for (const auto& entry : juce::RangedDirectoryIterator (directory, false,
                                                                 juce::String ("*") + PluginProcessor::circuitFileExtension,
                                                                 juce::File::findFiles))
-            if (! entry.isHidden())
+            if (! PresetLibrary::isHidden (entry.getFile()))
                 found.add (entry.getFile());
 
         sortNaturally (subfolders);

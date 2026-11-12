@@ -64,6 +64,10 @@ TEST_CASE ("The preset folder is remembered, and only presets are listed", "[pre
     presetFolder.getChildFile ("notes.txt").replaceWithText ("not a circuit");
     presetFolder.getChildFile ("cover.png").replaceWithText ("not a circuit either");
 
+    // Nor a dot-file, on any platform: Windows does not hide them by itself, and a folder
+    // synced from a Mac brings them along.
+    writePreset (presetFolder.getChildFile (".hidden.celsch"));
+
     // Nor a subfolder: this listing is flat.
     const auto bank = presetFolder.getChildFile ("A bank");
     REQUIRE (bank.createDirectory());

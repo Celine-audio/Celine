@@ -138,10 +138,17 @@ juce::Array<juce::File> PresetLibrary::getPresets() const
                                                 juce::String ("*")
                                                     + PluginProcessor::circuitFileExtension);
 
+    found.removeIf ([] (const juce::File& file) { return isHidden (file); });
+
     PresetNameComparator comparator;
     found.sort (comparator);
 
     return found;
+}
+
+bool PresetLibrary::isHidden (const juce::File& file)
+{
+    return file.isHidden() || file.getFileName().startsWithChar ('.');
 }
 
 //==============================================================================
