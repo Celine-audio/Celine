@@ -117,16 +117,33 @@ public:
         read by the UI. Lock-free, fixed storage. */
     struct ScopeTrace
     {
-        /** Number of columns. */
-        static constexpr int columns = 128;
+        /** Most columns a span is shown in: about one per point across the trace window, so
+            a column's min and max is the wave there and not a slice of it -- at 128, a steep
+            edge filled a whole column and every trace drew bold. */
+        static constexpr int shownColumns = 1024;
+
+        /** The ring holds twice the span, so a trigger always has a whole span after the
+            crossing it picks: the screen shows `shownColumns` of it, from wherever the
+            trigger says, the newest when it says nothing. */
+        static constexpr int columns = 2 * shownColumns;
 
         std::atomic<float> minimum[columns] {};
         std::atomic<float> maximum[columns] {};
 
+        /** How many columns are in use, twice the span's: fewer when the span has fewer
+            samples than `shownColumns` (5 ms at 44.1 kHz is 220), so a column is never less
+            than a sample and the span is what it says. The ring wraps here. */
+        std::atomic<int> columnCount { columns };
+
+        /** Columns written since the capture was last cleared (a rebuild, a new span), up to
+            columnCount. The rest still hold the zeros the clearing left, which are not
+            readings: the window draws nothing there and counts them in nothing. */
+        std::atomic<int> filled { 0 };
+
         /** The column being filled; everything to its left is complete. */
         std::atomic<int> writeColumn { 0 };
 
-        /** DC level and peak-to-peak swing over the window. */
+        /** DC level and peak-to-peak swing over the span: the newest half of the ring. */
         std::atomic<float> dcAverage { 0.0f };
         std::atomic<float> peakToPeak { 0.0f };
 
@@ -134,8 +151,8 @@ public:
         std::atomic<bool> live { false };
     };
 
-    /** Number of scope slots. */
-    static constexpr int maxScopes = 8;
+    /** Number of trace slots, shared by scopes and probes. */
+    static constexpr int maxScopes = SchematicModel::maxTraceParts;
 
     /** The trace of the scope with this id, or null. Message thread. */
     const ScopeTrace* getScopeTrace (int elementId) const noexcept;
@@ -185,6 +202,12 @@ public:
     /** Whether the palette is folded. Kept across editor rebuilds, not saved. Message
         thread. */
     bool paletteCollapsed = false;
+
+    /** Whether the probes' and scopes' window is folded to its button, and how each kind is
+        shown (AC, triggered: probes first). Kept across editor rebuilds, not saved. Message
+        thread. */
+    bool tracesCollapsed = false;
+    std::array<bool, 2> tracesAcCoupled { false, false }, tracesTriggered { true, true };
 
     /** The preset the sheet came from, as the toolbar shows it; empty for none.
         `presetIsFactory` marks a shipped example, which Save can't overwrite. Saved in the
@@ -355,8 +378,13 @@ private:
 
     std::array<ScopeAccumulator, maxScopes> scopeAccumulators;
 
-    /** Samples per column for each scope, at the oversampled rate. */
+    /** Samples per column for each scope, at the oversampled rate, and its columns in use. */
     std::array<int, maxScopes> samplesPerScopeColumn { };
+    std::array<int, maxScopes> scopeColumnCounts { };
+
+    /** Each scope's sum of its newest span's column middles, kept as columns are written so
+        its DC level is fresh every column without a pass over the span. */
+    std::array<double, maxScopes> scopeColumnTotals { };
 
     /** Samples the inspected part's current is averaged over. */
     int samplesPerCurrentWindow = 2048;

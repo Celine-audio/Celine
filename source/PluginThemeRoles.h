@@ -33,4 +33,13 @@
     X (notice,       "Notice",              "Messages",    0xff888791)                  \
     X (warning,      "Warning",             "Messages",    0xffe6db74)                  \
                                                                                         \
-    X (discard,      "Delete",              "Actions",     0xff6b2f2f)
+    X (discard,      "Delete",              "Actions",     0xff6b2f2f)                  \
+                                                                                        \
+    X (traceFirst,   "Trace 1",             "Traces",      0xff2a78d6)                  \
+    X (traceSecond,  "Trace 2",             "Traces",      0xffeb6834)                  \
+    X (traceThird,   "Trace 3",             "Traces",      0xff1baf7a)                  \
+    X (traceFourth,  "Trace 4",             "Traces",      0xffeda100)                  \
+    X (traceFifth,   "Trace 5",             "Traces",      0xffe87ba4)                  \
+    X (traceSixth,   "Trace 6",             "Traces",      0xff008300)                  \
+    X (traceSeventh, "Trace 7",             "Traces",      0xff6250d6)                  \
+    X (traceEighth,  "Trace 8",             "Traces",      0xffe34948)

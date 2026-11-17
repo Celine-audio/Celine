@@ -4,6 +4,7 @@
 #include "../dsp/InputFilePlayer.h"
 #include "../Schematic/SchematicBuilder.h"
 #include "SchematicSymbols.h"
+#include "Motion.h"
 
 #include <functional>
 
@@ -30,12 +31,19 @@ namespace Celine
         /** Lights the armed entry: a part, the wire, or neither. */
         void setActive(const SchematicModel::ElementType* type, bool wire);
 
+        /** Greys the Probe and Scope entries, and stops them arming, while the sheet has as
+            many as it can show (SchematicModel::maxTraceParts); the tooltip says why. */
+        void setTracePartsAvailable(bool available);
+
         /** Symbols only, or symbols and names. */
         void setCollapsed(bool shouldBeCollapsed);
         bool isCollapsed() const noexcept { return collapsed; }
 
-        /** The tab was clicked; the panel changed width. */
+        /** The tab was clicked; the panel is folding or unfolding. */
         std::function<void()> onCollapsedChanged;
+
+        /** The panel's width changed during the fold: lay it out again. */
+        std::function<void()> onSizeChanging;
 
         /** Preferred size, tab included, no taller than `maxHeight`. When it must scroll, the
             scrollbar's width is added. */
@@ -80,6 +88,18 @@ namespace Celine
 
         bool collapsed = false;
 
+        // The fold, animated: 0 folded to symbols, 1 open. The columns narrow and widen
+        // through every width between, the names fading with them, on the display's
+        // refresh; at once when the panel is not on screen.
+        Motion::Tween unfold{1.0f};
+
+        void animateCollapsed(bool shouldBeCollapsed);
+        void stepFold();
+        void applyUnfold();
+        int columnWidth() const;
+
+        juce::VBlankAttachment foldFrames{this, [this] { stepFold(); }};
+
         /** Holds the rows, so a short window scrolls them. */
         juce::Viewport viewport;
         juce::Component content;
@@ -108,6 +128,20 @@ namespace Celine
         /** Whether the card shows the shortcut list when nothing is selected. When off, the
             card hides itself while nothing is selected. */
         void setShortcutsShown(bool shouldShow);
+
+        /** The height the fields are laid out for, when the card is on its way there: they
+            stay put while it grows or shrinks round them, clipped by its edge. */
+        void setLayoutHeight(int height)
+        {
+            if (layoutHeight != height)
+            {
+                layoutHeight = height;
+                resized();
+            }
+        }
+
+        /** The mouse lines at the foot of the shortcut list. */
+        void setMouseHints(const juce::String& hints);
 
         /** A live reading in engineering notation with exactly two decimals, so the width
             stays steady as the value changes. */
@@ -164,6 +198,15 @@ namespace Celine
         void lookAndFeelChanged() override { applyColours(); }
 
        private:
+        /** Shown when it has something to show and is not put away. */
+        bool wantsToShow() const noexcept { return element != nullptr || shortcutsShown; }
+        int layoutHeight = 0;
+        juce::String mouseHints{"Right- or middle-drag, or Space-drag, to move the canvas.\n"
+                                "Two fingers on a trackpad move it too.\n"
+                                "Scroll, pinch, or Shift and two fingers to zoom.\n"
+                                "Right-click a part to rotate, flip, copy or delete it.\n"
+                                "Middle-click a part to place another like it."};
+
         /** Every caption label. */
         std::array<juce::Label*, 15> captionLabels();
 
@@ -229,9 +272,16 @@ namespace Celine
         /** Changes the action, keeping the lever on the same throw if the new action has it. */
         void reshapeSwitch(SchematicModel::SwitchAction action);
 
+        /** The Action box's choice: ON-OFF (the plain switch) or a changeover action, turning
+            the part into the other type where it stands when the choice crosses over. */
+        void chooseSwitchKind(int itemId);
+
         /** Shown under the model box only when the sheet names a model this build lacks. */
         juce::Label modelDescription;
         juce::ToggleButton polarisedButton{"Electrolytic"};
+
+        /** One Transformer in the palette: this makes it the centre-tapped one, and back. */
+        juce::ToggleButton centreTapButton{"Centre tap"};
 
         /** Scope only: the trace and the two readings under it. Its own component so it can
             repaint without the fields. */

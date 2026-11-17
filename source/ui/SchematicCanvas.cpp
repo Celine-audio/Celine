@@ -1,4 +1,7 @@
 #include "SchematicCanvas.h"
+#include "TraceWindow.h"
+
+#include <algorithm>
 
 #include <CelineUI/Fonts.h>
 #include <CelineUI/Theme.h>
@@ -52,8 +55,22 @@ namespace Celine
             onToolChanged();
     }
 
+    bool SchematicCanvas::hasRoomFor(ElementType type) const
+    {
+        return ! isTracePart(type) || countTraceParts() < maxTraceParts;
+    }
+
+    int SchematicCanvas::countTraceParts() const
+    {
+        return static_cast<int>(std::count_if(schematic.getElements().begin(), schematic.getElements().end(),
+                                              [](const Element& e) { return isTracePart(e.type); }));
+    }
+
     void SchematicCanvas::setPendingType(ElementType type)
     {
+        if (! hasRoomFor(type))
+            return;
+
         // Picking from the palette asks for a fresh part: stop cloning.
         pendingClone.reset();
         pendingType = type;
@@ -64,7 +81,7 @@ namespace Celine
     {
         const auto* source = schematic.findElement(elementId);
 
-        if (source == nullptr)
+        if (source == nullptr || ! hasRoomFor(source->type))
             return;
 
         pendingClone = *source;
@@ -351,6 +368,9 @@ namespace Celine
                           area.getCentreY() - (static_cast<float>(bounds.getCentreY()) * painter.gridSize)};
 
         repaint();
+
+        if (onZoomChanged)
+            onZoomChanged();
     }
 
     juce::Rectangle<int> SchematicCanvas::getFramingArea() const
@@ -467,7 +487,23 @@ namespace Celine
             if (element.type != ElementType::Rectangle)
                 painter.draw(g, element, isSelected(element.id) ? Theme::selected() : Theme::element());
 
-        drawScopeTraces(g);
+        // Each probe and scope marked in its trace's colour, so the trace window's legend can
+        // be matched to the sheet at a glance. Their traces live in that window, not here.
+        {
+            int probes = 0, scopes = 0;
+
+            for (const auto& element : schematic.getElements())
+            {
+                if (element.type != ElementType::Probe && element.type != ElementType::Scope)
+                    continue;
+
+                const int ordinal = element.type == ElementType::Probe ? probes++ : scopes++;
+                const auto centre = painter.toPixel({element.x, element.y});
+                const float radius = juce::jmax(2.5f, painter.gridSize * 0.3f);
+                g.setColour(TraceWindow::colourFor(ordinal));
+                g.fillEllipse(juce::Rectangle<float>(2.0f * radius, 2.0f * radius).withCentre(centre));
+            }
+        }
     }
 
     void SchematicCanvas::paintSelection(juce::Graphics& g) const
@@ -734,48 +770,6 @@ namespace Celine
             grabKeyboardFocus();
     }
 
-    void SchematicCanvas::drawScopeTraces(juce::Graphics& g) const
-    {
-        // Below about six pixels a square the trace is unreadable.
-        if (! scopeReader || painter.gridSize < 6.0f)
-            return;
-
-        const auto screen = SymbolPainter::getScopeScreen();
-
-        for (const auto& element : schematic.getElements())
-        {
-            if (element.type != ElementType::Scope)
-                continue;
-
-            ScopeReading reading;
-
-            if (! scopeReader(element.id, reading))
-                continue;
-
-            // Upright however the part is turned.
-            const auto centre = painter.toPixel({element.x, element.y});
-            const juce::Rectangle<float> area(centre.x + screen.getX() * painter.gridSize,
-                                              centre.y + screen.getY() * painter.gridSize,
-                                              screen.getWidth() * painter.gridSize,
-                                              screen.getHeight() * painter.gridSize);
-
-            drawScopeTrace(g, area.reduced(painter.gridSize * 0.18f), reading,
-                           Theme::captionValue(), Theme::comment(), Theme::background());
-
-            // Readout under the screen, only when there is room.
-            if (painter.gridSize < 11.0f || ! reading.live)
-                continue;
-
-            g.setFont(Fonts::light(painter.gridSize * 0.82f));
-            g.setColour(Theme::captionValue());
-            g.drawText(SymbolPainter::formatValue(reading.dcAverage, "V") + "  pp "
-                           + SymbolPainter::formatValue(reading.peakToPeak, "V"),
-                       juce::Rectangle<float>(area.getWidth() * 1.6f, painter.gridSize * 1.2f)
-                           .withCentre({area.getCentreX(), area.getBottom() + painter.gridSize * 3.0f}),
-                       juce::Justification::centred, false);
-        }
-    }
-
     SchematicCanvas::Ruler::Ruler(const SchematicCanvas& o, bool horizontal)
         : owner(o), isHorizontal(horizontal)
     {
@@ -933,20 +927,19 @@ namespace Celine
 
         const auto grid = gridAt(event.position);
 
-        // Middle-click arms the Place tool with a copy of the part.
-        if (event.mods.isMiddleButtonDown())
-        {
-            if (const int hit = elementAt(event.position); hit >= 0)
-                cloneElement(hit);
-
-            return;
-        }
-
-        // Right-drag pans.
-        if (event.mods.isPopupMenu())
+        const auto startPan = [this, &event]
         {
             panning = true;
             panOrigin = painter.origin - event.position;
+        };
+
+        // The middle and the right button (or Ctrl-click on a Mac) move the sheet, once they
+        // have moved past dragThreshold; until then each may yet be a click (see mouseUp).
+        if (event.mods.isMiddleButtonDown() || event.mods.isPopupMenu())
+        {
+            startPan();
+            pendingClick = event.mods.isMiddleButtonDown() ? PendingClick::middle : PendingClick::right;
+            pressAt = event.position;
             return;
         }
 
@@ -966,6 +959,13 @@ namespace Celine
 
     void SchematicCanvas::placePendingElement(juce::Point<int> grid)
     {
+        // Armed before the limit was reached (an undo, an import): put the tool down.
+        if (! hasRoomFor(pendingType))
+        {
+            setTool(Tool::Select);
+            return;
+        }
+
         const int id = schematic.addElement(pendingType, grid.x, grid.y);
         auto* placed = schematic.findElement(id);
 
@@ -1074,8 +1074,20 @@ namespace Celine
 
         if (panning)
         {
+            // A right press stays a click until it moves far enough to mean a pan.
+            if (pendingClick != PendingClick::none)
+            {
+                if (event.position.getDistanceFrom(pressAt) < dragThreshold)
+                    return;
+
+                pendingClick = PendingClick::none;
+            }
+
             painter.origin = panOrigin + event.position;
             repaint();
+
+            if (onViewMoved)
+                onViewMoved();
             return;
         }
 
@@ -1145,6 +1157,24 @@ namespace Celine
 
     void SchematicCanvas::mouseUp(const juce::MouseEvent& event)
     {
+        // A right or middle press that never became a pan is a click.
+        if (pendingClick != PendingClick::none)
+        {
+            const auto click = pendingClick;
+            pendingClick = PendingClick::none;
+            panning = false;
+
+            if (click == PendingClick::right)
+                rightClicked(event.position);
+            else
+                middleClicked(event.position);
+
+            if (onGestureEnd)
+                onGestureEnd();
+
+            return;
+        }
+
         if (draggingWire)
         {
             draggingWire = false;
@@ -1305,26 +1335,153 @@ namespace Celine
         }
     }
 
+    bool SchematicCanvas::selectionHasActions() const
+    {
+        for (const int id : selectedIds)
+            if (const auto* element = schematic.findElement(id); element != nullptr && element->getPinCount() > 0)
+                return true;
+
+        return false;
+    }
+
+    void SchematicCanvas::middleClicked(juce::Point<float> at)
+    {
+        // One more of that one: the Place tool armed with a copy of the part under it, value,
+        // model, label, turn and all. Nothing on empty sheet.
+        if (const int hit = elementAt(at); hit >= 0)
+            cloneElement(hit);
+    }
+
+    void SchematicCanvas::rightClicked(juce::Point<float> at)
+    {
+        // Placing or wiring: a right click puts the tool down, as Escape does.
+        if (tool != Tool::Select)
+        {
+            setTool(Tool::Select);
+            return;
+        }
+
+        // Select what is under it, unless it is already part of the selection, which is
+        // what the actions then act on.
+        if (const int hit = elementAt(at); hit >= 0)
+        {
+            if (! isSelected(hit))
+                setSelection(hit);
+        }
+        else if (const int wire = wireAt(at); wire >= 0)
+        {
+            if (! isWireSelected(wire))
+                setSelection(std::vector<int>{}, std::vector<int>{wire});
+        }
+        else
+        {
+            // Empty sheet: the selection goes, as a left click there takes it, and nothing
+            // comes up. Offering the actions here would act on a part the click was nowhere near.
+            setSelection(-1);
+            setSelectedWires({});
+            return;
+        }
+
+        // Nothing to offer for a selection of wires, boxes and notes, which do not turn.
+        if (selectionHasActions() && onActionsRequested)
+            onActionsRequested(at.toInt());
+    }
+
+    juce::Rectangle<float> SchematicCanvas::getSelectionArea() const
+    {
+        juce::Rectangle<float> area;
+        const auto add = [&area](juce::Rectangle<float> r) { area = area.isEmpty() ? r : area.getUnion(r); };
+
+        // elementBounds() is in grid units; corners to pixels.
+        for (const int id : selectedIds)
+            if (const auto* element = schematic.findElement(id))
+            {
+                const auto grid = painter.elementBounds(*element);
+                add(juce::Rectangle<float>(painter.toPixel(grid.getX(), grid.getY()),
+                                           painter.toPixel(grid.getRight(), grid.getBottom())));
+            }
+
+        for (const int id : selectedWireIds)
+            if (const auto* wire = schematic.findWire(id))
+                add(juce::Rectangle<float>(painter.toPixel(wire->a), painter.toPixel(wire->b)).expanded(1.0f));
+
+        return area;
+    }
+
+    float SchematicCanvas::getZoomProportion() const noexcept
+    {
+        return std::log(painter.gridSize / minGridSize) / std::log(maxGridSize / minGridSize);
+    }
+
+    void SchematicCanvas::setZoomProportion(float proportion)
+    {
+        zoomBy(minGridSize * std::pow(maxGridSize / minGridSize, juce::jlimit(0.0f, 1.0f, proportion)) / painter.gridSize);
+    }
+
+    void SchematicCanvas::zoomBy(float factor)
+    {
+        // About the middle of what the panels leave uncovered, so the drawing there stays put.
+        zoomAbout(framingInsets.subtractedFrom(getLocalBounds()).toFloat().getCentre(), factor);
+    }
+
+    void SchematicCanvas::zoomAbout(juce::Point<float> pivot, float factor)
+    {
+        // About the unrounded point, so the sheet does not drift under it.
+        const auto gridAtPivot = painter.toGridExact(pivot);
+
+        painter.gridSize = juce::jlimit(minGridSize, maxGridSize, painter.gridSize * factor);
+        painter.origin = pivot - juce::Point<float>(gridAtPivot.x * painter.gridSize, gridAtPivot.y * painter.gridSize);
+        repaint();
+
+        if (onZoomChanged)
+            onZoomChanged();
+        if (onViewMoved)
+            onViewMoved();
+    }
+
+    void SchematicCanvas::mouseMagnify(const juce::MouseEvent& event, float scaleFactor)
+    {
+        // A trackpad's pinch zooms about the fingers.
+        if (! panning && scaleFactor > 0.0f)
+            zoomAbout(event.position, scaleFactor);
+    }
+
     void SchematicCanvas::mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel)
     {
         // While panning, ignore the wheel.
         if (panning || event.mods.isPopupMenu())
             return;
 
-        // Ignore sideways scrolls and momentum tails with no vertical travel.
-        if (wheel.deltaY == 0.0f)
+        // A trackpad (its scroll is smooth): two fingers move the sheet with them, in both
+        // directions, and with Shift held they zoom about the pointer. The direction is the
+        // system's: natural scrolling moves the sheet with the fingers.
+        if (wheel.isSmooth)
+        {
+            if (event.mods.isShiftDown())
+            {
+                // macOS may turn a Shift scroll sideways; whichever way it came, the larger.
+                const float travel = std::abs(wheel.deltaY) >= std::abs(wheel.deltaX) ? wheel.deltaY : wheel.deltaX;
+                if (! juce::exactlyEqual(travel, 0.0f))
+                    zoomAbout(event.position, std::pow(2.0f, travel * trackpadPixelsPerUnit / 100.0f)); // 100 px: twice as close
+                return;
+            }
+
+            if (juce::exactlyEqual(wheel.deltaX, 0.0f) && juce::exactlyEqual(wheel.deltaY, 0.0f))
+                return;
+
+            painter.origin += juce::Point<float>(wheel.deltaX, wheel.deltaY) * trackpadPixelsPerUnit;
+            repaint();
+
+            if (onViewMoved)
+                onViewMoved();
+            return;
+        }
+
+        // A mouse wheel zooms, a notch at a time; sideways tilts and empty tails do nothing.
+        if (juce::exactlyEqual(wheel.deltaY, 0.0f))
             return;
 
-        // Zoom about the unrounded cursor position, so the sheet doesn't drift.
-        const auto gridUnderCursor = painter.toGridExact(event.position);
-        const float factor = wheel.deltaY > 0 ? 1.12f : (1.0f / 1.12f);
-
-        painter.gridSize = juce::jlimit(minGridSize, maxGridSize, painter.gridSize * factor);
-        painter.origin = event.position
-                       - juce::Point<float>(gridUnderCursor.x * painter.gridSize,
-                                            gridUnderCursor.y * painter.gridSize);
-
-        repaint();
+        zoomAbout(event.position, wheel.deltaY > 0 ? 1.12f : (1.0f / 1.12f));
     }
 
     namespace
@@ -1520,13 +1677,17 @@ namespace Celine
             // Copy before adding: adding can reallocate and invalidate the pointer.
             const auto original = *source;
 
+            // Probes and scopes only while there is room for them; the rest are copied.
+            if (! hasRoomFor(original.type))
+                continue;
+
             const int copy = schematic.addElement(original.type,
                                                   original.x + offset, original.y + offset);
 
             if (auto* placed = schematic.findElement(copy))
             {
                 // copyPropertiesTo() leaves out position, and orientation is part of it,
-                // so the turn and the mirror are copied here as the middle-click clone
+                // so the turn and the mirror are copied here as cloneElement()
                 // does. Left out, every copy came out upright: its pins moved, and the
                 // wires copied with it no longer met them.
                 original.copyPropertiesTo(*placed);

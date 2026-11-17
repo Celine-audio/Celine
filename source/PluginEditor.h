@@ -10,6 +10,10 @@
 #include <CelineUI/Theme.h>
 #include "ui/ToolbarWidgets.h"
 #include "ui/PresetLibraryPanel.h"
+#include "ui/TraceWindow.h"
+#include "ui/Motion.h"
+#include "ui/ZoomStrip.h"
+#include "ui/ActionBar.h"
 
 // Forward-declared: only the standalone build has the definition.
 namespace juce
@@ -85,6 +89,24 @@ private:
     void buildPanels();
     void buildBottomBand();
 
+    /** One frame of whatever is moving (see Motion.h); runs on the display's refresh. */
+    void animationFrame();
+
+    /** The mouse lines of the inspector's shortcut list. */
+    void applyMouseHints();
+
+    /** The floating actions, by this point on the canvas; and away. */
+    void showActions (juce::Point<int> atOnCanvas);
+    void hideActions();
+    void placeActions();
+
+    /** Tells the trace window which probes and scopes the sheet has. */
+    void refreshTraces();
+
+    /** The trace window and its button, where the band's layout has put the strip, opened
+        as far as tracesOpen has got. */
+    void placeTraces();
+
     void rebuildCircuit();
     void markPending();
     /** A strip control moved: update the parts it works, and redraw. */
@@ -95,11 +117,15 @@ private:
         level when the dBu setting is on (see PluginProcessor::inputGainToDbu). */
     void applyLevelReadouts();
 
-    /** The smallest window size. resized() won't store a size below it. 1024 x 689 fits
-        the whole palette without scrolling; the width may grow, see narrowestWindow(). */
+    /** The smallest window size. resized() won't store a size below it. 1024 x 738 fits
+        the whole palette and the zoom card under it without scrolling (a palette row more
+        needs 35 px more, Theme::paletteRowHeight); the width may grow, see narrowestWindow(). */
     int minimumWidth = 0;
     static constexpr int smallestWidth = 1024;
-    static constexpr int minimumHeight = 689;
+    static constexpr int minimumHeight = 738;
+
+    /** The zoom card's gap under the palette. */
+    static constexpr int zoomGap = 8;
 
     /** The narrowest window that still fits the console between palette and inspector. */
     int narrowestWindow() const;
@@ -211,9 +237,6 @@ private:
     /** The only text button in the toolbar. */
     juce::TextButton rebuildButton { "Rebuild" };
 
-    /** The two tools; mutually exclusive. */
-    std::unique_ptr<Celine::IconButton> selectToolButton, deleteToolButton;
-
     /** Save and Load. */
     std::unique_ptr<Celine::IconButton> saveButton, loadButton;
 
@@ -227,7 +250,7 @@ private:
     juce::Rectangle<int> undoRedoHousing;
 
     /** The selection actions, laid out as a group. */
-    enum class Action { Mirror, Flip, Copy, Rotate, Undo, Redo, count };
+    enum class Action { Undo, Redo, count };
     std::array<std::unique_ptr<Celine::IconButton>,
                static_cast<size_t> (Action::count)> actionButtons;
 
@@ -259,6 +282,11 @@ private:
 
     /** Set in resized(), used in paint(). */
     juce::Rectangle<int> logoBounds;
+
+    /** The product's name as artwork ("designer"), at the toolbar's left. */
+    std::unique_ptr<juce::Drawable> wordmark;
+    juce::Rectangle<int> wordmarkBounds;
+
 
     /** The INPUT and OUTPUT bars at the ends of the bottom band: square at the window
         edge, rounded on the inside. The ControlStrip sits between them. */
@@ -323,6 +351,22 @@ private:
     // Main panels. The sheet fills the window; the others float over it.
     Celine::ElementPalette palette;
     Celine::SchematicCanvas canvas;
+
+    /** The sheet's zoom, a card under the palette and as wide as it. */
+    Celine::ZoomStrip zoomStrip;
+
+    /** The actions a right click brings up under the CAD controls, where it was clicked;
+        and what puts it away when anything else is clicked. */
+    Celine::ActionBar actionBar;
+    juce::Rectangle<int> actionsHome;
+
+    struct ActionDismisser : juce::MouseListener
+    {
+        std::function<void (const juce::MouseEvent&)> onMouseDown;
+        void mouseDown (const juce::MouseEvent& e) override { if (onMouseDown) onMouseDown (e); }
+    };
+
+    ActionDismisser actionDismisser;
     Celine::ElementInspector inspector;
 
     /** The last build's messages. */
@@ -331,6 +375,26 @@ private:
     //==========================================================================
     /** The circuit's controls (see ControlStrip). */
     Celine::ControlStrip controlStrip;
+
+    /** The probes' and scopes' live traces, and the button they fold to; both only while
+        the sheet has one. `traceHome` is where the window sits open. */
+    Celine::TraceWindow traceWindow;
+    Celine::TraceWindowButton traceButton;
+    juce::Rectangle<int> traceHome;
+
+    // What moves, and how far it has got (see Motion.h): the inspector's height, which
+    // follows what it shows, the trace window opening, and the floating actions.
+    Celine::Motion::Tween inspectorHeight { -1.0f }, tracesOpen { 1.0f }, actionsOpen;
+
+    /** Set while the inspector's own content changes its size, so that resizes and not
+        the window's do. */
+    bool inspectorResizing = false;
+
+    /** Where the palette and inspector sit when showing, wherever they are sliding: the
+        band lines up with these, not with a panel on its way out. */
+    juce::Rectangle<int> paletteHome, inspectorHome;
+
+    juce::VBlankAttachment frames { this, [this] { animationFrame(); } };
 
     // ==========================================================================
     // The plugin's own controls.

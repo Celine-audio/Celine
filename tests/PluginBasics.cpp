@@ -304,13 +304,13 @@ TEST_CASE ("Editor size rides with the session, not with a preset", "[plugin]")
 }
 
 
-TEST_CASE ("The window is never smaller than 1024 x 689", "[plugin]")
+TEST_CASE ("The window is never smaller than 1024 x 738", "[plugin]")
 {
     runWithinPluginEditor ([] (PluginProcessor& plugin) {
         auto* limits = plugin.getActiveEditor()->getConstrainer();
         REQUIRE (limits != nullptr);
         CHECK (limits->getMinimumWidth() == 1024);
-        CHECK (limits->getMinimumHeight() == 689);
+        CHECK (limits->getMinimumHeight() == 738);
     });
 
     // A size below the current minimum opens at the minimum.
@@ -320,7 +320,7 @@ TEST_CASE ("The window is never smaller than 1024 x 689", "[plugin]")
 
     std::unique_ptr<juce::AudioProcessorEditor> editor (plugin.createEditor());
     CHECK (editor->getWidth() == 1024);
-    CHECK (editor->getHeight() == 689);
+    CHECK (editor->getHeight() == 738);
 }
 
 TEST_CASE ("The smallest window shows the whole palette", "[plugin][ui]")
@@ -455,14 +455,19 @@ TEST_CASE ("The palette is two to a row, with every name fitted to its column", 
         }
     }
 
-    for (auto pair : { std::pair { "Transformer", "Transformer (CT)" }, std::pair { "MOSFE Transistor", "Scope" },
-                       std::pair { "BJ Transistor", "JFE Transistor" } })
+    for (auto pair : { std::pair { "Switch", "BJ Transistor" }, std::pair { "JFE Transistor", "MOSFE Transistor" },
+                       std::pair { "Transformer", "Speaker" }, std::pair { "Probe", "Scope" } })
     {
         INFO (pair.first << " | " << pair.second);
         REQUIRE (parts.entryNamed (pair.first) != nullptr);
         REQUIRE (parts.entryNamed (pair.second) != nullptr);
         CHECK (parts.entryNamed (pair.first)->getY() == parts.entryNamed (pair.second)->getY());
     }
+
+    // The changeover and the centre-tapped transformer are reached from the Switch and the
+    // Transformer in the inspector, not from entries of their own.
+    CHECK (parts.entryNamed ("xPyT switch") == nullptr);
+    CHECK (parts.entryNamed ("Transformer (CT)") == nullptr);
 
     // Nothing overlaps and nothing leaves the list.
     for (int i = 0; i < parts.list->getNumChildComponents(); ++i)
@@ -627,8 +632,23 @@ TEST_CASE ("The floating panels sit on the sheet and clear of one another", "[pl
                 for (auto* panel : { (juce::Component*) palette, (juce::Component*) inspector, (juce::Component*) console })
                     CHECK (panel->getBottom() <= bandTop - margin);
 
+                // The palette and the zoom card under it are centred together, the card as wide
+                // as the palette's body and clear of everything else.
+                Celine::ZoomStrip* zoom = nullptr;
+                for (auto* child : editor->getChildren())
+                    if (auto* z = dynamic_cast<Celine::ZoomStrip*> (child))
+                        zoom = z;
+                REQUIRE (zoom != nullptr);
+
+                CHECK (zoom->getY() > palette->getBottom());
+                CHECK (zoom->getX() == palette->getX());
+                CHECK (zoom->getWidth() == palette->getBodyBounds().getWidth());
+                CHECK (zoom->getBottom() <= bandTop - margin);
+                CHECK_FALSE (zoom->getBounds().intersects (console->getBounds()));
+                CHECK_FALSE (zoom->getBounds().intersects (inspector->getBounds()));
+
                 const int above = palette->getY() - open.getY() - margin;
-                const int below = bandTop - margin - palette->getBottom();
+                const int below = bandTop - margin - zoom->getBottom();
                 CHECK (std::abs (above - below) <= 1);
 
                 const int inspectorAbove = inspector->getY() - open.getY() - margin;
@@ -3643,8 +3663,9 @@ TEST_CASE ("A new switch action keeps the throw the drawing shows", "[editor]")
         {
             for (auto* child : c.getChildren())
             {
+                // ON-OFF (the plain switch) first, then the changeover's actions.
                 if (auto* box = dynamic_cast<juce::ComboBox*> (child); box != nullptr
-                    && box->getNumItems() == numSwitchActions && box->getItemText (0) == "ON-ON")
+                    && box->getNumItems() == numSwitchActions + 1 && box->getItemText (0) == "ON-OFF")
                     return box;
 
                 if (auto* found = findActionBox (*child))
@@ -3656,7 +3677,7 @@ TEST_CASE ("A new switch action keeps the throw the drawing shows", "[editor]")
 
         auto* actionBox = findActionBox (inspector);
         REQUIRE (actionBox != nullptr);
-        actionBox->setSelectedId (static_cast<int> (SwitchAction::OnOn) + 1, juce::sendNotificationSync);
+        actionBox->setSelectedId (static_cast<int> (SwitchAction::OnOn) + 2, juce::sendNotificationSync);
 
         const auto* part = sheet.findElement (sw);
         REQUIRE (part->switchAction == SwitchAction::OnOn);

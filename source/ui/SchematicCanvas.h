@@ -22,8 +22,9 @@ namespace Celine
         Dragging on empty sheet draws a selection box: left to right selects what is fully
         inside, right to left anything it touches. Shift adds to the selection.
 
-        Always: Delete removes the selection, the wheel zooms about the cursor, right-drag
-        pans, middle-click arms the Place tool with a copy of the part under the cursor.
+        Always: Delete removes the selection, the wheel zooms about the cursor, a right or
+        middle drag pans, a right click brings the floating actions (onActionsRequested), and
+        a middle click picks up a copy of the part under it.
 
         A group box is selected by its edge, so the parts inside stay clickable; selected,
         its bottom-right corner resizes it. */
@@ -45,14 +46,43 @@ namespace Celine
         void setTool(Tool tool);
         Tool getTool() const noexcept { return tool; }
 
-        /** Arms the Place tool with a part type, at its defaults. */
+        /** Arms the Place tool with a part type, at its defaults. Nothing, for a probe or a
+            scope once the sheet has SchematicModel::maxTraceParts of them. */
         void setPendingType(SchematicModel::ElementType type);
 
-        /** Arms the Place tool with a copy of an existing part (value, model, label, settings). */
+        /** Whether one more of a type may go on the sheet: anything but a probe or a scope
+            past the trace limit. Placing, copying and duplicating all ask. */
+        bool hasRoomFor(SchematicModel::ElementType type) const;
+
+        /** Arms the Place tool with a copy of an existing part (value, model, label, settings):
+            what a middle click that does not move does. */
         void cloneElement(int elementId);
 
         /** Fires on any tool change, including the automatic return to Select. */
         std::function<void()> onToolChanged;
+
+        /** Where the selection is drawn, in the canvas's pixels: its parts' symbols and its
+            wires. Empty with nothing selected. */
+        juce::Rectangle<float> getSelectionArea() const;
+
+        /** The mouse, as CAD tools use it. A drag with the right or the middle button moves
+            the sheet; on a trackpad, two fingers do. (Space is left to the host, whose
+            transport it usually drives.) A right click that does not move -- less than
+            dragThreshold -- selects what is under it, unless it is already in the selection,
+            and asks for the floating actions there (onActionsRequested) when the selection
+            holds something they act on: a part that turns. Wires, boxes and notes are
+            selected, but have no actions to offer; on empty sheet the selection is cleared. While
+            placing or wiring, a right click puts the tool down instead. A middle click that
+            does not move picks up a copy of the part under it to place (cloneElement), as
+            "one more of that one". */
+        std::function<void(juce::Point<int>)> onActionsRequested;
+
+        /** Whether the selection holds a part the floating actions turn: anything with pins.
+            Wires, group boxes and text notes cannot be rotated or flipped. */
+        bool selectionHasActions() const;
+
+        /** How far a right press may move and still be a click rather than a pan. */
+        static constexpr float dragThreshold = 4.0f;
 
         /** Rotates a quarter turn: the part being placed, or else the selection. The angle
             sticks across placements. */
@@ -137,8 +167,29 @@ namespace Celine
         /** Frames the whole drawing in the visible area. */
         void zoomToFit();
 
+        /** The zoom as 0..1 along a log scale, from the farthest the sheet goes to the
+            closest: each equal step of it the same proportion closer. */
+        float getZoomProportion() const noexcept;
+
+        /** Zooms to a proportion of that scale, or by a factor, about the middle of the part
+            of the sheet the panels leave uncovered. */
+        void setZoomProportion(float proportion);
+        void zoomBy(float factor);
+
+        /** The zoom changed, by the wheel, a pinch, a fit, or either of the above. */
+        std::function<void()> onZoomChanged;
+
+        /** The sheet moved under the pointer: a pan by any means, or a zoom. */
+        std::function<void()> onViewMoved;
+
+        /** A trackpad's scroll, in JUCE's units, to pixels: macOS precise deltas arrive
+            scaled by 0.5 / 256 (NSViewComponentPeer), so a two-finger pan that moves the
+            sheet by this many pixels per unit moves it exactly with the fingers. */
+        static constexpr float trackpadPixelsPerUnit = 512.0f;
+
         /** The space the floating panels cover on each side, so framing avoids them. */
         void setFramingInsets(juce::BorderSize<int> insets) { framingInsets = insets; }
+        juce::BorderSize<int> getFramingInsets() const noexcept { return framingInsets; }
 
         //======================================================================
         void paint(juce::Graphics&) override;
@@ -151,6 +202,7 @@ namespace Celine
         void mouseMove(const juce::MouseEvent&) override;
         void mouseExit(const juce::MouseEvent&) override;
         void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+        void mouseMagnify(const juce::MouseEvent&, float scaleFactor) override;
         bool keyPressed(const juce::KeyPress&) override;
 
         /** Ruler sizes in pixels: the top one stacks numbers above its ticks, the left one
@@ -198,7 +250,6 @@ namespace Celine
         int inlineEditId = -1;
 
         /** Draws each scope's trace over its symbol. */
-        void drawScopeTraces(juce::Graphics&) const;
 
         /** Moves the ruler markers and repaints only the rulers. */
         void updateRulerCursor(juce::Point<float> position);
@@ -286,7 +337,28 @@ namespace Celine
             placement. */
         mutable CaptionObstacles captionObstacles;
 
+        /** Probes and scopes on the sheet, together. */
+        int countTraceParts() const;
+
         Tool tool = Tool::Select;
+
+        /** A right or middle press not yet a pan: it becomes one past dragThreshold, else it
+            is a click -- the actions for a right one, a copy of the part for a middle one. */
+        enum class PendingClick
+        {
+            none,
+            right,
+            middle
+        };
+
+        PendingClick pendingClick = PendingClick::none;
+        juce::Point<float> pressAt;
+        void rightClicked(juce::Point<float> at);
+        void middleClicked(juce::Point<float> at);
+
+        /** Zooms by a factor about a point, which stays where it is under the pointer. */
+        void zoomAbout(juce::Point<float> pivot, float factor);
+
         /** The part being cloned by the Place tool, if any. */
         std::optional<SchematicModel::Element> pendingClone;
 

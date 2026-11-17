@@ -65,6 +65,28 @@
         inline juce::Colour discard() { return colour (Role::discard); }
 
         // ======================================================================
+        // The probes' and scopes' traces, on the light panel: eight hues checked together
+        // as a categorical palette against it for colour-blind separation. Three fall under
+        // 3:1 contrast on it, which is why every trace is named in the legend too.
+
+        /** The n-th trace's hue, 1 to 8; past eight they come round again (the trace window
+            darkens the second round, TraceWindow::colourFor). */
+        inline juce::Colour traceColour (int n)
+        {
+            switch ((n - 1) % 8 + 1)
+            {
+                case 2: return colour (Role::traceSecond);
+                case 3: return colour (Role::traceThird);
+                case 4: return colour (Role::traceFourth);
+                case 5: return colour (Role::traceFifth);
+                case 6: return colour (Role::traceSixth);
+                case 7: return colour (Role::traceSeventh);
+                case 8: return colour (Role::traceEighth);
+                default: return colour (Role::traceFirst);
+            }
+        }
+
+        // ======================================================================
         // Group box colours, offered by name in the box's colour menu.
 
         inline juce::Colour boxGrey()   { return colour (Role::boxGrey); }

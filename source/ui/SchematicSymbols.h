@@ -13,10 +13,21 @@ namespace Celine
         writing. */
     struct ScopeReading
     {
-        static constexpr int columns = 128;
+        /** The ring's capacity: twice the span shown (PluginProcessor::ScopeTrace). */
+        static constexpr int columns = 2048;
 
         float minimum[columns] {};
         float maximum[columns] {};
+
+        /** The columns in use, oldest at writeColumn; the ring wraps here. */
+        int count = columns;
+
+        /** How many of them, the newest, hold readings: after a clearing the rest are its
+            zeros, not 0 V (PluginProcessor::ScopeTrace::filled). */
+        int filled = columns;
+
+        /** The age (0 the oldest) of the oldest column that holds a reading. */
+        int firstFilled() const noexcept { return count - juce::jlimit (0, count, filled); }
 
         /** The column being written; drawn from here round to here so the newest sample is
             on the right. */

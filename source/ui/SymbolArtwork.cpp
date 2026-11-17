@@ -33,6 +33,7 @@ namespace Celine
             Transformer, TransformerCt,
             Scope,
             MosfetN, MosfetP, PowerAmp,
+            Probe, Speaker,
             count,
         };
 
@@ -48,6 +49,7 @@ namespace Celine
             "transformer", "transformer-ct",
             "scope",
             "mosfet-n", "mosfet-p", "power-amp",
+            "probe", "speaker",
         };
 
         static_assert(std::size(assetNames) == (size_t) assetCount,
@@ -460,6 +462,8 @@ namespace Celine
                 case ElementType::Triode:        return (int) Asset::Triode;
                 case ElementType::OpAmp:         return (int) Asset::OpAmp;
                 case ElementType::PowerAmp:      return (int) Asset::PowerAmp;
+                case ElementType::Probe:         return (int) Asset::Probe;
+                case ElementType::Speaker:       return (int) Asset::Speaker;
                 case ElementType::VacuumDiode:   return (int) Asset::VacuumDiode;
                 case ElementType::Pentode:       return (int) Asset::Pentode;
 

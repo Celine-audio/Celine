@@ -7,6 +7,7 @@
 #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
 #include "Schematic/ExampleSchematics.h"
 #include "UpdateCheck.h"
+#include "ProductInfo.h"
 
 #include <CelineUI/EmbeddedAssets.h>
 #include <CelineUI/AboutPanel.h>
@@ -150,6 +151,8 @@ PluginEditor::PluginEditor (PluginProcessor& p)
 
     controlStrip.refresh();
     updateToolButtons();
+    refreshTraces();
+    applyMouseHints();
 
     // The baseline: undo stops here.
     history.reset (processorRef.getSchematic().toValueTree());
@@ -196,10 +199,6 @@ void PluginEditor::buildToolbar()
         struct Spec { Action action; const char* name; const char* file; std::function<void()> click; };
 
         const Spec specs[] = {
-            { Action::Mirror, "Mirror left to right", "mirror.svg", [this] { canvas.flip(); } },
-            { Action::Flip,   "Flip top to bottom",   "flip.svg",   [this] { canvas.flipVertical(); } },
-            { Action::Copy,   "Duplicate selection",  "copy.svg",   [this] { canvas.duplicateSelection(); } },
-            { Action::Rotate, "Rotate a quarter turn","rotate.svg", [this] { canvas.rotate(); } },
             { Action::Undo,   "Undo",                 "undo.svg",   [this] { undo(); } },
             { Action::Redo,   "Redo",                 "redo.svg",   [this] { redo(); } },
         };
@@ -219,8 +218,6 @@ void PluginEditor::buildToolbar()
         struct Spec { std::unique_ptr<Celine::IconButton>* slot; const char* name; const char* file; };
 
         const Spec specs[] = {
-            { &selectToolButton, "Select (S)", "arrow-pointer-solid-full.svg" },
-            { &deleteToolButton, "Delete (X)", "trash-can-solid-full.svg" },
             { &saveButton,       "Save",       "floppy-disk-solid-full.svg" },
             { &loadButton,       "Load",       "file-import-solid-full.svg" },
             { &importButton,     "Import a circuit into this one", "plus-solid-full.svg" },
@@ -247,10 +244,6 @@ void PluginEditor::buildToolbar()
         addAndMakeVisible (button);
     }
 
-    using Tool = Celine::SchematicCanvas::Tool;
-
-    selectToolButton->onClick = [this] { canvas.setTool (Tool::Select); };
-    deleteToolButton->onClick = [this] { canvas.setTool (Tool::Delete); };
     saveButton->onClick       = [this] { browseForCircuit (true); };
     loadButton->onClick       = [this] { browseForCircuit (false); };
     importButton->onClick     = [this] { browseForImport(); };
@@ -282,23 +275,115 @@ void PluginEditor::buildToolbar()
     addChildComponent (libraryDismisser);
     addChildComponent (presetLibrary);
     settingsButton->onClick   = [this] { showSettingsMenu(); };
+
     rebuildButton.setTooltip ("Sends the current schematic to the audio engine");
     rebuildButton.onClick     = [this] { rebuildCircuit(); };
 
     // The canvas changes tool on its own (placing returns to Select); the toolbar follows.
-    canvas.onToolChanged = [this] { updateToolButtons(); };
+    canvas.onToolChanged = [this]
+    {
+        updateToolButtons();
+
+        if (canvas.getTool() != Celine::SchematicCanvas::Tool::Select)
+            hideActions();
+    };
 }
 
 void PluginEditor::buildPanels()
 {
     // The sheet first, so the floating panels are in front. The console starts hidden.
     addAndMakeVisible (canvas);
+    addChildComponent (traceWindow);
+    addChildComponent (traceButton);
     addChildComponent (console);
+
+    traceWindow.reader = [this] (int elementId, Celine::ScopeReading& out) { return readScopeTrace (elementId, out); };
+    traceWindow.onWindowChanged = [this] (Celine::TraceWindow::Kind kind, double seconds)
+    {
+        // One time base for every part of the kind; saved with the sheet, live without a
+        // rebuild.
+        const auto type = kind == Celine::TraceWindow::Kind::probes ? SchematicModel::ElementType::Probe
+                                                                     : SchematicModel::ElementType::Scope;
+        for (auto& element : processorRef.getSchematic().getElements())
+            if (element.type == type)
+                element.scopeSeconds = seconds;
+
+        processorRef.refreshScopeTiming();
+        inspector.repaintReadouts();
+        markPresetModified();
+    };
+
+    // AC and trigger per kind, remembered while the plugin is open.
+    for (const auto k : { Celine::TraceWindow::Kind::probes, Celine::TraceWindow::Kind::scopes })
+    {
+        const auto i = static_cast<size_t> (k);
+        traceWindow.setOptions (k, { processorRef.tracesAcCoupled[i], processorRef.tracesTriggered[i] });
+    }
+
+    traceWindow.onOptionsChanged = [this] (Celine::TraceWindow::Kind k, Celine::TraceWindow::Options o)
+    {
+        processorRef.tracesAcCoupled[static_cast<size_t> (k)] = o.acCoupled;
+        processorRef.tracesTriggered[static_cast<size_t> (k)] = o.triggered;
+    };
+
+    // Folding and unfolding, remembered while the plugin is open.
+    tracesOpen.setTarget (processorRef.tracesCollapsed ? 0.0f : 1.0f, false);
+    traceWindow.onHideRequested = [this]
+    {
+        processorRef.tracesCollapsed = true;
+        tracesOpen.setTarget (0.0f, isShowing());
+        layOutFloatingPanels();
+    };
+    traceButton.onClick = [this]
+    {
+        processorRef.tracesCollapsed = false;
+        tracesOpen.setTarget (1.0f, isShowing());
+        layOutFloatingPanels();
+    };
     addAndMakeVisible (inspector);
     addAndMakeVisible (palette);
+    addAndMakeVisible (zoomStrip);
+    addChildComponent (actionBar);
+
+    // The floating actions: each acts on the selection, as the toolbar's did. Delete takes
+    // the selection with it, which puts the bar away (onSelectionChanged).
+    actionBar.onRotate = [this] { canvas.rotate(); };
+    actionBar.onMirror = [this] { canvas.flip(); };
+    actionBar.onFlip = [this] { canvas.flipVertical(); };
+    actionBar.onDuplicate = [this] { canvas.duplicateSelection(); };
+    actionBar.onDelete = [this] { canvas.deleteSelection(); hideActions(); };
+    canvas.onActionsRequested = [this] (juce::Point<int> at) { showActions (at); };
+
+    // Anything clicked that is not the bar puts it away; the right click that opens it
+    // again where it lands is left to do so.
+    actionDismisser.onMouseDown = [this] (const juce::MouseEvent& e)
+    {
+        if (! actionBar.isVisible() || e.eventComponent == &actionBar || actionBar.isParentOf (e.eventComponent))
+            return;
+
+        if (e.eventComponent == &canvas && e.mods.isPopupMenu())
+            return;
+
+        hideActions();
+    };
+    addMouseListener (&actionDismisser, true);
+
+    // The zoom card drives the sheet, and follows it when the wheel or a fit zooms.
+    zoomStrip.onZoomChosen = [this] (float proportion) { canvas.setZoomProportion (proportion); };
+    zoomStrip.onStep = [this] (bool closer) { canvas.zoomBy (closer ? 1.25f : 0.8f); };
+    canvas.onZoomChanged = [this] { zoomStrip.showZoom (canvas.getZoomProportion()); };
+
+    // The parts moved from under the floating actions: a pan or a zoom puts them away.
+    canvas.onViewMoved = [this] { hideActions(); };
 
     // Both size themselves to their contents.
-    inspector.onPreferredSizeChanged = [this] { layOutFloatingPanels(); };
+    inspector.onPreferredSizeChanged = [this]
+    {
+        // Its own content changed size: animate to it (see layOutFloatingPanels).
+        inspectorResizing = true;
+        layOutFloatingPanels();
+        inspectorResizing = false;
+    };
     inspector.setShortcutsShown (inspectorShortcutsShown());
     console.onPreferredSizeChanged = [this] { layOutFloatingPanels(); };
 
@@ -320,6 +405,9 @@ void PluginEditor::buildPanels()
         layOutFloatingPanels();
     };
 
+    // Each frame of the fold.
+    palette.onSizeChanging = [this] { layOutFloatingPanels(); };
+
     canvas.onSchematicChanged = [this]
     {
         recordUndoState();
@@ -339,6 +427,9 @@ void PluginEditor::buildPanels()
 
     canvas.onSelectionChanged = [this]
     {
+        if (canvas.getSelection().empty() && canvas.getSelectedWires().empty())
+            hideActions();
+
         inspector.setElement (canvas.getSelectedElement());
         updateActionButtons();
     };
@@ -433,6 +524,7 @@ void PluginEditor::buildBottomBand()
 PluginEditor::~PluginEditor()
 {
     processorRef.onSchematicReplaced = nullptr;
+    removeMouseListener (&actionDismisser);
 
     Celine::Theme::palette().removeChangeListener (this);
 
@@ -454,6 +546,9 @@ PluginEditor::~PluginEditor()
 //==============================================================================
 void PluginEditor::schematicChangedExternally()
 {
+    refreshTraces();
+    hideActions();
+
     canvas.refresh();
     canvas.zoomToFit();
     inspector.setElement (nullptr);
@@ -493,9 +588,6 @@ void PluginEditor::updateToolButtons()
     using Tool = Celine::SchematicCanvas::Tool;
 
     const auto tool = canvas.getTool();
-
-    selectToolButton->setActive (tool == Tool::Select);
-    deleteToolButton->setActive (tool == Tool::Delete);
 
     // Both placing and wiring are shown by the palette; the canvas is the authority.
     const auto armed = canvas.getPendingType();
@@ -605,21 +697,15 @@ void PluginEditor::updateActionButtons()
     actionButton (Action::Undo).setEnabled (history.canUndo());
     actionButton (Action::Redo).setEnabled (history.canRedo());
 
-    const bool hasSelection = ! canvas.getSelection().empty();
-    const bool placing = canvas.getTool() == Celine::SchematicCanvas::Tool::Place;
-
-    for (const auto action : { Action::Mirror, Action::Flip, Action::Rotate })
-        actionButton (action).setEnabled (hasSelection || placing);
-
-    // Duplicate also copies wires; the other three only act on parts.
-    actionButton (Action::Copy).setEnabled (hasSelection || ! canvas.getSelectedWires().empty() || placing);
-
     // The housing is painted by the editor, so repaint it too.
     repaint (undoRedoHousing);
 }
 
 void PluginEditor::markPending()
 {
+    // Any edit can add, remove or rename a probe.
+    refreshTraces();
+
     // The sheet no longer matches its file. Separate from pendingRebuild, which is about
     // what is heard.
     markPresetModified();
@@ -752,10 +838,7 @@ void PluginEditor::timerCallback()
     // Free the circuit the last Rebuild faded out (the audio thread can't).
     processorRef.releaseFadedCircuits();
 
-    // Repaint for live traces, only when there is a scope.
-    if (processorRef.getSchematic().countElementsOfType (SchematicModel::ElementType::Scope) > 0)
-        canvas.repaint();
-
+    // Live traces are the trace window's now, which repaints itself; the sheet has none.
     // Always: readouts are cheap and current is live without a scope.
     inspector.repaintReadouts();
     reportInputFileLoads();
@@ -778,8 +861,11 @@ bool PluginEditor::readScopeTrace (int elementId, Celine::ScopeReading& out) con
     // Copied, not pointed at, so the renderer sees consistent columns. The index is read
     // first with acquire ordering.
     out.writeColumn = trace->writeColumn.load (std::memory_order_acquire);
+    out.count = juce::jlimit (2, Celine::ScopeReading::columns, trace->columnCount.load (std::memory_order_relaxed));
+    out.writeColumn %= out.count;
+    out.filled = juce::jlimit (0, out.count, trace->filled.load (std::memory_order_relaxed));
 
-    for (int c = 0; c < Celine::ScopeReading::columns; ++c)
+    for (int c = 0; c < out.count; ++c)
     {
         out.minimum[c] = trace->minimum[c].load (std::memory_order_relaxed);
         out.maximum[c] = trace->maximum[c].load (std::memory_order_relaxed);
@@ -1486,6 +1572,64 @@ namespace
     const juce::String inspectorShortcutsKey { "inspectorShortcuts" };
 }
 
+void PluginEditor::applyMouseHints()
+{
+    // One set of controls, for everyone: the mouse lines at the foot of the shortcut list.
+    inspector.setMouseHints ("Right- or middle-drag to move the canvas.\n"
+                             "Two fingers on a trackpad move it too.\n"
+                             "Scroll, pinch, or Shift and two fingers to zoom.\n"
+                             "Right-click a part to rotate, flip, copy or delete it.\n"
+                             "Middle-click a part to place another like it.");
+}
+
+void PluginEditor::showActions (juce::Point<int> atOnCanvas)
+{
+    // Clear of what is selected, never on it: centred over its drawn outline, a gap above
+    // it, or below it when there is no room above; on the sheet either way. The click
+    // stands in for the outline if there is none.
+    const auto sheet = canvas.getBounds().withTrimmedTop (Celine::SchematicCanvas::topRulerThickness);
+    const auto selection = canvas.getSelectionArea();
+    const auto around = (selection.isEmpty() ? juce::Rectangle<float> (1.0f, 1.0f).withCentre (atOnCanvas.toFloat()) : selection)
+                            .translated ((float) canvas.getX(), (float) canvas.getY())
+                            .toNearestInt();
+
+    constexpr int clearance = 16;
+    using Bar = Celine::ActionBar;
+    const int w = actionBar.getPreferredWidth(), h = Bar::height;
+    const int above = around.getY() - clearance - Bar::buttonSize - Bar::shadow;
+    const int below = around.getBottom() + clearance - Bar::shadow;
+    const int y = above >= sheet.getY() ? above : juce::jmin (below, sheet.getBottom() - h);
+
+    actionsHome = juce::Rectangle<int> (w, h).withPosition (juce::jlimit (sheet.getX(), juce::jmax (sheet.getX(), sheet.getRight() - w),
+                                                                          around.getCentreX() - w / 2),
+                                                            y);
+    actionBar.toFront (false);
+    actionsOpen.setTarget (0.0f, false);
+    actionsOpen.setTarget (1.0f, isShowing());
+    placeActions();
+}
+
+void PluginEditor::hideActions()
+{
+    actionsOpen.setTarget (0.0f, isShowing() && actionBar.isVisible());
+    placeActions();
+}
+
+void PluginEditor::placeActions()
+{
+    const float open = actionsOpen.get();
+    actionBar.setVisible (open > 0.0f);
+
+    if (open <= 0.0f)
+        return;
+
+    actionBar.setBounds (actionsHome);
+
+    // Rises a few pixels into place as it fades in, the shared motion.
+    actionBar.setAlpha (open);
+    actionBar.setTransform (juce::AffineTransform::translation (0.0f, 6.0f * (1.0f - open)));
+}
+
 bool PluginEditor::inspectorShortcutsShown()
 {
     const juce::PropertiesFile file (PresetLibrary().getSettingsFile(), PresetLibrary::getSettingsOptions());
@@ -1708,6 +1852,11 @@ void PluginEditor::applyColours()
     if (logo != nullptr)
         Celine::Assets::tint (*logo, Celine::Theme::headerText());
 
+    wordmark = Celine::Assets::drawable (ProductInfo::wordmarkAsset, Celine::Assets::IfMissing::returnNull);
+
+    if (wordmark != nullptr)
+        Celine::Assets::tint (*wordmark, Celine::Theme::headerText());
+
     // The one dropdown on a light panel.
     channelModeBox.setColour (juce::ComboBox::backgroundColourId, Celine::Theme::accent());
     channelModeBox.setColour (juce::ComboBox::textColourId, Celine::Theme::textOnPanel());
@@ -1718,6 +1867,102 @@ void PluginEditor::applyColours()
         label->setColour (juce::Label::textColourId, Celine::Theme::textOnPanel());
 
     refreshRebuildButtonColour();
+}
+
+//==============================================================================
+void PluginEditor::animationFrame()
+{
+    // Every one ticked, whichever moved.
+    const bool regrew = inspectorHeight.tick();
+    const bool folded = tracesOpen.tick();
+
+    if (actionsOpen.tick())
+        placeActions();
+
+    if (regrew || folded)
+        layOutFloatingPanels();
+}
+
+void PluginEditor::refreshTraces()
+{
+    using Kind = Celine::TraceWindow::Kind;
+    std::vector<Celine::TraceWindow::Trace> probes, scopes;
+    double probeSeconds = PluginProcessor::scopeWindowSeconds, scopeSeconds = PluginProcessor::scopeWindowSeconds;
+
+    for (const auto& element : processorRef.getSchematic().getElements())
+    {
+        const bool probe = element.type == SchematicModel::ElementType::Probe;
+        if (! probe && element.type != SchematicModel::ElementType::Scope)
+            continue;
+
+        // Named by label, else by its place among its kind, as the legend lists it. A kind's
+        // time base is its first part's (they are all set together).
+        auto& list = probe ? probes : scopes;
+        if (list.empty())
+            (probe ? probeSeconds : scopeSeconds) = element.scopeSeconds;
+
+        list.push_back ({ element.id, element.label.isNotEmpty() ? element.label
+                                                                 : juce::String (probe ? "Probe " : "Scope ") + juce::String (list.size() + 1) });
+    }
+
+    // At the limit, the palette stops offering more (the canvas refuses them too).
+    palette.setTracePartsAvailable (static_cast<int> (probes.size() + scopes.size()) < SchematicModel::maxTraceParts);
+
+    const bool wasEmpty = traceWindow.isEmpty();
+    const int heightWas = traceWindow.getPreferredHeight (Celine::TraceWindow::preferredWidth);
+    const bool hadProbes = traceWindow.has (Kind::probes), hadScopes = traceWindow.has (Kind::scopes);
+
+    traceWindow.setTraces (std::move (probes), std::move (scopes));
+    traceWindow.setWindowSeconds (Kind::probes, probeSeconds);
+    traceWindow.setWindowSeconds (Kind::scopes, scopeSeconds);
+    traceButton.setContents (traceWindow.has (Kind::probes), traceWindow.has (Kind::scopes));
+
+    // Laid out again when what shows changes, or the legend needs more rows or fewer.
+    if (wasEmpty != traceWindow.isEmpty() || hadProbes != traceWindow.has (Kind::probes) || hadScopes != traceWindow.has (Kind::scopes)
+        || heightWas != traceWindow.getPreferredHeight (Celine::TraceWindow::preferredWidth))
+        layOutFloatingPanels();
+}
+
+void PluginEditor::placeTraces()
+{
+    if (traceWindow.isEmpty() || traceHome.isEmpty())
+    {
+        traceWindow.setVisible (false);
+        traceButton.setVisible (false);
+        return;
+    }
+
+    // The button: above the knobs in the band, centred on them; on the sheet with none.
+    const int w = traceButton.getPreferredWidth(), h = Celine::TraceWindowButton::height;
+    const int centre = controlStrip.isVisible() ? controlStrip.getBounds().getCentreX() : canvas.getBounds().getCentreX();
+    const juce::Rectangle<int> pill (centre - w / 2, bandTop - h - 8, w, h);
+    traceButton.setBounds (pill);
+
+    // The window grows out of the button and shrinks back into it: laid out at its open
+    // size, scaled on the way, so nothing inside reflows.
+    const float open = tracesOpen.get();
+    traceWindow.setBounds (traceHome);
+
+    if (open >= 1.0f)
+    {
+        traceWindow.setTransform ({});
+    }
+    else
+    {
+        const auto home = traceHome.toFloat(), from = pill.toFloat();
+        const auto lerp = [open] (float a, float b) { return a + (b - a) * open; };
+        const juce::Rectangle<float> now (lerp (from.getX(), home.getX()), lerp (from.getY(), home.getY()),
+                                          lerp (from.getWidth(), home.getWidth()), lerp (from.getHeight(), home.getHeight()));
+
+        traceWindow.setTransform (juce::AffineTransform::scale (now.getWidth() / home.getWidth(), now.getHeight() / home.getHeight(),
+                                                                home.getX(), home.getY())
+                                      .translated (now.getX() - home.getX(), now.getY() - home.getY()));
+    }
+
+    traceWindow.setAlpha (open);
+    traceWindow.setVisible (open > 0.0f);
+    traceButton.setAlpha (1.0f - open);
+    traceButton.setVisible (open < 1.0f);
 }
 
 void PluginEditor::changeListenerCallback (juce::ChangeBroadcaster*)
@@ -1762,6 +2007,11 @@ void PluginEditor::paint (juce::Graphics& g)
 
     if (logo != nullptr && ! logoBounds.isEmpty())
         logo->drawWithin (g, logoBounds.toFloat(), juce::RectanglePlacement::centred, 1.0f);
+
+    // Centred on its ordinary letters, not its box: "designer" has a d's ascender and a g's
+    // descender, and centring the box would sit the word off the toolbar's middle.
+    if (wordmark != nullptr && ! wordmarkBounds.isEmpty())
+        Celine::Assets::drawWordmark (g, *wordmark, wordmarkBounds.toFloat());
 }
 
 void PluginEditor::layOutToolbar (juce::Rectangle<int>& area)
@@ -1782,13 +2032,24 @@ void PluginEditor::layOutToolbar (juce::Rectangle<int>& area)
         toolbar.removeFromLeft (gap);
     };
 
-    // One unbroken pitch from Select to Redo.
-    place (*selectToolButton);
-    place (*deleteToolButton);
+    // The toolbar opens with the product's name, as AURA's and GALLERY's do: 12 px in
+    // from the window's edge, its ordinary letters 14 px tall (Assets::xHeightFraction
+    // sizes the box so a word with ascenders and descenders gets letters the same size as
+    // one without), then a group's gap before undo. Rotating, flipping, copying and
+    // deleting are a right click on the part; the tools are keys (S, W, X).
+    wordmarkBounds = {};
+    if (wordmark != nullptr)
+    {
+        toolbar.removeFromLeft (juce::jmax (0, 12 - toolbar.getX()));
 
-    // Mirror, flip, rotate, copy.
-    for (const auto action : { Action::Mirror, Action::Flip, Action::Rotate, Action::Copy })
-        place (actionButton (action));
+        const auto ink = wordmark->getDrawableBounds();
+        const float aspect = ink.getHeight() > 0.0f ? ink.getWidth() / ink.getHeight() : 1.0f;
+        const int height = juce::roundToInt (14.0f / Celine::Assets::xHeightFraction (*wordmark));
+        const int width = juce::roundToInt ((float) height * aspect);
+
+        wordmarkBounds = toolbar.removeFromLeft (width).withSizeKeepingCentre (width, height);
+        toolbar.removeFromLeft (groupGap);
+    }
 
     // Undo and redo abut inside one housing painted by the editor.
     undoRedoHousing = toolbar.removeFromLeft (size * 2).withSizeKeepingCentre (size * 2, size);
@@ -1818,7 +2079,9 @@ void PluginEditor::layOutToolbar (juce::Rectangle<int>& area)
     bypassButton->setBounds (toolbar.removeFromRight (size).withSizeKeepingCentre (size, size));
 
     // --------------------------------------------------------------------------
-    // Save, Load, the preset field and Import, centred between the two end groups.
+    // Save, Load, the preset field and Import, centred on the window rather than on the
+    // room between the end groups, which are not the same width; kept clear of both where
+    // the window is too narrow for that.
     {
         // Only what is left between the end groups, never more. Change the gap below if this
         // looks wrong: it comes off before the field is sized.
@@ -1833,7 +2096,10 @@ void PluginEditor::layOutToolbar (juce::Rectangle<int>& area)
         // Hide the field when too narrow to read; the buttons stay.
         presetsButton.setVisible (fieldWidth >= 56);
 
-        toolbar.removeFromLeft (juce::jmax (sideMargin, (toolbar.getWidth() - groupWidth) / 2));
+        const int lowest = toolbar.getX() + sideMargin;
+        const int highest = juce::jmax (lowest, toolbar.getRight() - sideMargin - groupWidth);
+        const int left = juce::jlimit (lowest, highest, getWidth() / 2 - groupWidth / 2);
+        toolbar.removeFromLeft (left - toolbar.getX());
 
         place (*saveButton);
         place (*loadButton);
@@ -1904,7 +2170,7 @@ void PluginEditor::layOutBand()
     const int inputContent = Strip::cellWidth + 2 * Strip::padding;
     // The folded palette's edge (not its tab), folded or not, so opening the palette
     // doesn't move the band.
-    const int paletteEdge = palette.getX() + Celine::ElementPalette::getFoldedBodyWidth();
+    const int paletteEdge = paletteHome.getX() + Celine::ElementPalette::getFoldedBodyWidth();
     const int inputRight = juce::jmax (row.getX() + inputContent, paletteEdge);
     const auto inputArea = row.removeFromLeft (juce::jmin (row.getWidth(), inputRight - row.getX()));
     inputBar.setBounds (inputArea.withLeft (area.getX()));
@@ -1914,7 +2180,7 @@ void PluginEditor::layOutBand()
     constexpr int channelsWidth = Strip::comboWidth + 12;
     const int outputContent = Strip::cellWidth + channelsWidth + 2 * Strip::padding;
     // The inspector's left edge, whether or not it is showing, so the bar never moves.
-    const int outputLeft = juce::jmin (row.getRight() - outputContent, inspector.getX());
+    const int outputLeft = juce::jmin (row.getRight() - outputContent, inspectorHome.getX());
     const auto outputArea = row.removeFromRight (juce::jlimit (0, row.getWidth(), row.getRight() - outputLeft));
     outputBar.setBounds (outputArea.withRight (area.getRight()));
     auto fixed = outputArea.withWidth (outputContent).reduced (Strip::padding, 4);
@@ -1965,7 +2231,9 @@ void PluginEditor::layOutFloatingPanels()
     // --------------------------------------------------------------------------
     // The palette down the left and the inspector down the right, both from the top.
     const auto wanted = inspector.getPreferredSize();
-    const auto tallPalette = palette.getPreferredSize (room.getHeight());
+    // The zoom card goes under the palette, so the palette's room is that much shorter.
+    const int zoomBlock = Celine::ZoomStrip::height + zoomGap;
+    const auto tallPalette = palette.getPreferredSize (room.getHeight() - zoomBlock);
     const int paletteFootprint = juce::jmin (tallPalette.x, room.getWidth() / 2);
 
     const int columnWidth = juce::jmin (room.getRight() - (room.getX() + paletteFootprint) - margin,
@@ -1978,25 +2246,43 @@ void PluginEditor::layOutFloatingPanels()
     const bool consoleBetween = betweenWidth >= Celine::MessageConsole::minimumWidth;
 
     const auto paletteSize = consoleBetween ? tallPalette
-                                            : palette.getPreferredSize (room.getHeight() - margin - consoleLine);
-    // Both centred vertically in their room.
+                                            : palette.getPreferredSize (room.getHeight() - margin - consoleLine - zoomBlock);
+    // The palette and the zoom card under it centred together in their room, the
+    // inspector in its own.
     const int paletteRoom = consoleBetween ? room.getHeight() : room.getHeight() - margin - consoleLine;
-    palette.setBounds (room.getX(), room.getY() + juce::jmax (0, (paletteRoom - paletteSize.y) / 2),
-                       juce::jmin (paletteSize.x, room.getWidth() / 2), paletteSize.y);
+    paletteHome = { room.getX(), room.getY() + juce::jmax (0, (paletteRoom - paletteSize.y - zoomBlock) / 2),
+                    juce::jmin (paletteSize.x, room.getWidth() / 2), paletteSize.y };
 
+    // The inspector grows and shrinks to what it shows, from its centre; a change of
+    // window size moves it at once. Its fields are laid out for where it is heading, so
+    // they never reflow mid-move.
     const int inspectorWidth = juce::jmin (wanted.x, column.getWidth());
-    const int inspectorHeight = juce::jmin (wanted.y, column.getHeight());
-    inspector.setBounds (column.getRight() - inspectorWidth, column.getY() + (column.getHeight() - inspectorHeight) / 2,
-                         inspectorWidth, inspectorHeight);
+    const int inspectorTarget = juce::jmin (wanted.y, column.getHeight());
+    inspectorHeight.setTarget (static_cast<float> (inspectorTarget),
+                               inspectorResizing && isShowing() && inspectorHeight.get() >= 0.0f);
+    inspector.setLayoutHeight (inspectorTarget);
+
+    const int inspectorShown = juce::roundToInt (inspectorHeight.get());
+    inspectorHome = { column.getRight() - inspectorWidth, column.getY() + (column.getHeight() - inspectorShown) / 2,
+                      inspectorWidth, inspectorShown };
+
+    palette.setBounds (paletteHome);
+
+    // The zoom card under the palette, as wide as its body, so it narrows as the palette
+    // folds.
+    zoomStrip.setBounds (paletteHome.getX(), paletteHome.getBottom() + zoomGap,
+                         juce::jmax (0, palette.getBodyBounds().getWidth()), Celine::ZoomStrip::height);
+
+    inspector.setBounds (inspectorHome);
 
     // --------------------------------------------------------------------------
     // The console at the top, as big as its messages, centred on the sheet if the panels
     // allow, else between them.
     {
-        const auto span = consoleBetween ? room.withLeft (palette.getRight() + margin)
+        const auto span = consoleBetween ? room.withLeft (paletteHome.getRight() + margin)
                                                 .withRight (column.getX() - margin)
                                          : room.withRight (column.getX() - margin)
-                                                .withTop (palette.getBottom() + margin);
+                                                .withTop (paletteHome.getBottom() + zoomBlock + margin);
 
         const auto size = console.getPreferredSize (span.getWidth());
         const int width = juce::jmin (size.x, span.getWidth());
@@ -2011,14 +2297,43 @@ void PluginEditor::layOutFloatingPanels()
     }
 
     // --------------------------------------------------------------------------
+    // The traces' window: along the bottom of the sheet, above the band, between the
+    // panels at either side, as wide as it likes when there is room. Placed, and opened or
+    // folded, by placeTraces() once the band is laid out.
+    traceHome = {};
+    if (! traceWindow.isEmpty())
+    {
+        const int left = paletteHome.getRight() + margin;
+        const int right = column.getX() - margin;
+        const int width = juce::jmin (Celine::TraceWindow::preferredWidth, right - left);
+        const int height = juce::jmin (traceWindow.getPreferredHeight (width), room.getHeight() / 2);
+
+        // The card is what is centred on the sheet; its tabs hang off its left edge.
+        constexpr int tabs = Celine::TraceWindow::tabWidth;
+        const int card = width - tabs;
+        const int cardLeft = juce::jlimit (left + tabs, juce::jmax (left + tabs, right - card), sheet.getCentreX() - card / 2);
+
+        traceHome = { cardLeft - tabs, room.getBottom() - height, juce::jmax (0, width), height };
+    }
+
+    // Where the drawing must stay clear of at the bottom: the open window, the folded
+    // button, or the band.
+    const int traceTop = traceHome.isEmpty()                 ? bandTop
+                       : tracesOpen.target() > 0.5f          ? traceHome.getY() - margin
+                                                             : bandTop - Celine::TraceWindowButton::height - 16;
+
+    // --------------------------------------------------------------------------
     // Fit-to-screen frames the drawing in what the palette and inspector leave
     // uncovered (the console is ignored).
     canvas.setFramingInsets ({ Celine::SchematicCanvas::topRulerThickness,
-                               palette.getRight() - sheet.getX(),
-                               sheet.getBottom() - bandTop,
-                               inspector.isVisible() ? sheet.getRight() - inspector.getX() : margin });
+                               paletteHome.getRight() - sheet.getX(),
+                               sheet.getBottom() - traceTop,
+                               // The inspector only when it is up: with nothing selected and
+                               // its shortcut list off it hides, and the drawing gets its room.
+                               inspector.isVisible() ? sheet.getRight() - inspectorHome.getX() : margin });
 
     layOutBand();
+    placeTraces();
 }
 
 int PluginEditor::narrowestWindow() const

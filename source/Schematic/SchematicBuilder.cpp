@@ -144,6 +144,43 @@ namespace SchematicModel
         /** Index of the ideal op-amp model, which takes its own code path. */
         constexpr int idealOpAmpIndex = 4;
 
+        /** A loudspeaker's electrical side, from its maker's Thiele-Small parameters.
+
+            Only models whose maker prints all five numbers are here: Celestion's sheets give
+            Fs and Re and nothing else, so none of theirs can be. Each is the 8 ohm version, from
+            the maker's product page (jensentone.com, vintage-alnico/p12q and p12r,
+            vintage-ceramic/c12n). Those pages print one Qes per model, which works out from
+            the same page's Qms and Qts to belong to another impedance column (32 ohms for the
+            P12Q, 16 for the others); so Qes here is the 8 ohm column's own,
+            Qms * Qts / (Qms - Qts). It agrees within 1% with 2 pi Fs Mms Re / Bl^2 from the
+            page's Bl and Mms, a second, independent route.
+
+            Free-air figures: in a closed cabinet the resonance rises and sharpens. Le is the
+            inductance printed at 1 kHz, wired as a plain inductor, so above a few kilohertz
+            the impedance climbs faster than a real coil's, whose eddy losses flatten it. */
+        struct SpeakerModel
+        {
+            double dcResistance;  // Re, ohms
+            double inductance;    // Le, henries
+            double resonance;     // Fs, hertz
+            double mechanicalQ;   // Qms
+            double electricalQ;   // Qes
+        };
+
+        SpeakerModel speakerModelFor(int index)
+        {
+            constexpr double qmsP12Q = 11.57, qtsP12Q = 2.03;
+            constexpr double qmsP12R = 13.07, qtsP12R = 2.1;
+            constexpr double qmsC12N = 7.52, qtsC12N = 1.02;
+
+            switch (index)
+            {
+                case 1: return {6.05, 0.5e-3, 80.0, qmsP12R, qmsP12R * qtsP12R / (qmsP12R - qtsP12R)};
+                case 2: return {6.05, 0.9e-3, 113.0, qmsC12N, qmsC12N * qtsC12N / (qmsC12N - qtsC12N)};
+                default: return {5.6, 0.67e-3, 90.5, qmsP12Q, qmsP12Q * qtsP12Q / (qmsP12Q - qtsP12Q)};
+            }
+        }
+
         /** Index of the Real transformer model (0 is Ideal). */
         constexpr int realTransformerIndex = 1;
 
@@ -462,6 +499,32 @@ namespace SchematicModel
             return controls.back();
         }
 
+        /** A speaker as its standard equivalent circuit: the voice coil's resistance and
+            inductance in series, then the moving cone as a parallel R, L and C, whose
+            resonance at Fs is the peak in a speaker's impedance:
+
+                Cmes = Qes / (2 pi Fs Re), Lces = 1 / ((2 pi Fs)^2 Cmes), Res = Re Qms / Qes
+
+            On internal nodes named after the element id, as a transformer's strays are. */
+        void addSpeaker(Circuit& circuit, const Element& element, const PinNets& net)
+        {
+            const auto m = speakerModelFor(element.modelIndex);
+            const double w = juce::MathConstants<double>::twoPi * m.resonance;
+            const double cmes = m.electricalQ / (w * m.dcResistance);
+            const double lces = 1.0 / (w * w * cmes);
+            const double res = m.dcResistance * m.mechanicalQ / m.electricalQ;
+
+            const auto tag = "SPK" + juce::String(element.id);
+            const auto afterCopper = tag + "c";
+            const auto motional = tag + "m";
+
+            circuit.addResistor(net(0), afterCopper, m.dcResistance);
+            circuit.addInductor(afterCopper, motional, m.inductance);
+            circuit.addResistor(motional, net(1), res);
+            circuit.addInductor(motional, net(1), lces);
+            circuit.addCapacitor(motional, net(1), cmes);
+        }
+
         void addTransformer(Circuit& circuit, const Element& element, const PinNets& net)
         {
             const bool tapped = element.type == ElementType::CenterTapTransformer;
@@ -596,6 +659,11 @@ namespace SchematicModel
                 case ElementType::Text:
                 case ElementType::Rectangle:
                 case ElementType::Scope:
+                case ElementType::Probe:
+                    break;
+
+                case ElementType::Speaker:
+                    addSpeaker(circuit, element, net);
                     break;
 
                 case ElementType::Resistor:
@@ -700,8 +768,21 @@ namespace SchematicModel
                 const auto& element = elements[e];
                 const PinNets net{nets, e};
 
+                // Past the limit a probe or scope is still drawn, but nothing reads it: say so
+                // on the part, rather than leave its trace blank. (A sheet gets there by an
+                // import or a load; the palette stops placing at the limit.)
+                if (isTracePart(element.type) && static_cast<int>(result.probes.size()) >= maxTraceParts)
+                {
+                    result.add(Diagnostic::Severity::Warning,
+                               "Only " + juce::String(maxTraceParts) + " probes and scopes can be shown; this one is not read.",
+                               {}, &element);
+                    continue;
+                }
+
                 if (element.type == ElementType::Scope)
                     result.probes.push_back({element.id, net(0), net(1), element.scopeSeconds});
+                else if (element.type == ElementType::Probe)
+                    result.probes.push_back({element.id, net(0), "gnd", element.scopeSeconds});
                 else if (element.type == ElementType::Resistor && element.value > 0.0)
                     result.currentProbes.push_back({element.id, net(0), net(1), element.value});
             }

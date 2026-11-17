@@ -69,9 +69,29 @@ namespace SchematicModel
         /** An LM386-style power amp: op-amp pins plus gain pins 1 and 8. Its feedback is
             internal, so it is not an op-amp model. */
         PowerAmp,
+
+        /** A probe: one pin, read against ground. Stamps nothing; every probe on the sheet
+            shares one display, each in its own colour. */
+        Probe,
+
+        /** A loudspeaker as a load: its voice coil and the cone's resonance, from the
+            maker's Thiele-Small parameters (see SchematicBuilder's speaker models). */
+        Speaker,
     };
 
-    inline constexpr int numElementTypes = 25;
+    inline constexpr int numElementTypes = 27;
+
+    /** Most probes and scopes, together, a sheet shows: the processor captures this many
+        traces, and the palette greys both parts once a sheet has them all. Twelve is half
+        again the eight there were, and as many as a legend can show without crowding the
+        traces out of their window. */
+    inline constexpr int maxTraceParts = 12;
+
+    /** Whether a type is read on the trace window, and so counts against maxTraceParts. */
+    inline constexpr bool isTracePart(ElementType type) noexcept
+    {
+        return type == ElementType::Probe || type == ElementType::Scope;
+    }
 
     /** Smallest Rectangle size, in grid squares. */
     inline constexpr int minRectangleSize = 3;
@@ -207,14 +227,14 @@ namespace SchematicModel
             // one ratio.
             {"Transformer", 4, {{-3, -3}, {-3, 3}, {3, -3}, {3, 3}}, "", "Primary turns", 0.0,
              "celine:xfmr-ideal|Ideal|Turns ratio only. Passes DC;"
-             "celine:xfmr-real|Real|Adds inductance and winding losses. Blocks DC",
+             "celine:xfmr-real|Real|Inductance and losses. Blocks DC",
              "Secondary turns", 0.0},
 
             // As above, with the secondary's centre tap; one three-winding transformer.
             {"Transformer (CT)", 5, {{-3, -3}, {-3, 3}, {3, -3}, {3, 0}, {3, 3}}, "",
              "Primary turns", 0.0,
              "celine:xfmr-ct-ideal|Ideal|Turns ratio only. Passes DC;"
-             "celine:xfmr-ct-real|Real|Adds inductance and winding losses. Blocks DC",
+             "celine:xfmr-ct-real|Real|Inductance and losses. Blocks DC",
              "Secondary turns (total)", 0.0},
 
             // Drain, gate, source (addJfet() order).
@@ -273,6 +293,15 @@ namespace SchematicModel
             // ground is the other rail.
             {"Power amp", 5, {{-4, -2}, {-4, 2}, {4, 0}, {-1, -4}, {0, -4}}, "V", "Supply", 0.0,
              "celine:poweramp-lm386|LM386|"},
+
+            // One pin, at the tip; the reference is ground.
+            {"Probe", 1, {{0, 2}}, "", "", 0.0, ""},
+
+            // Pin 0 is the + terminal. No value: the model is the whole of what a speaker is.
+            {"Speaker", 2, {{0, -2}, {0, 2}}, "", "", 0.0,
+             "celine:speaker-jensen-p12q-8|P12Q|12 in alnico, 8 ohms, fs 90 Hz|Jensen;"
+             "celine:speaker-jensen-p12r-8|P12R|12 in alnico, 8 ohms, fs 80 Hz|Jensen;"
+             "celine:speaker-jensen-c12n-8|C12N|12 in ceramic, 8 ohms, fs 113 Hz|Jensen"},
         };
 
         return table[static_cast<int>(type)];
@@ -629,8 +658,13 @@ namespace SchematicModel
         /** Volts at the bottom and top of the picture when not auto-scaling. */
         double scopeMin = -5.0, scopeMax = 5.0;
 
-        /** Time span of the picture, in seconds. */
+        /** Time span of the picture, in seconds, between minScopeSeconds and maxScopeSeconds. */
         double scopeSeconds = 0.04;
+
+        /** The span's limits. The capture costs the same whatever the span -- at most 1024
+            columns of min and max shown, each sample one compare either way -- so the ceiling
+            is what is still worth watching scroll, not what the audio thread can afford. */
+        static constexpr double minScopeSeconds = 0.001, maxScopeSeconds = 4.0;
 
         /** A point in the part's own frame, mirrored, rotated and moved onto the sheet. Used
             for pins and anything else in the part's frame. */

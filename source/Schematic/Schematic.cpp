@@ -736,8 +736,8 @@ namespace SchematicModel
                 node.setProperty("height", element.height, nullptr);
             }
 
-            // Only scopes have axes.
-            if (element.type == ElementType::Scope)
+            // Only scopes have axes; probes keep the shared display's time base.
+            if (element.type == ElementType::Scope || element.type == ElementType::Probe)
             {
                 node.setProperty("scopeAuto", element.scopeAutoScale, nullptr);
                 node.setProperty("scopeMin", element.scopeMin, nullptr);
@@ -886,7 +886,7 @@ namespace SchematicModel
                 element.scopeMax = node.getProperty("scopeMax", 5.0);
 
                 // Clamped: the time base divides into the column count.
-                element.scopeSeconds = juce::jlimit(0.001, 2.0,
+                element.scopeSeconds = juce::jlimit(Element::minScopeSeconds, Element::maxScopeSeconds,
                                                     static_cast<double>(node.getProperty("scopeSeconds", 0.04)));
 
                 elements.push_back(element);

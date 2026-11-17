@@ -507,8 +507,13 @@ void PluginProcessor::prepareScopes()
         const auto seconds = i < count ? probes[static_cast<size_t> (i)].windowSeconds
                                        : scopeWindowSeconds;
 
-        samplesPerScopeColumn[static_cast<size_t> (i)] = juce::jmax (
-            1, juce::roundToInt (rate * seconds / ScopeTrace::columns));
+        // As few samples to a column as fit the span in the columns it is shown in, then as
+        // many columns as that makes, so they cover the span (to a column's rounding) rather
+        // than overrunning it; and twice that in the ring, for the trigger's sake.
+        const int samples = juce::jmax (2, juce::roundToInt (rate * seconds));
+        const int perColumn = (samples + ScopeTrace::shownColumns - 1) / ScopeTrace::shownColumns;
+        samplesPerScopeColumn[static_cast<size_t> (i)] = perColumn;
+        scopeColumnCounts[static_cast<size_t> (i)] = 2 * juce::jlimit (2, ScopeTrace::shownColumns, juce::roundToInt ((double) samples / perColumn));
     }
 
     // The current readout keeps the default window.
@@ -527,12 +532,15 @@ void PluginProcessor::prepareScopes()
             trace.maximum[c].store (0.0f, std::memory_order_relaxed);
         }
 
+        trace.columnCount.store (scopeColumnCounts[static_cast<size_t> (i)], std::memory_order_relaxed);
+        trace.filled.store (0, std::memory_order_relaxed);
         trace.writeColumn.store (0, std::memory_order_relaxed);
         trace.dcAverage.store (0.0f, std::memory_order_relaxed);
         trace.peakToPeak.store (0.0f, std::memory_order_relaxed);
 
         trace.live.store (used, std::memory_order_relaxed);
         scopeAccumulators[static_cast<size_t> (i)] = {};
+        scopeColumnTotals[static_cast<size_t> (i)] = 0.0;
 
         // Published under the lock so getScopeTrace() needn't read `probes`.
         scopeElementIds[static_cast<size_t> (i)].store (
@@ -672,19 +680,45 @@ void PluginProcessor::sampleScopes (Circuit& circuit) noexcept
 
         auto& trace = scopeTraces[static_cast<size_t> (i)];
         const int column = trace.writeColumn.load (std::memory_order_relaxed);
+        const int columnCount = scopeColumnCounts[static_cast<size_t> (i)];
+        const int span = columnCount / 2;
+        const int next = (column + 1) % columnCount;
+
+        // The span is the newest half of the ring: the column falling out of it leaves the
+        // sum as the new one joins it.
+        const int leaving = (column - span + columnCount) % columnCount;
+        auto& total = scopeColumnTotals[static_cast<size_t> (i)];
+        total += 0.5 * ((double) accumulator.minimum + accumulator.maximum)
+               - 0.5 * ((double) trace.minimum[leaving].load (std::memory_order_relaxed) + trace.maximum[leaving].load (std::memory_order_relaxed));
 
         trace.minimum[column].store (accumulator.minimum, std::memory_order_relaxed);
         trace.maximum[column].store (accumulator.maximum, std::memory_order_relaxed);
 
-        // Published after the column is written.
-        trace.writeColumn.store ((column + 1) % ScopeTrace::columns, std::memory_order_release);
+        // How much of the ring is real, then the column, published after both.
+        const int filled = std::min (trace.filled.load (std::memory_order_relaxed) + 1, columnCount);
+        trace.filled.store (filled, std::memory_order_relaxed);
+        trace.writeColumn.store (next, std::memory_order_release);
+        accumulator = {};
 
-        // Refreshed once per column, averaged over the whole window.
-        float lowest = accumulator.minimum, highest = accumulator.maximum;
-        double total = 0.0;
+        // Over the span, or over what there is of it yet: the zeros a clearing left are not
+        // readings, and add nothing to the sum.
+        const int real = std::min (span, filled);
+        trace.dcAverage.store (static_cast<float> (total / real), std::memory_order_relaxed);
 
-        for (int c = 0; c < ScopeTrace::columns; ++c)
+        // The swing, refreshed every sixteenth of the span rather than every column: at a
+        // sample a column, a pass over the span per column would be a thousand loads per
+        // sample per trace. The same pass sums the span afresh, so the running sum's
+        // rounding never builds up.
+        if (next % juce::jmax (1, span / 16) != 0)
+            continue;
+
+        float lowest = trace.minimum[column].load (std::memory_order_relaxed);
+        float highest = trace.maximum[column].load (std::memory_order_relaxed);
+        total = 0.0;
+
+        for (int back = 0; back < real; ++back)
         {
+            const int c = (column - back + columnCount) % columnCount;
             const auto low = trace.minimum[c].load (std::memory_order_relaxed);
             const auto high = trace.maximum[c].load (std::memory_order_relaxed);
 
@@ -693,11 +727,8 @@ void PluginProcessor::sampleScopes (Circuit& circuit) noexcept
             total += 0.5 * (low + high);
         }
 
-        trace.dcAverage.store (static_cast<float> (total / ScopeTrace::columns),
-                               std::memory_order_relaxed);
+        trace.dcAverage.store (static_cast<float> (total / real), std::memory_order_relaxed);
         trace.peakToPeak.store (highest - lowest, std::memory_order_relaxed);
-
-        accumulator = {};
     }
 }
 

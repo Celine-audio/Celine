@@ -21,18 +21,27 @@ namespace Celine
             ElementType::Node,          ElementType::VoltageSource,
             ElementType::Resistor,      ElementType::Potentiometer,
             ElementType::Capacitor,     ElementType::Inductor,
-            ElementType::Switch,        ElementType::Spdt,
             ElementType::Diode,         ElementType::VacuumDiode,
+            ElementType::Switch,        ElementType::Transistor,
+            ElementType::Jfet,          ElementType::Mosfet,
             ElementType::OpAmp,         ElementType::PowerAmp,
-            ElementType::Transistor,    ElementType::Jfet,
-            ElementType::Mosfet,        ElementType::Scope,
             ElementType::Triode,        ElementType::Pentode,
-            ElementType::Transformer,   ElementType::CenterTapTransformer,
+            ElementType::Transformer,   ElementType::Speaker,
+            ElementType::Scope,         ElementType::Probe,
             ElementType::Rectangle,     ElementType::Text,
         };
 
+        /** Types with no entry of their own, reached from another's in the inspector: the
+            changeover is the Switch with a changeover action, the centre-tapped transformer
+            the Transformer with its centre tap on. */
+        constexpr ElementType reachedThroughAnother[] = {
+            ElementType::Spdt,
+            ElementType::CenterTapTransformer,
+        };
+
         constexpr int paletteCount = static_cast<int>(std::size(paletteOrder));
-        static_assert(paletteCount == numElementTypes, "every element type should be reachable from the palette");
+        static_assert(paletteCount + static_cast<int>(std::size(reachedThroughAnother)) == numElementTypes,
+                      "every element type should be reachable from the palette");
 
         /** The panel's padding on all four sides, and the gap between its two columns. The
             row gap is Theme::paletteRowHeight. */
@@ -146,15 +155,18 @@ namespace Celine
         {
             auto bounds = getLocalBounds().toFloat();
 
-            // A filled pill per entry.
+            // A filled pill per entry; greyed, and taking no clicks, when the sheet has no room
+            // for another of it (setTracePartsAvailable).
+            const bool live = isEnabled();
             g.setColour(active            ? Theme::accent()
+                        : ! live          ? Theme::pill().withMultipliedAlpha(0.45f)
                         : down            ? Theme::pill().darker(0.12f)
                         : highlighted     ? Theme::pill().darker(0.05f)
                                           : Theme::pill());
             g.fillRoundedRectangle(bounds, Theme::paletteEntryCornerRadius);
 
             // Dark ink: the palette is a light surface.
-            const auto ink = active ? Theme::text() : Theme::textOnPanel();
+            const auto ink = (active ? Theme::text() : Theme::textOnPanel()).withMultipliedAlpha(live ? 1.0f : 0.35f);
 
             // Symbol in a square on the left, name beside it.
             auto symbolArea = bounds.removeFromLeft(bounds.getHeight());
@@ -179,12 +191,13 @@ namespace Celine
                 SymbolPainter::drawPreview(g, type, symbolArea, ink);
             }
 
-            // Folded: the pill is just the symbol; the tooltip gives the name.
-            if (! iconOnly)
+            // Folded: the pill is just the symbol; the tooltip gives the name. Mid-fold the
+            // name fades and is cut by the narrowing pill rather than shortened.
+            if (! iconOnly && nameAlpha > 0.0f)
             {
-                g.setColour(ink);
+                g.setColour(ink.withMultipliedAlpha(nameAlpha));
                 g.setFont(Fonts::light(fontHeight));
-                g.drawText(getLabel(), bounds, juce::Justification::centredLeft, true);
+                g.drawText(getLabel(), bounds, juce::Justification::centredLeft, nameAlpha >= 1.0f);
             }
         }
 
@@ -192,6 +205,7 @@ namespace Celine
         bool isWire = false;
         bool active = false;
         bool iconOnly = false;
+        float nameAlpha = 1.0f;
     };
 
     /** The tab on the panel's edge that folds it to symbols and back. */
@@ -284,7 +298,7 @@ namespace Celine
         tab = std::make_unique<CollapseTab>();
         tab->onClick = [this]
         {
-            setCollapsed(! collapsed);
+            animateCollapsed(! collapsed);
 
             if (onCollapsedChanged)
                 onCollapsedChanged();
@@ -306,6 +320,20 @@ namespace Celine
         repaint();
     }
 
+    void ElementPalette::setTracePartsAvailable(bool available)
+    {
+        for (auto* entry : entries)
+        {
+            if (entry->isWire || ! isTracePart(entry->type) || entry->isEnabled() == available)
+                continue;
+
+            entry->setEnabled(available);
+            entry->setTooltip(available ? entry->getLabel()
+                                        : entry->getLabel() + ": " + juce::String(maxTraceParts)
+                                              + " probes and scopes at most; delete one to add another");
+        }
+    }
+
     void ElementPalette::setCollapsed(bool shouldBeCollapsed)
     {
         if (collapsed == shouldBeCollapsed)
@@ -314,14 +342,55 @@ namespace Celine
         collapsed = shouldBeCollapsed;
         tab->setCollapsed(collapsed);
 
+        // At once: this is the fold being restored, not clicked.
+        unfold.setTarget(collapsed ? 0.0f : 1.0f, false);
+        applyUnfold();
+    }
+
+    void ElementPalette::animateCollapsed(bool shouldBeCollapsed)
+    {
+        if (! isShowing())
+        {
+            setCollapsed(shouldBeCollapsed);
+            return;
+        }
+
+        collapsed = shouldBeCollapsed;
+        tab->setCollapsed(collapsed);
+        unfold.setTarget(collapsed ? 0.0f : 1.0f, true);
+    }
+
+    void ElementPalette::stepFold()
+    {
+        if (! unfold.tick())
+            return;
+
+        applyUnfold();
+
+        if (onSizeChanging)
+            onSizeChanging();
+    }
+
+    void ElementPalette::applyUnfold()
+    {
         for (auto* entry : entries)
         {
-            entry->iconOnly = collapsed;
+            const float u = unfold.get();
+            entry->iconOnly = u <= 0.0f;
+            entry->nameAlpha = u * u; // the names come in late and go out early
             entry->repaint();
         }
 
         resized();
         repaint();
+    }
+
+    int ElementPalette::columnWidth() const
+    {
+        // Already eased (Motion::Tween).
+        const float u = unfold.get();
+        return juce::roundToInt(static_cast<float>(paletteEntryHeight)
+                                + u * static_cast<float>(Theme::paletteColumnWidth - paletteEntryHeight));
     }
 
     float ElementPalette::fittingFontHeight() const
@@ -356,7 +425,7 @@ namespace Celine
     std::vector<juce::Rectangle<int>> ElementPalette::layOutGrid() const
     {
         // Always two to a row: symbol squares when folded, fixed columns otherwise.
-        const int column = collapsed ? paletteEntryHeight : Theme::paletteColumnWidth;
+        const int column = columnWidth();
 
         std::vector<juce::Rectangle<int>> cells;
         cells.reserve(static_cast<size_t>(entries.size()));
@@ -371,7 +440,7 @@ namespace Celine
 
     int ElementPalette::listWidth() const
     {
-        const int column = collapsed ? paletteEntryHeight : Theme::paletteColumnWidth;
+        const int column = columnWidth();
         return 2 * palettePad + 2 * column + paletteColumnGap;
     }
 
@@ -468,6 +537,44 @@ namespace Celine
                 &inputFileCaption, &actionCaption};
     }
 
+    void ElementInspector::chooseSwitchKind(int itemId)
+    {
+        if (element == nullptr)
+            return;
+
+        // Within the changeover's own actions: reshape it.
+        if (itemId > 1 && element->type == ElementType::Spdt)
+            return reshapeSwitch(static_cast<SwitchAction>(itemId - 2));
+
+        if (itemId == 1 && element->type == ElementType::Spdt)
+        {
+            // To the plain switch: made on throw A, open anywhere else.
+            const bool onA = element->getThrowAt(element->switchPosition) == 0;
+            element->type = ElementType::Switch;
+            element->closed = onA;
+        }
+        else if (itemId > 1 && element->type == ElementType::Switch)
+        {
+            // To the changeover: closed is throw A, at the top; open is the middle where
+            // the action has an off, else throw B.
+            element->type = ElementType::Spdt;
+            element->switchAction = static_cast<SwitchAction>(itemId - 2);
+            const int top = element->getSwitchPositions() - 1;
+            element->switchPosition = element->closed ? top : element->switchAction == SwitchAction::OnOffOn ? 1 : 0;
+            element->closed = element->switchPosition == top;
+        }
+        else
+        {
+            return;
+        }
+
+        // A different part now: its heading, its fields, its pins.
+        setElement(element);
+
+        if (onEdited)
+            onEdited();
+    }
+
     void ElementInspector::reshapeSwitch(SwitchAction action)
     {
         if (element == nullptr || element->type != ElementType::Spdt)
@@ -540,7 +647,7 @@ namespace Celine
         playButton.setColour(juce::TextButton::buttonOnColourId, Theme::accent());
         playButton.setColour(juce::TextButton::textColourOnId, Theme::panel());
 
-        for (auto* toggle : {&polarisedButton, &cabButton, &scopeAutoButton, &fileInputButton, &loopButton})
+        for (auto* toggle : {&polarisedButton, &centreTapButton, &cabButton, &scopeAutoButton, &fileInputButton, &loopButton})
             toggle->setColour(juce::ToggleButton::textColourId, ink);
 
         modelDescription.setColour(juce::Label::textColourId, Theme::captionUnset());
@@ -594,7 +701,7 @@ namespace Celine
         }
 
         for (juce::Component* c : std::initializer_list<juce::Component*>{
-                 &modelBox, &taperBox, &actionBox, &polarisedButton, &cabButton, &scopeAutoButton,
+                 &modelBox, &taperBox, &actionBox, &polarisedButton, &centreTapButton, &cabButton, &scopeAutoButton,
                  &fileInputButton, &loopButton})
             c->getProperties().set(inspectorFieldProperty, true);
 
@@ -620,13 +727,17 @@ namespace Celine
         taperCaption.setText("Taper", juce::dontSendNotification);
         actionCaption.setText("Action", juce::dontSendNotification);
 
+        // One Switch in the palette, its kind chosen here: ON-OFF is the plain switch (two
+        // pins), the rest the changeover in its three actions. Choosing across the two turns
+        // the part into the other type where it stands (chooseSwitchKind).
+        actionBox.addItem("ON-OFF", 1);
         for (const auto& name : getSwitchActionNames())
             actionBox.addItem(name, actionBox.getNumItems() + 1);
 
         actionBox.onChange = [this]
         {
             if (element != nullptr && actionBox.getSelectedId() > 0)
-                reshapeSwitch(static_cast<SwitchAction>(actionBox.getSelectedId() - 1));
+                chooseSwitchKind(actionBox.getSelectedId());
         };
         content.addAndMakeVisible(actionBox);
 
@@ -728,6 +839,23 @@ namespace Celine
         };
         content.addAndMakeVisible(polarisedButton);
 
+        // The transformer's centre tap turns it into the other type where it stands, model
+        // (Ideal or Real) and turns kept: the two types list their models in the same order.
+        centreTapButton.getProperties().set(pillSwitchProperty, true);
+        centreTapButton.onClick = [this]
+        {
+            if (element == nullptr
+                || (element->type != ElementType::Transformer && element->type != ElementType::CenterTapTransformer))
+                return;
+
+            element->type = centreTapButton.getToggleState() ? ElementType::CenterTapTransformer : ElementType::Transformer;
+            setElement(element);
+
+            if (onEdited)
+                onEdited();
+        };
+        content.addAndMakeVisible(centreTapButton);
+
         // The cabinet has its own callback, so it doesn't light Rebuild (see
         // ElementInspector::onCabChanged).
         cabButton.onClick = [this]
@@ -817,10 +945,22 @@ namespace Celine
         element = newElement;
 
         // Before announcing the size, so the layout knows whether the card is shown.
-        setVisible(element != nullptr || shortcutsShown);
+        setVisible(wantsToShow());
         rebuildForElement();
         contentChanged();
         repaint();
+    }
+
+    void ElementInspector::setMouseHints(const juce::String& hints)
+    {
+        if (mouseHints == hints)
+            return;
+
+        mouseHints = hints;
+
+        // Re-read the list if it is the one showing.
+        if (element == nullptr)
+            setElement(nullptr);
     }
 
     void ElementInspector::setShortcutsShown(bool shouldShow)
@@ -829,7 +969,7 @@ namespace Celine
             return;
 
         shortcutsShown = shouldShow;
-        setVisible(element != nullptr || shortcutsShown);
+        setVisible(wantsToShow());
         contentChanged();
     }
 
@@ -878,9 +1018,7 @@ namespace Celine
                             "Ctrl/Cmd-R  rotate\n"
                             "Ctrl/Cmd-F  flip\n\n"
                             "Delete  removes the selection.\n\n"
-                            "Right-drag to move the canvas.\n"
-                            "Scroll to adjust zoom.\n"
-                            "Middle-click to copy an element.",
+                            + mouseHints,
                             juce::dontSendNotification);
 
         fitHintToWidth();
@@ -965,8 +1103,10 @@ namespace Celine
             populateModelBox(part);
 
         taperBox.setSelectedId(static_cast<int>(part.taper) + 1, juce::dontSendNotification);
-        actionBox.setSelectedId(static_cast<int>(part.switchAction) + 1, juce::dontSendNotification);
+        actionBox.setSelectedId(part.type == ElementType::Switch ? 1 : static_cast<int>(part.switchAction) + 2,
+                                juce::dontSendNotification);
         polarisedButton.setToggleState(part.polarised, juce::dontSendNotification);
+        centreTapButton.setToggleState(part.type == ElementType::CenterTapTransformer, juce::dontSendNotification);
     }
 
     /** Which fields this part has, and their values. */
@@ -1008,30 +1148,13 @@ namespace Celine
                                                                    : file.getFileName() + "  (missing)");
         }
 
-        const bool isScope = has && element->type == ElementType::Scope;
-
-        scopeView.setVisible(isScope);
-        scopeAutoButton.setVisible(isScope);
-        scopeSecondsCaption.setVisible(isScope);
-        scopeSecondsEditor.setVisible(isScope);
-
-        // The range boxes only show when auto-scale is off.
-        const bool manual = isScope && ! element->scopeAutoScale;
-        scopeMinCaption.setVisible(manual);
-        scopeMinEditor.setVisible(manual);
-        scopeMaxCaption.setVisible(manual);
-        scopeMaxEditor.setVisible(manual);
-
-        if (isScope)
-        {
-            scopeAutoButton.setToggleState(element->scopeAutoScale, juce::dontSendNotification);
-            scopeMinEditor.setText(SymbolPainter::formatValue(element->scopeMin, "V"),
-                                   juce::dontSendNotification);
-            scopeMaxEditor.setText(SymbolPainter::formatValue(element->scopeMax, "V"),
-                                   juce::dontSendNotification);
-            scopeSecondsEditor.setText(SymbolPainter::formatValue(element->scopeSeconds, "s"),
-                                       juce::dontSendNotification);
-        }
+        // A scope's trace and its time base are the trace window's now (TraceWindow), which
+        // draws every scope together; the inspector no longer shows one of its own. The
+        // part's axes stay in the file, for sheets that set them.
+        for (juce::Component* c : std::initializer_list<juce::Component*>{
+                 &scopeView, &scopeAutoButton, &scopeSecondsCaption, &scopeSecondsEditor,
+                 &scopeMinCaption, &scopeMinEditor, &scopeMaxCaption, &scopeMaxEditor})
+            c->setVisible(false);
 
         // Only parts that can have a reading; current only for resistors.
         currentView.setVisible(has && element->type == ElementType::Resistor);
@@ -1083,9 +1206,9 @@ namespace Celine
         modelDescription.setVisible(models && modelDescription.getText().isNotEmpty());
         taperCaption.setVisible(isPot);
 
-        const bool isChangeover = has && element->type == ElementType::Spdt;
-        actionCaption.setVisible(isChangeover);
-        actionBox.setVisible(isChangeover);
+        const bool isAnySwitch = has && (element->type == ElementType::Switch || element->type == ElementType::Spdt);
+        actionCaption.setVisible(isAnySwitch);
+        actionBox.setVisible(isAnySwitch);
         taperBox.setVisible(isPot);
         labelCaption.setText(has && element->type == ElementType::Text     ? "Text"
                              : isBox                                      ? "Title"
@@ -1094,6 +1217,8 @@ namespace Celine
         labelCaption.setVisible(has);
         labelEditor.setVisible(has);
         polarisedButton.setVisible(has && element->type == ElementType::Capacitor);
+        centreTapButton.setVisible(has && (element->type == ElementType::Transformer
+                                           || element->type == ElementType::CenterTapTransformer));
 
         // Switch position, rotate, flip and delete are not here: the switch is in the
         // control strip, the rest in the toolbar.
@@ -1474,7 +1599,7 @@ namespace Celine
         }
 
         if (SymbolPainter::parseValue(scopeSecondsEditor.getText(), parsed))
-            element->scopeSeconds = juce::jlimit(0.001, 2.0, parsed);
+            element->scopeSeconds = juce::jlimit(Element::minScopeSeconds, Element::maxScopeSeconds, parsed);
 
         // The time base is the only setting here the audio thread reads.
         if (onScopeTimebaseChanged)
@@ -1750,6 +1875,7 @@ namespace Celine
         field(actionCaption, actionBox);
         field(knobCaption, knobEditor);
         row(polarisedButton, 24);
+        row(centreTapButton, 24);
         field(orderCaption, orderEditor);
 
         // Directly under its switch: the file is what the switch switches in.
@@ -1791,7 +1917,9 @@ namespace Celine
 
     void ElementInspector::resized()
     {
-        viewport.setBounds(getLocalBounds().withTrimmedTop(headerHeight).reduced(inspectorPad));
+        // At the height it is heading for, so nothing reflows while it moves there.
+        const auto area = getLocalBounds().withHeight(juce::jmax(getHeight(), layoutHeight));
+        viewport.setBounds(area.withTrimmedTop(headerHeight).reduced(inspectorPad));
 
         // Two passes: whether a scrollbar is needed depends on height. Field heights don't
         // depend on width, so the second pass lays out at the final width.

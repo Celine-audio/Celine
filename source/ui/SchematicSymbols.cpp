@@ -116,6 +116,8 @@ namespace Celine
                 case ElementType::Text:
                 case ElementType::Rectangle:
                 case ElementType::Node:
+                case ElementType::Probe:
+                case ElementType::Speaker:
                     break;
             }
 
@@ -281,6 +283,7 @@ namespace Celine
         }
 
         // Auto-scale by default; a fixed range is for comparing levels.
+        const int n = juce::jlimit (2, ScopeReading::columns, reading.count);
         float centre = 0.0f;
         float span = 1.0f;
 
@@ -288,7 +291,7 @@ namespace Celine
         {
             float lowest = reading.minimum[0], highest = reading.maximum[0];
 
-            for (int c = 1; c < ScopeReading::columns; ++c)
+            for (int c = 1; c < n; ++c)
             {
                 lowest = juce::jmin (lowest, reading.minimum[c]);
                 highest = juce::jmax (highest, reading.maximum[c]);
@@ -324,14 +327,14 @@ namespace Celine
         }
 
         // Oldest to newest, left to right, starting after the column being written.
-        const float step = area.getWidth() / static_cast<float> (ScopeReading::columns);
+        const float step = area.getWidth() / static_cast<float> (n);
 
         juce::Path envelope;
         bool started = false;
 
-        for (int i = 0; i < ScopeReading::columns; ++i)
+        for (int i = 0; i < n; ++i)
         {
-            const int c = (reading.writeColumn + 1 + i) % ScopeReading::columns;
+            const int c = (reading.writeColumn + 1 + i) % n;
             const float x = area.getX() + static_cast<float> (i) * step;
 
             const auto top = juce::jlimit (area.getY(), area.getBottom(), yFor (reading.maximum[c]));
