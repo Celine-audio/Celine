@@ -84,8 +84,8 @@ juce_add_plugin("${PROJECT_NAME}"
 
         # The Standalone opens circuit files: macOS lists it as their app, so a
         # double-clicked .celsch opens in it (source/StandaloneApp.cpp loads it), and
-        # Finder shows them as "Céline circuit" with their own icon (document.icns,
-        # drawn by packaging/make-document-icon.swift). Declared here rather than with
+        # Finder shows them as "Céline circuit" with their own icon
+        # (packaging/document.icns). Declared here rather than with
         # DOCUMENT_EXTENSIONS, which can only give a file the app's own icon. The type
         # is com.celineaudio.celsch, as Céline Designer declares it, so
         # the two apps name one kind of file. JUCE writes every format's plist from

@@ -1944,6 +1944,26 @@ void PluginEditor::refreshTraces()
                                                                  : juce::String (probe ? "Probe " : "Scope ") + juce::String (list.size() + 1) });
     }
 
+    // A kind has one time base, the one the window shows: its first part's. A part placed
+    // later (a new one starts at 40 ms) or a sheet saved with mixed spans takes it, or its
+    // ring would be drawn across another span's axis.
+    bool spansChanged = false;
+
+    for (auto& element : processorRef.getSchematic().getElements())
+        if (element.type == SchematicModel::ElementType::Probe || element.type == SchematicModel::ElementType::Scope)
+        {
+            const auto seconds = element.type == SchematicModel::ElementType::Probe ? probeSeconds : scopeSeconds;
+
+            if (! juce::exactlyEqual (element.scopeSeconds, seconds))
+            {
+                element.scopeSeconds = seconds;
+                spansChanged = true;
+            }
+        }
+
+    if (spansChanged)
+        processorRef.refreshScopeTiming();
+
     // At the limit, the palette stops offering more (the canvas refuses them too).
     palette.setTracePartsAvailable (static_cast<int> (probes.size() + scopes.size()) < SchematicModel::maxTraceParts);
 

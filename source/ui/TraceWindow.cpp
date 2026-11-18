@@ -200,7 +200,14 @@ namespace Celine
         pauseButton.setTooltip (paused ? "Run the screen again" : "Pause the screen to read it");
     }
 
-    std::optional<int> TraceWindow::triggeredStart (const ScopeReading& r, int shown)
+    int TraceWindow::staleColumnsAllowed (double spanSeconds, int shown)
+    {
+        const double columnSeconds = spanSeconds / juce::jmax (1, shown);
+        const int quarterSecond = columnSeconds > 0.0 ? static_cast<int> (std::ceil (autoTriggerSeconds / columnSeconds)) : shown;
+        return juce::jlimit (1, juce::jmax (1, shown), juce::jmax (shown / 10, quarterSecond));
+    }
+
+    std::optional<int> TraceWindow::triggeredStart (const ScopeReading& r, int shown, int maxStaleColumns)
     {
         const int count = r.count, first = r.firstFilled();
         if (shown < 2 || count - first < shown)
@@ -226,7 +233,8 @@ namespace Celine
         const float band = 0.1f * (highest - lowest);
         const int lead = shown / 10;
 
-        // The newest crossing with a whole span after it, less the lead.
+        // The newest crossing with a whole span after it, less the lead, whose span ended
+        // recently enough.
         std::optional<int> best;
         bool armed = false;
 
@@ -243,6 +251,9 @@ namespace Celine
                     best = a - lead;
             }
         }
+
+        if (best && count - (*best + shown) > maxStaleColumns)
+            return std::nullopt;
 
         return best;
     }
@@ -577,7 +588,8 @@ namespace Celine
         frame.triggerAt.reset();
 
         if (o.triggered && frame.firstShown >= 0 && shown.columns >= 2)
-            if (const auto start = triggeredStart (readings[static_cast<size_t> (frame.firstShown)], shown.columns))
+            if (const auto start = triggeredStart (readings[static_cast<size_t> (frame.firstShown)], shown.columns,
+                                                   staleColumnsAllowed (windowSeconds[static_cast<int> (kind)], shown.columns)))
             {
                 shown.from = *start;
                 frame.triggerAt = shown.columns / 10;

@@ -370,7 +370,7 @@ TEST_CASE ("The trigger holds a repeating wave still", "[probe]")
     {
         INFO ("phase " << phase);
         const auto r = ring (phase);
-        const auto from = Celine::TraceWindow::triggeredStart (r, shown);
+        const auto from = Celine::TraceWindow::triggeredStart (r, shown, shown);
         REQUIRE (from.has_value());
         CHECK (*from + shown <= count);
 
@@ -389,7 +389,87 @@ TEST_CASE ("The trigger holds a repeating wave still", "[probe]")
     Celine::ScopeReading flat;
     flat.count = count;
     flat.live = true;
-    CHECK_FALSE (Celine::TraceWindow::triggeredStart (flat, shown).has_value());
+    CHECK_FALSE (Celine::TraceWindow::triggeredStart (flat, shown, shown).has_value());
+}
+
+TEST_CASE ("The trigger lets go of a wave that has stopped", "[probe]")
+{
+    // A 4 s span: a sine, then the level it swung about, as a note dying away leaves. The
+    // trigger held its last crossing until that left the ring, so the screen showed the same
+    // old picture for up to a whole span (4 s) while new readings came in.
+    constexpr int shown = 1024;
+    constexpr double span = 4.0, period = 37.0; // columns
+    const int allowed = Celine::TraceWindow::staleColumnsAllowed (span, shown);
+
+    // A quarter of a second, or a tenth of the span when longer, never past the span.
+    CHECK (allowed == shown / 10);
+    CHECK (Celine::TraceWindow::staleColumnsAllowed (1.0, shown) == shown / 4);
+    CHECK (Celine::TraceWindow::staleColumnsAllowed (0.04, shown) == shown);
+
+    std::vector<float> stream;
+    constexpr int stops = 6000;
+    for (int i = 0; i < 9000; ++i)
+        stream.push_back (i < stops ? static_cast<float> (std::sin (juce::MathConstants<double>::twoPi * i / period)) : 0.0f);
+
+    const auto startAt = [&stream] (int now, int stale)
+    {
+        Celine::ScopeReading r;
+        r.count = 2 * shown;
+        r.writeColumn = 0;
+        r.filled = r.count;
+        r.live = true;
+        for (int age = 0; age < r.count; ++age)
+            r.minimum[age] = r.maximum[age] = stream[static_cast<size_t> (now - r.count + age)];
+        return Celine::TraceWindow::triggeredStart (r, shown, stale);
+    };
+
+    // Running, it triggers on every read, however little it is allowed to hold.
+    for (int now = 3000; now <= stops; now += 97)
+    {
+        INFO ("now " << now);
+        CHECK (startAt (now, allowed).has_value());
+    }
+
+    // Stopped, the picture slides on for most of a span, the level coming in from the right,
+    // until the last crossing is a span (less the lead) old. From there the old trigger held
+    // that picture until the crossing left the ring, about a span more; now it runs free
+    // within what it is allowed (a period's slack for where the last crossing fell).
+    const int lead = shown / 10, held = stops + shown - lead;
+    CHECK (startAt (held + shown / 2, shown).has_value()); // allowed the whole span: still held
+
+    for (int now = held + allowed + static_cast<int> (period) + 1; now < held + shown - period; now += 31)
+    {
+        INFO ("now " << now);
+        CHECK_FALSE (startAt (now, allowed).has_value());
+    }
+}
+
+TEST_CASE ("A probe placed later takes the span its kind is set to", "[probe]")
+{
+    // A new probe starts at 40 ms; the window shows its kind at the first part's span. Left
+    // at 40 ms, its ring was drawn across the others' 1 s axis.
+    runWithinPluginEditor ([] (PluginProcessor& plugin) {
+        auto* editor = dynamic_cast<PluginEditor*> (plugin.getActiveEditor());
+        REQUIRE (editor != nullptr);
+        auto& sheet = plugin.getSchematic();
+
+        const int first = sheet.addElement (ElementType::Probe, 0, 0);
+        sheet.findElement (first)->scopeSeconds = 1.0;
+        editor->schematicChangedExternally();
+
+        const int later = sheet.addElement (ElementType::Probe, 10, 0);
+        const int scope = sheet.addElement (ElementType::Scope, 20, 0);
+        REQUIRE (sheet.findElement (later)->scopeSeconds == Catch::Approx (0.04));
+        editor->schematicChangedExternally();
+
+        CHECK (sheet.findElement (later)->scopeSeconds == Catch::Approx (1.0));
+        CHECK (sheet.findElement (scope)->scopeSeconds == Catch::Approx (0.04)); // scopes have their own
+
+        sheet.removeElement (first);
+        sheet.removeElement (later);
+        sheet.removeElement (scope);
+        editor->schematicChangedExternally();
+    });
 }
 
 TEST_CASE ("The traces move at the display's pace, not at every repaint", "[probe]")
@@ -498,5 +578,5 @@ TEST_CASE ("A new time span starts empty, not at 0 V", "[probe]")
     }
 
     CHECK (reading.firstFilled() == reading.count - reading.filled);
-    CHECK_FALSE (Celine::TraceWindow::triggeredStart (reading, reading.count / 2).has_value());
+    CHECK_FALSE (Celine::TraceWindow::triggeredStart (reading, reading.count / 2, reading.count / 2).has_value());
 }

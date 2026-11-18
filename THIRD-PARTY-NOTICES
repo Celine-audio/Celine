@@ -1258,8 +1258,7 @@ assets/kicad/kicad-symbols.kicad_sym holds copies of symbols from the KiCad
 standard symbol libraries (https://gitlab.com/kicad/libraries/kicad-symbols),
 by the KiCad Library Team and contributors, taken from KiCad 10. They were
 changed only in form: each symbol that inherits another ("extends") has the
-other's drawing copied into it, and each is named with its library. The
-file is made by tools/extract-kicad-symbols.py.
+other's drawing copied into it, and each is named with its library.
 
 The KiCad libraries are licensed under the Creative Commons
 Attribution-ShareAlike 4.0 International licence,

@@ -104,9 +104,13 @@ namespace Interchange
 
             // Mounted on the enclosure and wired to the board.
             case ElementType::Switch:
-            case ElementType::Spdt:
+            case ElementType::Spdt: return wirePads(e.getPinCount());
+
+            // A 6.35 mm jack soldered to the board: Neutrik's mono, switched, the only
+            // 6.35 mm PCB jack KiCad has. Its tip and sleeve pads (T, S) are the AudioJack2
+            // symbol's pins; the switch contacts are left free.
             case ElementType::Input:
-            case ElementType::Output: return wirePads(e.getPinCount() + (e.type == ElementType::Input || e.type == ElementType::Output ? 1 : 0));
+            case ElementType::Output: return "Connector_Audio:Jack_6.35mm_Neutrik_NMJ4HCD2_Horizontal";
 
             case ElementType::Probe:
             case ElementType::Scope: return "TestPoint:TestPoint_THTPad_D1.5mm_Drill0.7mm";

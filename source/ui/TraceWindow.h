@@ -147,8 +147,18 @@ namespace Celine
 
         /** Where a trace's span starts, as a column's age in the ring (0 the oldest), when it
             triggers: `shown` columns from there, its last rising crossing of its average a
-            tenth of the way in. Nothing when it has no such crossing. */
-        static std::optional<int> triggeredStart (const ScopeReading&, int shown);
+            tenth of the way in. Nothing when it has no such crossing, or when the span that
+            crossing starts ended more than `maxStaleColumns` before the newest column: the
+            wave has stopped crossing (a note died away, the node settled), and holding that
+            old picture until it left the ring froze the screen for up to a whole span. */
+        static std::optional<int> triggeredStart (const ScopeReading&, int shown, int maxStaleColumns);
+
+        /** How long the trigger may hold its last picture before it runs free, as a scope's
+            auto trigger does: a quarter of a second, or a tenth of the span when that is
+            longer, never more than the span. A wave crossing at least this often (4 Hz)
+            always triggers. */
+        static constexpr double autoTriggerSeconds = 0.25;
+        static int staleColumnsAllowed (double spanSeconds, int shown);
         static constexpr int tabWidth = 30, tabHeight = 34;
         /** The width it would like, and its height with one row of legend. */
         static constexpr int preferredWidth = 560 + tabWidth, preferredHeight = 176;

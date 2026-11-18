@@ -333,12 +333,28 @@ TEST_CASE("The footprints are a pedal board's", "[kicad]")
     jfet.modelIndex = findModelById(ElementType::Jfet, "celine:jfet-2n5952");
     CHECK(pinoutFor(jfet) == "GSD");
 
-    // Jacks, switches and power: pads to solder their wires to.
-    for (const auto type : {ElementType::Input, ElementType::Switch, ElementType::Spdt})
+    // Switches and power: pads to solder their wires to.
+    for (const auto type : {ElementType::Switch, ElementType::Spdt})
     {
         Element e;
         e.type = type;
         CHECK(footprintFor(e).startsWith("Connector_Wire:"));
+    }
+
+    // Jacks: a real 6.35 mm PCB jack, its tip and sleeve the symbol's T and S.
+    for (const auto type : {ElementType::Input, ElementType::Output})
+    {
+        Element e;
+        e.type = type;
+        CHECK(footprintFor(e) == "Connector_Audio:Jack_6.35mm_Neutrik_NMJ4HCD2_Horizontal");
+
+        if (footprintFolder().isDirectory())
+        {
+            const auto pads = padsOf(footprintFor(e));
+            REQUIRE(pads.has_value());
+            CHECK(pads->count("T") == 1);
+            CHECK(pads->count("S") == 1);
+        }
     }
 
     for (int pins = 2; pins <= 8; ++pins)
