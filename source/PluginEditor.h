@@ -113,6 +113,9 @@ private:
     void writeControlPositionToSchematic (const std::vector<int>& elementIds, float position);
     void showSettingsMenu();
 
+    /** The floppy disk's menu: Save, or export to KiCad. */
+    void showSaveMenu();
+
     /** Sets what the INPUT and OUTPUT knobs display: gain in dB, or the equivalent dBu
         level when the dBu setting is on (see PluginProcessor::inputGainToDbu). */
     void applyLevelReadouts();

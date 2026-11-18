@@ -6,6 +6,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
 #include "Schematic/ExampleSchematics.h"
+#include "interchange/KiCadSchematic.h"
 #include "UpdateCheck.h"
 #include "ProductInfo.h"
 
@@ -244,7 +245,8 @@ void PluginEditor::buildToolbar()
         addAndMakeVisible (button);
     }
 
-    saveButton->onClick       = [this] { browseForCircuit (true); };
+    saveButton->onClick       = [this] { showSaveMenu(); };
+    saveButton->setTooltip ("Save or export");
     loadButton->onClick       = [this] { browseForCircuit (false); };
     importButton->onClick     = [this] { browseForImport(); };
     presetsButton.setTooltip ("Preset selection list");
@@ -1685,6 +1687,43 @@ void PluginEditor::applyLevelReadouts()
 
     inputSlider.setTooltip ("Input level");
     outputSlider.setTooltip ("Output level");
+}
+
+void PluginEditor::showSaveMenu()
+{
+    // Save, or the sheet as a KiCad project for a pedal board (source/interchange).
+    juce::PopupMenu menu;
+
+    menu.addItem ("Save" + ellipsis, [this] { browseForCircuit (true); });
+    menu.addItem ("Export to KiCad" + ellipsis, [this]
+    {
+        const auto name = juce::File::createLegalFileName (processorRef.presetName.isNotEmpty() ? processorRef.presetName : juce::String ("Circuit"));
+        const auto folder = lastCircuitFile != juce::File{} ? lastCircuitFile.getParentDirectory()
+                                                           : juce::File::getSpecialLocation (juce::File::userDocumentsDirectory);
+
+        fileChooser = std::make_unique<juce::FileChooser> ("Export to KiCad", folder.getChildFile (name + ".kicad_pro"), "*.kicad_pro");
+        fileChooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
+                                      | juce::FileBrowserComponent::warnAboutOverwriting,
+                                  [this] (const juce::FileChooser& chooser)
+        {
+            const auto file = chooser.getResult();
+
+            if (file == juce::File{})
+                return;
+
+            juce::StringArray warnings;
+            const auto result = Interchange::writeKiCadProject (processorRef.getSchematic(), file.getParentDirectory(),
+                                                                file.getFileNameWithoutExtension(), warnings);
+
+            setStatus (result.failed() ? result.getErrorMessage()
+                                       : "Exported " + file.getFileName() + ". " + warnings.joinIntoString (" "),
+                       result.failed());
+        });
+    });
+
+    // A popup menu has no parent, so set its look and feel explicitly.
+    menu.setLookAndFeel (&lookAndFeel);
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (saveButton.get()));
 }
 
 void PluginEditor::showSettingsMenu()

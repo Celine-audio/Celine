@@ -35,6 +35,8 @@ CONTENTS
   clap-juce-extensions     MIT                          the CLAP plug-in format
   Jura                     SIL Open Font Licence 1.1    the typeface, embedded in the binary
   JetBrains Mono           SIL Open Font Licence 1.1    the monospaced face
+  KiCad libraries         CC-BY-SA 4.0, with KiCad's   the standard symbols the KiCad export uses
+                           design exception
 
 JUCE itself is dual-licensed AGPLv3 / commercial and Céline takes the AGPL
 option; its terms are in LICENSE and AGPLv3, not repeated here.
@@ -1247,3 +1249,24 @@ INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
 DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
+
+===============================================================================
+KiCad libraries -- CC-BY-SA 4.0, with KiCad's exception for designs
+===============================================================================
+
+assets/kicad/kicad-symbols.kicad_sym holds copies of symbols from the KiCad
+standard symbol libraries (https://gitlab.com/kicad/libraries/kicad-symbols),
+by the KiCad Library Team and contributors, taken from KiCad 10. They were
+changed only in form: each symbol that inherits another ("extends") has the
+other's drawing copied into it, and each is named with its library. The
+file is made by tools/extract-kicad-symbols.py.
+
+The KiCad libraries are licensed under the Creative Commons
+Attribution-ShareAlike 4.0 International licence,
+https://creativecommons.org/licenses/by-sa/4.0/legalcode, so this file is
+too. KiCad adds an exception to it: to the extent that electronic designs
+made with the libraries, and files generated from them, could be considered
+adapted material, the copyright holder waives article 3 of the licence for
+those designs and files. The schematics Céline exports are such designs.
+See https://www.kicad.org/libraries/license/.
+
