@@ -82,6 +82,35 @@ juce_add_plugin("${PROJECT_NAME}"
         MICROPHONE_PERMISSION_ENABLED TRUE
         MICROPHONE_PERMISSION_TEXT "Céline needs your audio input so it can run it through the circuit you have drawn."
 
+        # The Standalone opens circuit files: macOS lists it as their app, so a
+        # double-clicked .celsch opens in it (source/StandaloneApp.cpp loads it), and
+        # Finder shows them as "Céline circuit" with their own icon (document.icns,
+        # drawn by packaging/make-document-icon.swift). Declared here rather than with
+        # DOCUMENT_EXTENSIONS, which can only give a file the app's own icon. The type
+        # is com.celineaudio.celsch, as Céline Designer declares it, so
+        # the two apps name one kind of file. JUCE writes every format's plist from
+        # this; only the app's is read for it.
+        PLIST_TO_MERGE "<plist><dict>
+            <key>CFBundleDocumentTypes</key>
+            <array><dict>
+                <key>CFBundleTypeName</key><string>Céline circuit</string>
+                <key>CFBundleTypeRole</key><string>Editor</string>
+                <key>LSHandlerRank</key><string>Owner</string>
+                <key>CFBundleTypeIconFile</key><string>document</string>
+                <key>LSItemContentTypes</key><array><string>com.celineaudio.celsch</string></array>
+                <key>CFBundleTypeExtensions</key><array><string>celsch</string></array>
+            </dict></array>
+            <key>UTExportedTypeDeclarations</key>
+            <array><dict>
+                <key>UTTypeIdentifier</key><string>com.celineaudio.celsch</string>
+                <key>UTTypeDescription</key><string>Céline circuit</string>
+                <key>UTTypeIconFile</key><string>document</string>
+                <key>UTTypeConformsTo</key><array><string>public.xml</string><string>public.data</string></array>
+                <key>UTTypeTagSpecification</key>
+                <dict><key>public.filename-extension</key><array><string>celsch</string></array></dict>
+            </dict></array>
+        </dict></plist>"
+
         # Four characters each, first one upper case -- AU requires it.
         # Changing either makes hosts treat this as a different plugin.
         PLUGIN_MANUFACTURER_CODE Celi
@@ -124,6 +153,18 @@ add_library(SharedCode INTERFACE)
 clap_juce_extensions_plugin(TARGET "${PROJECT_NAME}"
         CLAP_ID "${BUNDLE_ID}"
         CLAP_FEATURES audio-effect distortion mono stereo)
+
+# The Standalone's app is Céline's own (source/StandaloneApp.cpp): JUCE's, plus loading
+# the circuit file the system hands it. PUBLIC, so the Standalone target, which builds
+# JUCE's entry point, sees it too.
+target_compile_definitions("${PROJECT_NAME}" PUBLIC JUCE_USE_CUSTOM_PLUGIN_STANDALONE_APP=1)
+
+# The circuit file's icon, which the plist above names, in the app's Resources.
+if (APPLE AND TARGET "${PROJECT_NAME}_Standalone")
+    set(DocumentIcon "${CMAKE_CURRENT_SOURCE_DIR}/packaging/document.icns")
+    target_sources("${PROJECT_NAME}_Standalone" PRIVATE "${DocumentIcon}")
+    set_source_files_properties("${DocumentIcon}" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+endif ()
 
 # Fast math, C++23 and a few other target defaults.
 include(SharedCodeDefaults)

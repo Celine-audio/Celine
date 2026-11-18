@@ -37,6 +37,8 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 ; The plugin folders are under Common Files, which every user's host reads.
 PrivilegesRequired=admin
+; .celsch files open in the app (the [Registry] entries), so Explorer is told to look again.
+ChangesAssociations=yes
 
 DefaultDirName={commonpf64}\{#Publisher}\{#ProductName}
 DisableDirPage=yes
@@ -78,6 +80,16 @@ Source: "{#Artefacts}\VST3\{#ProductName}.vst3\*"; DestDir: "{commoncf64}\VST3\{
 Source: "{#Artefacts}\CLAP\{#ProductName}.clap"; DestDir: "{commoncf64}\CLAP"; Flags: ignoreversion; Components: clap
 Source: "{#Artefacts}\LV2\{#ProductName}.lv2\*"; DestDir: "{commoncf64}\LV2\{#ProductName}.lv2"; Excludes: "*.ilk,*.pdb,*.lib,*.exp"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: lv2
 Source: "{#Artefacts}\Standalone\{#ProductName}.exe"; DestDir: "{app}"; Flags: ignoreversion; Components: standalone
+Source: "windows\document.ico"; DestDir: "{app}"; Flags: ignoreversion; Components: standalone
+
+[Registry]
+; A circuit file opens in the app, which loads it (or hands it to the copy already open),
+; and shows the purple document icon. Removed with the app.
+Root: HKA; Subkey: "Software\Classes\.celsch"; ValueType: string; ValueName: ""; ValueData: "CelineAudio.Circuit"; Flags: uninsdeletevalue; Components: standalone
+Root: HKA; Subkey: "Software\Classes\.celsch\OpenWithProgids"; ValueType: string; ValueName: "CelineAudio.Circuit"; ValueData: ""; Flags: uninsdeletevalue; Components: standalone
+Root: HKA; Subkey: "Software\Classes\CelineAudio.Circuit"; ValueType: string; ValueName: ""; ValueData: "{#ProductName} circuit"; Flags: uninsdeletekey; Components: standalone
+Root: HKA; Subkey: "Software\Classes\CelineAudio.Circuit\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\document.ico"; Components: standalone
+Root: HKA; Subkey: "Software\Classes\CelineAudio.Circuit\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#ProductName}.exe"" ""%1"""; Components: standalone
 
 [Icons]
 Name: "{autoprograms}\{#ProductName}"; Filename: "{app}\{#ProductName}.exe"; Components: standalone
