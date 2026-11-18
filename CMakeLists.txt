@@ -284,5 +284,49 @@ target_include_directories(Tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
 # A separate target for Benchmarks (keeps the Tests target fast)
 include(Benchmarks)
 
+# The Quick Look preview of a .celsch (Space on a sheet in the Finder): an app extension in
+# the Standalone's PlugIns folder that draws the sheet with Céline's own canvas
+# (source/ui/SheetPicture, source/quicklook). Céline's code is compiled into it the way the
+# tests have it, and only what the drawing uses is kept (-dead_strip). Quick Look loads
+# only signed, sandboxed extensions inside a signed app: the extension is signed with its
+# sandbox, then the app around it (ad hoc, as the linker signs the rest of the build).
+if (APPLE AND TARGET "${PROJECT_NAME}_Standalone")
+    set(QuickLookTarget "${PROJECT_NAME}QuickLook")
+    set(QuickLookDir "${CMAKE_CURRENT_SOURCE_DIR}/source/quicklook")
+
+    add_executable(${QuickLookTarget} MACOSX_BUNDLE "${QuickLookDir}/PreviewProvider.mm")
+    target_compile_definitions(${QuickLookTarget} PRIVATE $<TARGET_PROPERTY:${PROJECT_NAME},COMPILE_DEFINITIONS>)
+    target_include_directories(${QuickLookTarget} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/source")
+    target_link_libraries(${QuickLookTarget} PRIVATE SharedCode "-framework QuickLookUI" "-framework UniformTypeIdentifiers")
+    target_link_options(${QuickLookTarget} PRIVATE -e _NSExtensionMain -fapplication-extension -Wl,-dead_strip)
+    set_source_files_properties("${QuickLookDir}/PreviewProvider.mm" PROPERTIES COMPILE_OPTIONS -fobjc-arc)
+
+    set_target_properties(${QuickLookTarget} PROPERTIES
+            BUNDLE_EXTENSION appex
+            MACOSX_BUNDLE_INFO_PLIST "${QuickLookDir}/Info.plist.in"
+            MACOSX_BUNDLE_GUI_IDENTIFIER "${BUNDLE_ID}.QuickLook"
+            MACOSX_BUNDLE_BUNDLE_NAME "${PROJECT_NAME}QuickLook"
+            MACOSX_BUNDLE_SHORT_VERSION_STRING "${CURRENT_VERSION}"
+            MACOSX_BUNDLE_BUNDLE_VERSION "${CURRENT_VERSION}")
+
+    add_custom_command(TARGET ${QuickLookTarget} POST_BUILD
+            COMMAND codesign --force --sign - --entitlements "${QuickLookDir}/QuickLook.entitlements"
+                    "$<TARGET_BUNDLE_DIR:${QuickLookTarget}>"
+            VERBATIM)
+
+    # Into the app, which is then signed again around it. The app relinks whenever the
+    # extension changes, so this runs again too.
+    add_dependencies("${PROJECT_NAME}_Standalone" ${QuickLookTarget})
+    set_property(TARGET "${PROJECT_NAME}_Standalone" APPEND PROPERTY LINK_DEPENDS "$<TARGET_FILE:${QuickLookTarget}>")
+
+    add_custom_command(TARGET "${PROJECT_NAME}_Standalone" POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E rm -rf "$<TARGET_BUNDLE_CONTENT_DIR:${PROJECT_NAME}_Standalone>/PlugIns/$<TARGET_BUNDLE_DIR_NAME:${QuickLookTarget}>"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_CONTENT_DIR:${PROJECT_NAME}_Standalone>/PlugIns"
+            COMMAND ditto "$<TARGET_BUNDLE_DIR:${QuickLookTarget}>"
+                    "$<TARGET_BUNDLE_CONTENT_DIR:${PROJECT_NAME}_Standalone>/PlugIns/$<TARGET_BUNDLE_DIR_NAME:${QuickLookTarget}>"
+            COMMAND codesign --force --sign - "$<TARGET_BUNDLE_DIR:${PROJECT_NAME}_Standalone>"
+            VERBATIM)
+endif ()
+
 # Output some config for CI (like our PRODUCT_NAME)
 include(GitHubENV)
