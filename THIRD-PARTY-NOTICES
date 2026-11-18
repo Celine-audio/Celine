@@ -35,8 +35,8 @@ CONTENTS
   clap-juce-extensions     MIT                          the CLAP plug-in format
   Jura                     SIL Open Font Licence 1.1    the typeface, embedded in the binary
   JetBrains Mono           SIL Open Font Licence 1.1    the monospaced face
-  KiCad libraries         CC-BY-SA 4.0, with KiCad's   the standard symbols the KiCad export uses
-                           design exception
+  KiCad libraries          CC-BY-SA 4.0, with KiCad's   the standard symbols the KiCad export uses
+                                                        design exception
 
 JUCE itself is dual-licensed AGPLv3 / commercial and Céline takes the AGPL
 option; its terms are in LICENSE and AGPLv3, not repeated here.
@@ -1269,4 +1269,3 @@ made with the libraries, and files generated from them, could be considered
 adapted material, the copyright holder waives article 3 of the licence for
 those designs and files. The schematics Céline exports are such designs.
 See https://www.kicad.org/libraries/license/.
-
