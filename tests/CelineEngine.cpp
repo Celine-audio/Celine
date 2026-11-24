@@ -3045,3 +3045,162 @@ TEST_CASE("SCRATCH GE bias diagnostics", "[.][gebias]")
     }
     printf("\n");
 }
+
+TEST_CASE("A circuit with no reactive parts is exactly its resistive divider", "[circuit][solver]")
+{
+    // The degenerate term list: one input coupling and nothing else. If the
+    // per-sample solve were ever left with no terms at all this would read
+    // zero, and a sheet made of resistors would be silent.
+    Circuit circuit;
+    circuit.addResistor("in", "mid", 10000.0);
+    circuit.addResistor("mid", "gnd", 10000.0);
+    circuit.setInputNode("in");
+    circuit.setOutputNode("mid");
+    circuit.prepare(sampleRate);
+
+    for (float v : {0.0f, 0.25f, 1.0f, -2.0f, 7.5f})
+        CHECK(circuit.process(v) == Catch::Approx(v * 0.5f).margin(1.0e-6f));
+}
+
+TEST_CASE("A settled sample does not remember how the circuit got there", "[circuit][solver]")
+{
+    // Newton is stopped by a residual test, not by landing exactly on the root,
+    // so every sample is a point *near* the solution, and the next sample
+    // starts from it. Such an error could in principle accumulate rather than
+    // decay, and a circuit whose answer depended on how long it had been
+    // running would be wrong in a way no single-sample test could see. Nothing
+    // in the suite held that down directly.
+    //
+    // The measurement: drive a hard, nonlinear preamp to a constant input from
+    // two different histories and check that it ends in the same place. History
+    // A is fresh from prepare(); history B has just played a loud passage and
+    // is sitting on a different set of capacitor voltages and device memories.
+    // Once the same DC input has been held long enough, the state a sample
+    // depends on has to be the same, and the outputs have to meet.
+    //
+    // What this does *not* do, measured rather than assumed: it does not catch a
+    // weakened convergence test. Replacing the residual test in newtonOnPorts()
+    // with nothing at all -- leaving only "the step was small" -- still passes
+    // this test, because the circuit's own DC feedback repairs the per-sample
+    // error within a few samples and the fixed point comes out the same. That
+    // weakening *is* caught, by "Newton stops on the circuit's equations, not on
+    // a small step" (the Zener-clipped stages), which then fails. So this holds
+    // history-independence, which is the property that makes the loop's
+    // three-iteration structure safe; it is not a second guard on the exit test,
+    // and it should not be read as one.
+    //
+    // Held DC is also the case that converges hardest: every port sits still,
+    // so the limiter has nothing to damp and the residual test has to do the
+    // whole job on its own.
+    auto render = [](bool loudPassageFirst)
+    {
+        auto preamp = Circuits::makeThreeStagePreamp();
+        preamp.circuit.prepare(sampleRate);
+
+        if (loudPassageFirst)
+        {
+            const double step = 2.0 * std::numbers::pi * 220.0 / sampleRate;
+            for (int i = 0; i < 8000; ++i)
+                preamp.circuit.process(0.9f * static_cast<float>(std::sin(step * i)));
+        }
+
+        std::vector<float> settled;
+
+        for (int i = 0; i < 40000; ++i)
+        {
+            const float out = preamp.circuit.process(0.2f);
+
+            // Keep the tail only: the first samples are still settling through
+            // the coupling and cathode capacitors, which is a real difference
+            // and not one the solver is being asked about.
+            if (i >= 39000)
+                settled.push_back(out);
+        }
+
+        return settled;
+    };
+
+    const auto fromSilence = render(false);
+    const auto fromAPassage = render(true);
+
+    REQUIRE(fromSilence.size() == fromAPassage.size());
+
+    float worst = 0.0f;
+    for (size_t i = 0; i < fromSilence.size(); ++i)
+        worst = std::max(worst, std::abs(fromSilence[i] - fromAPassage[i]));
+
+    // Both ends are the same fixed point of the same equations, so the
+    // difference is whatever the solver's tolerance leaves behind on a node of
+    // a few hundred volts. Measured: 5.9e-06 V, which is the residual test's
+    // 1e-5 V showing through and nothing else -- incomplete settling through a
+    // cathode capacitor would be millivolts, three orders above this. The bound
+    // is ten times what was measured, so it holds the property rather than the
+    // arithmetic.
+    INFO("worst settled difference: " << worst);
+    CHECK(worst < 1.0e-4f);
+}
+
+TEST_CASE("The precomputed right-hand side matches the one full Newton builds", "[circuit][solver]")
+{
+    // The per-sample right-hand side is solved as a weighted sum of columns
+    // precomputed at rebuildLinearSystem() -- but only on the DK and purely
+    // linear paths. Full Newton with ports still builds the vector itself
+    // (buildRightHandSide()) and solves it, so a circuit with one port, forced
+    // down each path, compares the two statements of the right-hand side.
+    // A passive sheet cannot do that: with no ports both strategies take the
+    // same precomputed path.
+    //
+    // Every kind of term is here: the input coupling, capacitors, an inductor,
+    // and a supply with an AC part (the only term whose coefficient moves on
+    // its own). The diode is reverse-biased throughout, so Newton lands on the
+    // same root to far below its tolerance either way, and what is left to
+    // differ is the right-hand side. A knob move halfway exercises the rebuild.
+    auto renderWith = [](Circuit::SolverStrategy strategy)
+    {
+        Circuit circuit;
+        circuit.addResistor("in", "a", 10000.0);
+        circuit.addCapacitor("a", "gnd", 47.0e-9);
+        circuit.addInductor("a", "b", 0.1);
+        const auto load = circuit.addResistor("b", "out", 1000.0);
+        circuit.addCapacitor("out", "gnd", 10.0e-9);
+        circuit.addAcVoltageSource("sup", "gnd", 2.0, 120.0, 5.0);
+        circuit.addResistor("sup", "b", 22000.0);
+        circuit.addResistor("out", "gnd", 47000.0);
+        circuit.addDiode("gnd", "out");
+        circuit.setInputNode("in");
+        circuit.setOutputNode("out");
+        circuit.setSolverStrategy(strategy);
+        circuit.prepare(sampleRate);
+
+        std::vector<float> out;
+        const double step = 2.0 * std::numbers::pi * 440.0 / sampleRate;
+
+        for (int i = 0; i < 9600; ++i)
+        {
+            if (i == 4800)
+                circuit.setResistance(load, 2200.0);
+
+            out.push_back(circuit.process(0.5f * static_cast<float>(std::sin(step * i))));
+        }
+
+        return std::pair{out, circuit.getNonConvergenceCount()};
+    };
+
+    const auto [byDiscreteK, heldDk] = renderWith(Circuit::SolverStrategy::DiscreteK);
+    const auto [byFullNewton, heldFull] = renderWith(Circuit::SolverStrategy::FullNewton);
+
+    REQUIRE(heldDk == 0);
+    REQUIRE(heldFull == 0);
+
+    float worst = 0.0f;
+    float peak = 0.0f;
+    for (size_t i = 0; i < byDiscreteK.size(); ++i)
+    {
+        worst = std::max(worst, std::abs(byDiscreteK[i] - byFullNewton[i]));
+        peak = std::max(peak, std::abs(byFullNewton[i]));
+    }
+
+    INFO("worst difference " << worst << " V on a peak of " << peak << " V");
+    CHECK(peak > 1.0f);
+    CHECK(worst < 1.0e-6f);
+}
