@@ -52,6 +52,19 @@ jobs:
       - name: Cache the build
         uses: mozilla-actions/sccache-action@v0.0.11
 
+      # Visual Studio's own clang-cl, not whichever is first on the PATH. The image
+      # carries a standalone LLVM too (C:\Program Files\LLVM, Clang 20 when this was
+      # written), and it comes earlier on the PATH than the one inside Visual Studio --
+      # so a bare `clang-cl` found it, compiled against Visual Studio's STL, and failed
+      # on every file once VS 18's STL (14.52) began refusing anything older than
+      # Clang 22: "error STL1000: Unexpected compiler version". The clang Visual Studio
+      # bundles is the one its STL is built for, so the two cannot drift apart.
+      - name: Use Visual Studio's clang-cl
+        run: |
+          CLANG_CL="$(cygpath -m "${VCINSTALLDIR}Tools/Llvm/x64/bin/clang-cl.exe")"
+          "$CLANG_CL" --version
+          echo "CLANG_CL=$CLANG_CL" >> "$GITHUB_ENV"
+
       - name: Configure
         run: >
           cmake -B ${{ env.BUILD_DIR }}
@@ -59,8 +72,8 @@ jobs:
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
           -DCMAKE_C_COMPILER_LAUNCHER=sccache
           -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
-          -DCMAKE_C_COMPILER=clang-cl
-          -DCMAKE_CXX_COMPILER=clang-cl
+          -DCMAKE_C_COMPILER="${{ env.CLANG_CL }}"
+          -DCMAKE_CXX_COMPILER="${{ env.CLANG_CL }}"
           .
 
       - name: Build
